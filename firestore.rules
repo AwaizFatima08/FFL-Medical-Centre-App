@@ -1,0 +1,173 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Helper functions
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function getRole() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role;
+    }
+
+    function isRole(role) {
+      return isAuthenticated() && getRole() == role;
+    }
+
+    function isAnyRole(roles) {
+      return isAuthenticated() && getRole() in roles;
+    }
+
+    function isAdminIncharge() {
+      return isRole('admin_incharge');
+    }
+
+    function isEmployee() {
+      return isRole('employee');
+    }
+
+    function isCMO() {
+      return isRole('cmo');
+    }
+
+    function isDoctor() {
+      return isAnyRole(['doctor', 'cmo']);
+    }
+
+    function isReception() {
+      return isRole('reception');
+    }
+
+    function isMedicalStaff() {
+      return isAnyRole(['doctor', 'cmo', 'nurse', 'reception']);
+    }
+
+    // ─── USERS ───────────────────────────────────────────
+    match /users/{userId} {
+      allow read: if isAuthenticated() && 
+                    (request.auth.uid == userId || isMedicalStaff() || isAdminIncharge());
+      allow create: if isAuthenticated() && request.auth.uid == userId;
+      allow update: if isAuthenticated() && 
+                    (request.auth.uid == userId || isAdminIncharge());
+      allow delete: if isAdminIncharge();
+    }
+
+    // ─── EMPLOYEES ───────────────────────────────────────
+    match /employees/{employeeId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated();
+      allow update: if isAuthenticated() && 
+                    (isAdminIncharge() || 
+                     get(/databases/$(database)/documents/employees/$(employeeId)).data.userId == request.auth.uid);
+      allow delete: if isAdminIncharge();
+
+      // Family members subcollection
+      match /familyMembers/{memberId} {
+        allow read: if isAuthenticated();
+        allow write: if isAuthenticated() && 
+                     (isAdminIncharge() || 
+                      get(/databases/$(database)/documents/employees/$(employeeId)).data.userId == request.auth.uid);
+      }
+    }
+
+    // ─── AMBULANCE REQUESTS ──────────────────────────────
+    match /ambulanceRequests/{requestId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated();
+      allow update: if isAnyRole(['reception', 'driver', 'doctor', 'cmo', 'employee']);
+      allow delete: if isAnyRole(['reception', 'cmo']);
+    }
+
+    // ─── MEDICAL TRIPS ───────────────────────────────────
+    match /medicalTrips/{tripId} {
+      allow read: if isAuthenticated();
+      allow create: if isAnyRole(['reception', 'cmo']);
+      allow update: if isAnyRole(['reception', 'doctor', 'cmo']);
+      allow delete: if isAnyRole(['reception', 'cmo']);
+
+      match /bookings/{bookingId} {
+        allow read: if isAuthenticated();
+        allow create: if isAuthenticated();
+        allow update: if isAnyRole(['reception', 'doctor', 'cmo', 'employee']);
+        allow delete: if isAnyRole(['reception', 'cmo']);
+      }
+    }
+
+    // ─── VACCINATION PROFILES ────────────────────────────
+    match /vaccinationProfiles/{profileId} {
+      allow read: if isAuthenticated();
+      allow create: if isAnyRole(['nurse', 'reception', 'cmo']);
+      allow update: if isAnyRole(['nurse', 'doctor', 'cmo', 'reception']);
+      allow delete: if isAnyRole(['nurse', 'cmo']);
+
+      match /scheduleItems/{itemId} {
+        allow read: if isAuthenticated();
+        allow write: if isAnyRole(['nurse', 'doctor', 'cmo', 'reception']);
+      }
+    }
+
+    // ─── NOTIFICATIONS ───────────────────────────────────
+    match /notifications/{notificationId} {
+      allow read: if isAuthenticated();
+      allow create: if isAnyRole(['doctor', 'cmo', 'nurse', 'reception',
+                                   'lab_technologist', 'pharmacy_incharge',
+                                   'admin_incharge']);
+      allow update: if isAnyRole(['doctor', 'cmo', 'reception']);
+      allow delete: if isAnyRole(['doctor', 'cmo']);
+
+      match /receipts/{receiptId} {
+        allow read: if isAuthenticated() && request.auth.uid == receiptId;
+        allow write: if isAuthenticated() && request.auth.uid == receiptId;
+      }
+    }
+
+    // ─── DOCTOR AVAILABILITY ─────────────────────────────
+    match /doctorAvailability/{doctorId} {
+      allow read: if isAuthenticated();
+      allow write: if isAnyRole(['doctor', 'cmo', 'reception']);
+
+      match /statusLog/{logId} {
+        allow read: if isAnyRole(['doctor', 'cmo', 'reception']);
+        allow create: if isAnyRole(['doctor', 'cmo', 'reception']);
+        allow delete: if false;
+      }
+    }
+
+    // ─── FITNESS APPOINTMENTS ────────────────────────────
+    match /fitnessAppointments/{appointmentId} {
+      allow read: if isAuthenticated();
+      allow create: if isRole('admin_incharge');
+      allow update: if isAnyRole(['admin_incharge', 'doctor', 'cmo', 'employee']);
+      allow delete: if isRole('admin_incharge');
+    }
+
+    // ─── DOCTORS DIRECTORY ───────────────────────────────
+    match /doctorsDirectory/{entryId} {
+      allow read: if isAuthenticated();
+      allow write: if isAnyRole(['doctor', 'cmo', 'nurse', 'reception']);
+    }
+
+    // ─── FEEDBACK ────────────────────────────────────────
+    match /feedback/{feedbackId} {
+      allow read: if isAnyRole(['doctor', 'cmo', 'reception']);
+      allow create: if isAuthenticated();
+      allow update: if false;
+      allow delete: if isCMO();
+    }
+
+    // ─── BLOOD DONOR REGISTRY ────────────────────────────
+    match /bloodDonorRegistry/{employeeId} {
+      allow read: if isAnyRole(['doctor', 'cmo', 'reception', 'nurse']);
+      allow write: if isAuthenticated() && 
+                   (request.auth.uid == employeeId || isAdminIncharge());
+    }
+
+    // ─── WORKING HOURS ───────────────────────────────────
+    match /workingHours/{roleId} {
+      allow read: if isAuthenticated();
+      allow write: if isCMO();
+    }
+
+  }
+}

@@ -1,20 +1,61 @@
+import React, { useState, useEffect } from 'react';
+import { NavigationContainer } from '@react-navigation/native';
 import { StatusBar } from 'expo-status-bar';
-import { StyleSheet, Text, View } from 'react-native';
+import { View, ActivityIndicator, StyleSheet } from 'react-native';
+import { onAuthStateChanged } from 'firebase/auth';
+import { auth } from './src/config/firebase';
+import { getUserData } from './src/utils/storage';
+import AuthNavigator from './src/navigation/AuthNavigator';
 
 export default function App() {
+  const [loading,       setLoading]       = useState(true);
+  const [isLoggedIn,    setIsLoggedIn]    = useState(false);
+
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
+      if (firebaseUser) {
+        // Check if user data exists and account is active
+        const userData = await getUserData();
+        if (userData && userData.user?.isActive) {
+          setIsLoggedIn(true);
+        } else {
+          setIsLoggedIn(false);
+        }
+      } else {
+        setIsLoggedIn(false);
+      }
+      setLoading(false);
+    });
+
+    return unsubscribe; // cleanup on unmount
+  }, []);
+
+  // Show loading spinner while checking auth state
+  if (loading) {
+    return (
+      <View style={styles.loadingContainer}>
+        <ActivityIndicator size="large" color="#c1121f" />
+      </View>
+    );
+  }
+
   return (
-    <View style={styles.container}>
-      <Text>Open up App.js to start working on your app!</Text>
-      <StatusBar style="auto" />
-    </View>
+    <NavigationContainer>
+      <StatusBar style="light" />
+      {/* 
+        isLoggedIn is false for now — shows AuthNavigator (Login/Signup/ForgotPassword)
+        Once role-based navigation is built, we will add AppNavigator here for logged-in users
+      */}
+      <AuthNavigator />
+    </NavigationContainer>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
+  loadingContainer: {
     flex: 1,
-    backgroundColor: '#fff',
-    alignItems: 'center',
     justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: '#003049',
   },
 });

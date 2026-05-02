@@ -1,0 +1,14 @@
+- node_modules/**
+- .expo/**
+- .firebase/**
+- .claude/**
+- .kiro/**
+- .augment/**
+- .windsurf/**
+- .roo/**
+- .cursor/**
+- skills/**
+- .kode/**
+- .bob/**
+- .vibe/**
+- **/.bin/**

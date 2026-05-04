@@ -98,3 +98,5 @@ app/.expo/
 app/node_modules/
 .env
 service-account.json
+skills/
+.agents/

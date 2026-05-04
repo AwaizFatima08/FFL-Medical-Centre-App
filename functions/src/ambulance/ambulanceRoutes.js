@@ -1,11 +1,12 @@
+// functions/src/ambulance/ambulanceRoutes.js
 const express = require('express');
-const router = express.Router();
-const admin = require('firebase-admin');
+const router  = express.Router();
+const admin   = require('firebase-admin');
 const { verifyToken, verifyRole } = require('../auth/authRoutes');
 const { successResponse, errorResponse, nowISO } = require('../utils');
 const { ROLES, AMBULANCE_STATUS, VEHICLE_TYPES, PRIORITY_FLAGS, TRIP_TYPES } = require('../constants');
 
-// ─── POST /request ────────────────────────────────────────
+// ─── POST /request ────────────────────────────────────────────────────────────
 // Employee or Reception creates dispatch request
 router.post('/request', verifyToken, verifyRole([
   ROLES.EMPLOYEE, ROLES.RECEPTION, ROLES.CMO, ROLES.DOCTOR,
@@ -13,36 +14,26 @@ router.post('/request', verifyToken, verifyRole([
   try {
     const db = admin.firestore();
     const {
-      patientName,
-      patientRelation,
-      patientCondition,
-      vehicleType,
-      priorityFlag,
-      tripType,
-      pickupLocation,
-      dropLocation,
-      notes,
+      patientName, patientRelation, patientCondition,
+      vehicleType, priorityFlag, tripType,
+      pickupLocation, dropLocation, notes,
     } = req.body;
 
     if (!patientName || !patientCondition || !vehicleType || !priorityFlag || !tripType) {
       return errorResponse(res,
-        'patientName, patientCondition, vehicleType, priorityFlag and tripType are required',
-        400);
+        'patientName, patientCondition, vehicleType, priorityFlag and tripType are required', 400);
     }
 
     if (!Object.values(VEHICLE_TYPES).includes(vehicleType)) {
       return errorResponse(res,
-        `Invalid vehicleType. Valid values: ${Object.values(VEHICLE_TYPES).join(', ')}`,
-        400);
+        `Invalid vehicleType. Valid values: ${Object.values(VEHICLE_TYPES).join(', ')}`, 400);
     }
-
     if (!Object.values(PRIORITY_FLAGS).includes(priorityFlag)) {
       return errorResponse(res,
-        `Invalid priorityFlag. Valid values: ${Object.values(PRIORITY_FLAGS).join(', ')}`,
-        400);
+        `Invalid priorityFlag. Valid values: ${Object.values(PRIORITY_FLAGS).join(', ')}`, 400);
     }
 
-    // Check for active emergency — block routine if emergency active
+    // Block routine requests when an emergency is active
     if (priorityFlag === PRIORITY_FLAGS.ROUTINE) {
       const activeEmergency = await db.collection('ambulanceRequests')
         .where('priorityFlag', '==', PRIORITY_FLAGS.EMERGENCY)
@@ -56,47 +47,45 @@ router.post('/request', verifyToken, verifyRole([
 
       if (!activeEmergency.empty) {
         return errorResponse(res,
-          'An emergency is currently active. Routine requests are on hold.',
-          409);
+          'An emergency is currently active. Routine requests are on hold.', 409);
       }
     }
 
     const requestRef = db.collection('ambulanceRequests').doc();
     await requestRef.set({
-      requestedBy:       req.user.uid,
-      requestedByType:   req.userRole,
+      requestedBy:      req.user.uid,
+      requestedByType:  req.userRole,
       patientName,
-      patientRelation:   patientRelation || null,
+      patientRelation:  patientRelation || null,
       patientCondition,
       vehicleType,
       priorityFlag,
-      tripType:          tripType || TRIP_TYPES.INTRA_TOWNSHIP,
-      pickupLocation:    pickupLocation || null,
-      dropLocation:      dropLocation || null,
-      status:            AMBULANCE_STATUS.PENDING,
-      assignedDriver:    null,
-      vehicleAssigned:   vehicleType,
-      doctorObserver:    null,
-      overriddenBy:      null,
-      dispatchedAt:      null,
-      pickedUpAt:        null,
-      returnedAt:        null,
-      notes:             notes || null,
-      createdAt:         nowISO(),
+      tripType:         tripType || TRIP_TYPES.INTRA_TOWNSHIP,
+      pickupLocation:   pickupLocation || null,
+      dropLocation:     dropLocation || null,
+      status:           AMBULANCE_STATUS.PENDING,
+      assignedDriver:   null,
+      vehicleAssigned:  vehicleType,
+      doctorObserver:   null,
+      overriddenBy:     null,
+      dispatchedAt:     null,
+      pickedUpAt:       null,
+      returnedAt:       null,
+      completedAt:      null,
+      notes:            notes || null,
+      createdAt:        nowISO(),
     });
 
     return successResponse(res,
       { requestId: requestRef.id },
-      'Ambulance request created successfully',
-      201
-    );
+      'Ambulance request created successfully', 201);
   } catch (error) {
     console.error('Create ambulance request error:', error);
     return errorResponse(res, 'Failed to create request', 500);
   }
 });
 
-// ─── GET /active ──────────────────────────────────────────
+// ─── GET /active ──────────────────────────────────────────────────────────────
 // All active requests — visible to Reception, Driver, Doctor, CMO
 router.get('/active', verifyToken, verifyRole([
   ROLES.RECEPTION, ROLES.DRIVER, ROLES.DOCTOR, ROLES.CMO,
@@ -109,22 +98,19 @@ router.get('/active', verifyToken, verifyRole([
         AMBULANCE_STATUS.ACCEPTED,
         AMBULANCE_STATUS.DISPATCHED,
         AMBULANCE_STATUS.PICKED_UP,
+        AMBULANCE_STATUS.RETURNED,
       ])
       .orderBy('createdAt', 'desc')
       .get();
 
-    const requests = snapshot.docs.map(doc => ({
-      id: doc.id,
-      ...doc.data(),
-    }));
-
+    const requests = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
     return successResponse(res, requests);
   } catch (error) {
     return errorResponse(res, 'Failed to fetch active requests', 500);
   }
 });
 
-// ─── GET /my-requests ────────────────────────────────────
+// ─── GET /my-requests ─────────────────────────────────────────────────────────
 // Employee views own requests
 router.get('/my-requests', verifyToken, async (req, res) => {
   try {
@@ -134,36 +120,29 @@ router.get('/my-requests', verifyToken, async (req, res) => {
       .orderBy('createdAt', 'desc')
       .get();
 
-    const requests = snapshot.docs.map(doc => ({
-      id: doc.id,
-      ...doc.data(),
-    }));
-
+    const requests = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
     return successResponse(res, requests);
   } catch (error) {
     return errorResponse(res, 'Failed to fetch requests', 500);
   }
 });
 
-// ─── GET /:requestId ──────────────────────────────────────
+// ─── GET /:requestId ──────────────────────────────────────────────────────────
 router.get('/:requestId', verifyToken, async (req, res) => {
   try {
-    const db = admin.firestore();
+    const db  = admin.firestore();
     const doc = await db.collection('ambulanceRequests')
       .doc(req.params.requestId).get();
 
-    if (!doc.exists) {
-      return errorResponse(res, 'Request not found', 404);
-    }
-
+    if (!doc.exists) return errorResponse(res, 'Request not found', 404);
     return successResponse(res, { id: doc.id, ...doc.data() });
   } catch (error) {
     return errorResponse(res, 'Failed to fetch request', 500);
   }
 });
 
-// ─── POST /:requestId/assign ──────────────────────────────
-// Reception assigns driver and dispatches
+// ─── POST /:requestId/assign ──────────────────────────────────────────────────
+// Reception assigns driver and vehicle
 router.post('/:requestId/assign', verifyToken, verifyRole([
   ROLES.RECEPTION, ROLES.CMO,
 ]), async (req, res) => {
@@ -178,10 +157,7 @@ router.post('/:requestId/assign', verifyToken, verifyRole([
     const requestRef = db.collection('ambulanceRequests').doc(req.params.requestId);
     const requestDoc = await requestRef.get();
 
-    if (!requestDoc.exists) {
-      return errorResponse(res, 'Request not found', 404);
-    }
-
+    if (!requestDoc.exists) return errorResponse(res, 'Request not found', 404);
     if (requestDoc.data().status !== AMBULANCE_STATUS.PENDING) {
       return errorResponse(res, 'Request is no longer pending', 409);
     }
@@ -200,26 +176,23 @@ router.post('/:requestId/assign', verifyToken, verifyRole([
   }
 });
 
-// ─── POST /:requestId/dispatch ────────────────────────────
+// ─── POST /:requestId/dispatch ────────────────────────────────────────────────
 // Reception confirms dispatch
 router.post('/:requestId/dispatch', verifyToken, verifyRole([
   ROLES.RECEPTION, ROLES.CMO,
 ]), async (req, res) => {
   try {
-    const db = admin.firestore();
+    const db         = admin.firestore();
     const requestRef = db.collection('ambulanceRequests').doc(req.params.requestId);
     const requestDoc = await requestRef.get();
 
-    if (!requestDoc.exists) {
-      return errorResponse(res, 'Request not found', 404);
-    }
-
+    if (!requestDoc.exists) return errorResponse(res, 'Request not found', 404);
     if (requestDoc.data().status !== AMBULANCE_STATUS.ACCEPTED) {
       return errorResponse(res, 'Request must be accepted before dispatch', 409);
     }
 
     await requestRef.update({
-      status:       AMBULANCE_STATUS.DISPATCHED,
+      status:      AMBULANCE_STATUS.DISPATCHED,
       dispatchedAt: nowISO(),
     });
 
@@ -229,8 +202,8 @@ router.post('/:requestId/dispatch', verifyToken, verifyRole([
   }
 });
 
-// ─── POST /:requestId/picked-up ───────────────────────────
-// Driver pushes button on arrival at pickup location
+// ─── POST /:requestId/picked-up ───────────────────────────────────────────────
+// Driver marks arrived at patient location
 router.post('/:requestId/picked-up', verifyToken, verifyRole([
   ROLES.DRIVER,
 ]), async (req, res) => {
@@ -241,18 +214,15 @@ router.post('/:requestId/picked-up', verifyToken, verifyRole([
     const requestRef = db.collection('ambulanceRequests').doc(req.params.requestId);
     const requestDoc = await requestRef.get();
 
-    if (!requestDoc.exists) {
-      return errorResponse(res, 'Request not found', 404);
-    }
-
+    if (!requestDoc.exists) return errorResponse(res, 'Request not found', 404);
     if (requestDoc.data().status !== AMBULANCE_STATUS.DISPATCHED) {
       return errorResponse(res, 'Request must be dispatched first', 409);
     }
 
     await requestRef.update({
-      status:     AMBULANCE_STATUS.PICKED_UP,
+      status:    AMBULANCE_STATUS.PICKED_UP,
       pickedUpAt: nowISO(),
-      pickupGPS:  latitude && longitude ? { latitude, longitude } : null,
+      pickupGPS: latitude && longitude ? { latitude, longitude } : null,
     });
 
     return successResponse(res, null, 'Patient picked up confirmed');
@@ -261,8 +231,8 @@ router.post('/:requestId/picked-up', verifyToken, verifyRole([
   }
 });
 
-// ─── POST /:requestId/returned ────────────────────────────
-// Driver pushes button on return to medical centre
+// ─── POST /:requestId/returned ────────────────────────────────────────────────
+// Driver marks back at medical centre
 router.post('/:requestId/returned', verifyToken, verifyRole([
   ROLES.DRIVER,
 ]), async (req, res) => {
@@ -273,18 +243,15 @@ router.post('/:requestId/returned', verifyToken, verifyRole([
     const requestRef = db.collection('ambulanceRequests').doc(req.params.requestId);
     const requestDoc = await requestRef.get();
 
-    if (!requestDoc.exists) {
-      return errorResponse(res, 'Request not found', 404);
-    }
-
+    if (!requestDoc.exists) return errorResponse(res, 'Request not found', 404);
     if (requestDoc.data().status !== AMBULANCE_STATUS.PICKED_UP) {
       return errorResponse(res, 'Patient must be picked up first', 409);
     }
 
     await requestRef.update({
-      status:     AMBULANCE_STATUS.RETURNED,
+      status:    AMBULANCE_STATUS.RETURNED,
       returnedAt: nowISO(),
-      returnGPS:  latitude && longitude ? { latitude, longitude } : null,
+      returnGPS: latitude && longitude ? { latitude, longitude } : null,
     });
 
     return successResponse(res, null, 'Vehicle returned to medical centre');
@@ -293,7 +260,34 @@ router.post('/:requestId/returned', verifyToken, verifyRole([
   }
 });
 
-// ─── POST /:requestId/cancel ──────────────────────────────
+// ─── POST /:requestId/complete ────────────────────────────────────────────────
+// Reception marks patient formally received — closes the request
+router.post('/:requestId/complete', verifyToken, verifyRole([
+  ROLES.RECEPTION, ROLES.CMO,
+]), async (req, res) => {
+  try {
+    const db         = admin.firestore();
+    const requestRef = db.collection('ambulanceRequests').doc(req.params.requestId);
+    const requestDoc = await requestRef.get();
+
+    if (!requestDoc.exists) return errorResponse(res, 'Request not found', 404);
+    if (requestDoc.data().status !== AMBULANCE_STATUS.RETURNED) {
+      return errorResponse(res, 'Ambulance must be returned before completing the request', 409);
+    }
+
+    await requestRef.update({
+      status:      AMBULANCE_STATUS.COMPLETED,
+      completedAt: nowISO(),
+      completedBy: req.user.uid,
+    });
+
+    return successResponse(res, null, 'Request completed. Patient formally received.');
+  } catch (error) {
+    return errorResponse(res, 'Completion failed', 500);
+  }
+});
+
+// ─── POST /:requestId/cancel ──────────────────────────────────────────────────
 router.post('/:requestId/cancel', verifyToken, verifyRole([
   ROLES.RECEPTION, ROLES.CMO, ROLES.DOCTOR,
 ]), async (req, res) => {
@@ -304,11 +298,10 @@ router.post('/:requestId/cancel', verifyToken, verifyRole([
     const requestRef = db.collection('ambulanceRequests').doc(req.params.requestId);
     const requestDoc = await requestRef.get();
 
-    if (!requestDoc.exists) {
-      return errorResponse(res, 'Request not found', 404);
-    }
+    if (!requestDoc.exists) return errorResponse(res, 'Request not found', 404);
 
-    if ([AMBULANCE_STATUS.RETURNED, AMBULANCE_STATUS.CANCELLED]
+    // Cannot cancel a completed or already-cancelled request
+    if ([AMBULANCE_STATUS.COMPLETED, AMBULANCE_STATUS.CANCELLED]
         .includes(requestDoc.data().status)) {
       return errorResponse(res, 'Request is already completed or cancelled', 409);
     }
@@ -326,7 +319,7 @@ router.post('/:requestId/cancel', verifyToken, verifyRole([
   }
 });
 
-// ─── POST /:requestId/override ────────────────────────────
+// ─── POST /:requestId/override ────────────────────────────────────────────────
 // Doctor/CMO overrides vehicle type or priority
 router.post('/:requestId/override', verifyToken, verifyRole([
   ROLES.DOCTOR, ROLES.CMO,
@@ -338,28 +331,25 @@ router.post('/:requestId/override', verifyToken, verifyRole([
     const requestRef = db.collection('ambulanceRequests').doc(req.params.requestId);
     const requestDoc = await requestRef.get();
 
-    if (!requestDoc.exists) {
-      return errorResponse(res, 'Request not found', 404);
-    }
+    if (!requestDoc.exists) return errorResponse(res, 'Request not found', 404);
 
     const updates = {
-      overriddenBy:  req.user.uid,
-      overriddenAt:  nowISO(),
-      overrideNotes: notes || null,
+      overriddenBy:   req.user.uid,
+      overriddenAt:   nowISO(),
+      overrideNotes:  notes || null,
     };
 
-    if (vehicleType) updates.vehicleType   = vehicleType;
-    if (priorityFlag) updates.priorityFlag = priorityFlag;
+    if (vehicleType)  updates.vehicleType   = vehicleType;
+    if (priorityFlag) updates.priorityFlag  = priorityFlag;
 
     await requestRef.update(updates);
-
     return successResponse(res, null, 'Override applied successfully');
   } catch (error) {
     return errorResponse(res, 'Override failed', 500);
   }
 });
 
-// ─── POST /:requestId/location ────────────────────────────
+// ─── POST /:requestId/location ────────────────────────────────────────────────
 // Driver updates live GPS location
 router.post('/:requestId/location', verifyToken, verifyRole([
   ROLES.DRIVER,
@@ -375,12 +365,10 @@ router.post('/:requestId/location', verifyToken, verifyRole([
     const requestRef = db.collection('ambulanceRequests').doc(req.params.requestId);
     const requestDoc = await requestRef.get();
 
-    if (!requestDoc.exists) {
-      return errorResponse(res, 'Request not found', 404);
-    }
+    if (!requestDoc.exists) return errorResponse(res, 'Request not found', 404);
 
     await requestRef.update({
-      currentLocation: { latitude, longitude },
+      currentLocation:   { latitude, longitude },
       locationUpdatedAt: nowISO(),
     });
 

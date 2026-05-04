@@ -96,3 +96,5 @@ node_modules/
 .firebase/
 app/.expo/
 app/node_modules/
+.env
+service-account.json

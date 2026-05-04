@@ -1,15 +1,19 @@
 import { initializeApp } from 'firebase/app';
 import { getAuth } from 'firebase/auth';
+import { getFirestore } from 'firebase/firestore';
+import { getStorage } from 'firebase/storage';
 
 const firebaseConfig = {
-  apiKey:            "AIzaSyCjTcfR-MB9eJTSSjrhbn0WDajvZRS873w",
-  authDomain:        "ffl-medical-centre-app.firebaseapp.com",
-  projectId:         "ffl-medical-centre-app",
-  storageBucket:     "ffl-medical-centre-app.appspot.com",
-  messagingSenderId: "610679483970",
-  appId:             "1:610679483970:web:1304ccb543e247384b07db",
+  apiKey: process.env.EXPO_PUBLIC_FIREBASE_API_KEY,
+  authDomain: process.env.EXPO_PUBLIC_FIREBASE_AUTH_DOMAIN,
+  projectId: process.env.EXPO_PUBLIC_FIREBASE_PROJECT_ID,
+  storageBucket: process.env.EXPO_PUBLIC_FIREBASE_STORAGE_BUCKET,
+  messagingSenderId: process.env.EXPO_PUBLIC_FIREBASE_MESSAGING_SENDER_ID,
+  appId: process.env.EXPO_PUBLIC_FIREBASE_APP_ID,
 };
 
 const app = initializeApp(firebaseConfig);
+
 export const auth = getAuth(app);
-export default app;
+export const db = getFirestore(app);
+export const storage = getStorage(app);

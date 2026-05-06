@@ -19,6 +19,10 @@ import AmbulanceRequestReceptionScreen from '../screens/ambulance/AmbulanceReque
 import AmbulanceReceptionHubScreen     from '../screens/ambulance/AmbulanceReceptionHubScreen';
 import AmbulanceRequestDetailScreen    from '../screens/ambulance/AmbulanceRequestDetailScreen';
 
+// Availability flow screens
+import DoctorAvailabilityScreen       from '../screens/availability/DoctorAvailabilityScreen';
+import DoctorAvailabilityManageScreen from '../screens/availability/DoctorAvailabilityManageScreen';
+
 const Stack = createNativeStackNavigator();
 
 export default function AppNavigator({ userRole }) {
@@ -48,6 +52,10 @@ export default function AppNavigator({ userRole }) {
       <Stack.Screen name="AmbulanceRequestReception" component={AmbulanceRequestReceptionScreen} />
       <Stack.Screen name="AmbulanceReceptionHub"     component={AmbulanceReceptionHubScreen} />
       <Stack.Screen name="AmbulanceRequestDetail"    component={AmbulanceRequestDetailScreen} />
+
+      {/* Availability flow */}
+      <Stack.Screen name="DoctorAvailability"       component={DoctorAvailabilityScreen} />
+      <Stack.Screen name="DoctorAvailabilityManage" component={DoctorAvailabilityManageScreen} />
     </Stack.Navigator>
   );
 }

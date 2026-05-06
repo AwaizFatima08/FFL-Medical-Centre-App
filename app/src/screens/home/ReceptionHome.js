@@ -18,6 +18,13 @@ const TILES = [
     screen: null,
     active: false,
   },
+  {
+    id: 'availability',
+    label: 'Doctor Availability',
+    icon: '🩺',
+    screen: 'DoctorAvailabilityManage',
+    active: true,
+  },
 ];
 
 export default function ReceptionHome({ navigation }) {

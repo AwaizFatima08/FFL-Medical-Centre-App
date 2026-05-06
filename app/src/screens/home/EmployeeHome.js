@@ -32,6 +32,13 @@ const TILES = [
     screen: null,
     active: false,
   },
+  {
+    id: 'availability',
+    label: 'Doctor Availability',
+    icon: '🩺',
+    screen: 'DoctorAvailability',
+    active: true,
+  },
 ];
 
 export default function EmployeeHome({ navigation }) {

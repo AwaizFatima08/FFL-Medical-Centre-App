@@ -1,380 +1,577 @@
 // functions/src/ambulance/ambulanceRoutes.js
 const express = require('express');
-const router  = express.Router();
-const admin   = require('firebase-admin');
-const { verifyToken, verifyRole } = require('../auth/authRoutes');
-const { successResponse, errorResponse, nowISO } = require('../utils');
-const { ROLES, AMBULANCE_STATUS, VEHICLE_TYPES, PRIORITY_FLAGS, TRIP_TYPES } = require('../constants');
+const { getAuth } = require('firebase-admin/auth');
+const { getFirestore, Timestamp, FieldValue } = require('firebase-admin/firestore');
+const { ROLES, AMBULANCE_STATUS } = require('../constants');
 
-// ─── POST /request ────────────────────────────────────────────────────────────
-// Employee or Reception creates dispatch request
-router.post('/request', verifyToken, verifyRole([
-  ROLES.EMPLOYEE, ROLES.RECEPTION, ROLES.CMO, ROLES.DOCTOR,
-]), async (req, res) => {
+const router = express.Router();
+const db = getFirestore();
+
+// Helper function to get user role and validate permissions
+async function getUserRole(uid) {
+  const userDoc = await db.collection('users').doc(uid).get();
+  if (!userDoc.exists) throw new Error('User not found');
+  return userDoc.data().role;
+}
+
+// Helper function to get employee data for self-requests
+async function getEmployeeData(uid) {
+  const empQuery = await db.collection('employees').where('userId', '==', uid).get();
+  if (empQuery.empty) throw new Error('Employee record not found');
+  return empQuery.docs[0].data();
+}
+
+// GET /drivers - Get list of available drivers (for reception dropdown)
+router.get("/drivers", async (req, res) => {
   try {
-    const db = admin.firestore();
+    const { uid } = req.user;
+    const userRole = await getUserRole(uid);
+    if (!["reception", "cmo", "admin_incharge"].includes(userRole)) {
+      return res.status(403).json({ success: false, message: "Access denied" });
+    }
+    const snapshot = await db.collection("users")
+      .where("role", "==", "driver")
+      .where("isActive", "==", true)
+      .get();
+    const drivers = snapshot.docs.map(doc => ({
+      uid: doc.id,
+      email: doc.data().email,
+      fullName: doc.data().fullName || doc.data().email
+    }));
+    res.json({ success: true, data: drivers });
+  } catch (error) {
+    console.error("Fetch drivers error:", error);
+    res.status(500).json({ success: false, message: "Failed to fetch drivers", error: error.message });
+  }
+});
+
+// POST /request - Submit new ambulance request (employee or reception)
+router.post('/request', async (req, res) => {
+  try {
+    const { uid } = req.user;
+    const userRole = await getUserRole(uid);
+    
+    if (!['employee', 'reception'].includes(userRole)) {
+      return res.status(403).json({ success: false, message: 'Access denied' });
+    }
+
     const {
       patientName, patientRelation, patientCondition,
       vehicleType, priorityFlag, tripType,
-      pickupLocation, dropLocation, notes,
+      pickupLocation, dropLocation, notes
     } = req.body;
 
-    if (!patientName || !patientCondition || !vehicleType || !priorityFlag || !tripType) {
-      return errorResponse(res,
-        'patientName, patientCondition, vehicleType, priorityFlag and tripType are required', 400);
+    // Validation
+    if (!patientName?.trim()) {
+      return res.status(400).json({ success: false, message: 'Patient name is required' });
+    }
+    if (!patientCondition?.trim()) {
+      return res.status(400).json({ success: false, message: 'Patient condition is required' });
     }
 
-    if (!Object.values(VEHICLE_TYPES).includes(vehicleType)) {
-      return errorResponse(res,
-        `Invalid vehicleType. Valid values: ${Object.values(VEHICLE_TYPES).join(', ')}`, 400);
-    }
-    if (!Object.values(PRIORITY_FLAGS).includes(priorityFlag)) {
-      return errorResponse(res,
-        `Invalid priorityFlag. Valid values: ${Object.values(PRIORITY_FLAGS).join(', ')}`, 400);
-    }
-
-    // Block routine requests when an emergency is active
-    if (priorityFlag === PRIORITY_FLAGS.ROUTINE) {
-      const activeEmergency = await db.collection('ambulanceRequests')
-        .where('priorityFlag', '==', PRIORITY_FLAGS.EMERGENCY)
-        .where('status', 'in', [
-          AMBULANCE_STATUS.PENDING,
-          AMBULANCE_STATUS.ACCEPTED,
-          AMBULANCE_STATUS.DISPATCHED,
-          AMBULANCE_STATUS.PICKED_UP,
-        ])
-        .get();
-
-      if (!activeEmergency.empty) {
-        return errorResponse(res,
-          'An emergency is currently active. Routine requests are on hold.', 409);
-      }
-    }
-
-    const requestRef = db.collection('ambulanceRequests').doc();
-    await requestRef.set({
-      requestedBy:      req.user.uid,
-      requestedByType:  req.userRole,
-      patientName,
-      patientRelation:  patientRelation || null,
-      patientCondition,
-      vehicleType,
-      priorityFlag,
-      tripType:         tripType || TRIP_TYPES.INTRA_TOWNSHIP,
-      pickupLocation:   pickupLocation || null,
-      dropLocation:     dropLocation || null,
-      status:           AMBULANCE_STATUS.PENDING,
-      assignedDriver:   null,
-      vehicleAssigned:  vehicleType,
-      doctorObserver:   null,
-      overriddenBy:     null,
-      dispatchedAt:     null,
-      pickedUpAt:       null,
-      returnedAt:       null,
-      completedAt:      null,
-      notes:            notes || null,
-      createdAt:        nowISO(),
-    });
-
-    return successResponse(res,
-      { requestId: requestRef.id },
-      'Ambulance request created successfully', 201);
-  } catch (error) {
-    console.error('Create ambulance request error:', error);
-    return errorResponse(res, 'Failed to create request', 500);
-  }
-});
-
-// ─── GET /active ──────────────────────────────────────────────────────────────
-// All active requests — visible to Reception, Driver, Doctor, CMO
-router.get('/active', verifyToken, verifyRole([
-  ROLES.RECEPTION, ROLES.DRIVER, ROLES.DOCTOR, ROLES.CMO,
-]), async (req, res) => {
-  try {
-    const db = admin.firestore();
-    const snapshot = await db.collection('ambulanceRequests')
-      .where('status', 'in', [
-        AMBULANCE_STATUS.PENDING,
-        AMBULANCE_STATUS.ACCEPTED,
-        AMBULANCE_STATUS.DISPATCHED,
-        AMBULANCE_STATUS.PICKED_UP,
-        AMBULANCE_STATUS.RETURNED,
-      ])
-      .orderBy('createdAt', 'desc')
-      .get();
-
-    const requests = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-    return successResponse(res, requests);
-  } catch (error) {
-    return errorResponse(res, 'Failed to fetch active requests', 500);
-  }
-});
-
-// ─── GET /my-requests ─────────────────────────────────────────────────────────
-// Employee views own requests
-router.get('/my-requests', verifyToken, async (req, res) => {
-  try {
-    const db = admin.firestore();
-    const snapshot = await db.collection('ambulanceRequests')
-      .where('requestedBy', '==', req.user.uid)
-      .orderBy('createdAt', 'desc')
-      .get();
-
-    const requests = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-    return successResponse(res, requests);
-  } catch (error) {
-    return errorResponse(res, 'Failed to fetch requests', 500);
-  }
-});
-
-// ─── GET /:requestId ──────────────────────────────────────────────────────────
-router.get('/:requestId', verifyToken, async (req, res) => {
-  try {
-    const db  = admin.firestore();
-    const doc = await db.collection('ambulanceRequests')
-      .doc(req.params.requestId).get();
-
-    if (!doc.exists) return errorResponse(res, 'Request not found', 404);
-    return successResponse(res, { id: doc.id, ...doc.data() });
-  } catch (error) {
-    return errorResponse(res, 'Failed to fetch request', 500);
-  }
-});
-
-// ─── POST /:requestId/assign ──────────────────────────────────────────────────
-// Reception assigns driver and vehicle
-router.post('/:requestId/assign', verifyToken, verifyRole([
-  ROLES.RECEPTION, ROLES.CMO,
-]), async (req, res) => {
-  try {
-    const db = admin.firestore();
-    const { driverUid, vehicleType } = req.body;
-
-    if (!driverUid || !vehicleType) {
-      return errorResponse(res, 'driverUid and vehicleType are required', 400);
-    }
-
-    const requestRef = db.collection('ambulanceRequests').doc(req.params.requestId);
-    const requestDoc = await requestRef.get();
-
-    if (!requestDoc.exists) return errorResponse(res, 'Request not found', 404);
-    if (requestDoc.data().status !== AMBULANCE_STATUS.PENDING) {
-      return errorResponse(res, 'Request is no longer pending', 409);
-    }
-
-    await requestRef.update({
-      assignedDriver:  driverUid,
-      vehicleAssigned: vehicleType,
-      status:          AMBULANCE_STATUS.ACCEPTED,
-      assignedAt:      nowISO(),
-      assignedBy:      req.user.uid,
-    });
-
-    return successResponse(res, null, 'Driver assigned successfully');
-  } catch (error) {
-    return errorResponse(res, 'Assignment failed', 500);
-  }
-});
-
-// ─── POST /:requestId/dispatch ────────────────────────────────────────────────
-// Reception confirms dispatch
-router.post('/:requestId/dispatch', verifyToken, verifyRole([
-  ROLES.RECEPTION, ROLES.CMO,
-]), async (req, res) => {
-  try {
-    const db         = admin.firestore();
-    const requestRef = db.collection('ambulanceRequests').doc(req.params.requestId);
-    const requestDoc = await requestRef.get();
-
-    if (!requestDoc.exists) return errorResponse(res, 'Request not found', 404);
-    if (requestDoc.data().status !== AMBULANCE_STATUS.ACCEPTED) {
-      return errorResponse(res, 'Request must be accepted before dispatch', 409);
-    }
-
-    await requestRef.update({
-      status:      AMBULANCE_STATUS.DISPATCHED,
-      dispatchedAt: nowISO(),
-    });
-
-    return successResponse(res, null, 'Ambulance dispatched');
-  } catch (error) {
-    return errorResponse(res, 'Dispatch failed', 500);
-  }
-});
-
-// ─── POST /:requestId/picked-up ───────────────────────────────────────────────
-// Driver marks arrived at patient location
-router.post('/:requestId/picked-up', verifyToken, verifyRole([
-  ROLES.DRIVER,
-]), async (req, res) => {
-  try {
-    const db = admin.firestore();
-    const { latitude, longitude } = req.body;
-
-    const requestRef = db.collection('ambulanceRequests').doc(req.params.requestId);
-    const requestDoc = await requestRef.get();
-
-    if (!requestDoc.exists) return errorResponse(res, 'Request not found', 404);
-    if (requestDoc.data().status !== AMBULANCE_STATUS.DISPATCHED) {
-      return errorResponse(res, 'Request must be dispatched first', 409);
-    }
-
-    await requestRef.update({
-      status:    AMBULANCE_STATUS.PICKED_UP,
-      pickedUpAt: nowISO(),
-      pickupGPS: latitude && longitude ? { latitude, longitude } : null,
-    });
-
-    return successResponse(res, null, 'Patient picked up confirmed');
-  } catch (error) {
-    return errorResponse(res, 'Status update failed', 500);
-  }
-});
-
-// ─── POST /:requestId/returned ────────────────────────────────────────────────
-// Driver marks back at medical centre
-router.post('/:requestId/returned', verifyToken, verifyRole([
-  ROLES.DRIVER,
-]), async (req, res) => {
-  try {
-    const db = admin.firestore();
-    const { latitude, longitude } = req.body;
-
-    const requestRef = db.collection('ambulanceRequests').doc(req.params.requestId);
-    const requestDoc = await requestRef.get();
-
-    if (!requestDoc.exists) return errorResponse(res, 'Request not found', 404);
-    if (requestDoc.data().status !== AMBULANCE_STATUS.PICKED_UP) {
-      return errorResponse(res, 'Patient must be picked up first', 409);
-    }
-
-    await requestRef.update({
-      status:    AMBULANCE_STATUS.RETURNED,
-      returnedAt: nowISO(),
-      returnGPS: latitude && longitude ? { latitude, longitude } : null,
-    });
-
-    return successResponse(res, null, 'Vehicle returned to medical centre');
-  } catch (error) {
-    return errorResponse(res, 'Status update failed', 500);
-  }
-});
-
-// ─── POST /:requestId/complete ────────────────────────────────────────────────
-// Reception marks patient formally received — closes the request
-router.post('/:requestId/complete', verifyToken, verifyRole([
-  ROLES.RECEPTION, ROLES.CMO,
-]), async (req, res) => {
-  try {
-    const db         = admin.firestore();
-    const requestRef = db.collection('ambulanceRequests').doc(req.params.requestId);
-    const requestDoc = await requestRef.get();
-
-    if (!requestDoc.exists) return errorResponse(res, 'Request not found', 404);
-    if (requestDoc.data().status !== AMBULANCE_STATUS.RETURNED) {
-      return errorResponse(res, 'Ambulance must be returned before completing the request', 409);
-    }
-
-    await requestRef.update({
-      status:      AMBULANCE_STATUS.COMPLETED,
-      completedAt: nowISO(),
-      completedBy: req.user.uid,
-    });
-
-    return successResponse(res, null, 'Request completed. Patient formally received.');
-  } catch (error) {
-    return errorResponse(res, 'Completion failed', 500);
-  }
-});
-
-// ─── POST /:requestId/cancel ──────────────────────────────────────────────────
-router.post('/:requestId/cancel', verifyToken, verifyRole([
-  ROLES.RECEPTION, ROLES.CMO, ROLES.DOCTOR,
-]), async (req, res) => {
-  try {
-    const db = admin.firestore();
-    const { reason } = req.body;
-
-    const requestRef = db.collection('ambulanceRequests').doc(req.params.requestId);
-    const requestDoc = await requestRef.get();
-
-    if (!requestDoc.exists) return errorResponse(res, 'Request not found', 404);
-
-    // Cannot cancel a completed or already-cancelled request
-    if ([AMBULANCE_STATUS.COMPLETED, AMBULANCE_STATUS.CANCELLED]
-        .includes(requestDoc.data().status)) {
-      return errorResponse(res, 'Request is already completed or cancelled', 409);
-    }
-
-    await requestRef.update({
-      status:       AMBULANCE_STATUS.CANCELLED,
-      cancelledAt:  nowISO(),
-      cancelledBy:  req.user.uid,
-      cancelReason: reason || null,
-    });
-
-    return successResponse(res, null, 'Request cancelled');
-  } catch (error) {
-    return errorResponse(res, 'Cancellation failed', 500);
-  }
-});
-
-// ─── POST /:requestId/override ────────────────────────────────────────────────
-// Doctor/CMO overrides vehicle type or priority
-router.post('/:requestId/override', verifyToken, verifyRole([
-  ROLES.DOCTOR, ROLES.CMO,
-]), async (req, res) => {
-  try {
-    const db = admin.firestore();
-    const { vehicleType, priorityFlag, notes } = req.body;
-
-    const requestRef = db.collection('ambulanceRequests').doc(req.params.requestId);
-    const requestDoc = await requestRef.get();
-
-    if (!requestDoc.exists) return errorResponse(res, 'Request not found', 404);
-
-    const updates = {
-      overriddenBy:   req.user.uid,
-      overriddenAt:   nowISO(),
-      overrideNotes:  notes || null,
+    // Create request document
+    const requestData = {
+      requestedBy: uid,
+      requestedByType: userRole,
+      patientName: patientName.trim(),
+      patientRelation: patientRelation?.trim() || 'Self',
+      patientCondition: patientCondition.trim(),
+      vehicleType: vehicleType || 'mini',
+      priorityFlag: priorityFlag || 'routine',
+      tripType: tripType || 'intra_township',
+      pickupLocation: pickupLocation?.trim() || null,
+      dropLocation: dropLocation?.trim() || null,
+      status: userRole === "reception" ? AMBULANCE_STATUS.ACCEPTED : AMBULANCE_STATUS.PENDING,
+      assignedDriver: null,
+      vehicleAssigned: vehicleType || 'mini',
+      doctorObserver: null,
+      overriddenBy: null,
+      dispatchedAt: null,
+      pickedUpAt: null,
+      returnedAt: null,
+      completedAt: null,
+      acceptedAt: userRole === "reception" ? Timestamp.now().toDate().toISOString() : null,
+      acceptedBy: userRole === "reception" ? uid : null,
+      notes: notes?.trim() || null,
+      createdAt: Timestamp.now().toDate().toISOString(),
     };
 
-    if (vehicleType)  updates.vehicleType   = vehicleType;
-    if (priorityFlag) updates.priorityFlag  = priorityFlag;
+    const docRef = await db.collection('ambulanceRequests').add(requestData);
+    
+    res.json({
+      success: true,
+      message: 'Ambulance request submitted successfully',
+      data: { id: docRef.id, ...requestData }
+    });
 
-    await requestRef.update(updates);
-    return successResponse(res, null, 'Override applied successfully');
   } catch (error) {
-    return errorResponse(res, 'Override failed', 500);
+    console.error('Submit request error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to submit request',
+      error: error.message
+    });
   }
 });
 
-// ─── POST /:requestId/location ────────────────────────────────────────────────
-// Driver updates live GPS location
-router.post('/:requestId/location', verifyToken, verifyRole([
-  ROLES.DRIVER,
-]), async (req, res) => {
+// GET /active - Get all active (non-completed/cancelled) requests
+router.get('/active', async (req, res) => {
   try {
-    const db = admin.firestore();
-    const { latitude, longitude } = req.body;
-
-    if (!latitude || !longitude) {
-      return errorResponse(res, 'latitude and longitude are required', 400);
+    const { uid } = req.user;
+    const userRole = await getUserRole(uid);
+    
+    if (!['reception', 'cmo', 'admin_incharge'].includes(userRole)) {
+      return res.status(403).json({ success: false, message: 'Access denied' });
     }
 
-    const requestRef = db.collection('ambulanceRequests').doc(req.params.requestId);
-    const requestDoc = await requestRef.get();
+    const snapshot = await db.collection('ambulanceRequests')
+      .where('status', 'not-in', [AMBULANCE_STATUS.COMPLETED, AMBULANCE_STATUS.CANCELLED])
+      .orderBy('createdAt', 'desc')
+      .get();
 
-    if (!requestDoc.exists) return errorResponse(res, 'Request not found', 404);
+    const requests = snapshot.docs.map(doc => ({
+      id: doc.id,
+      ...doc.data()
+    }));
 
-    await requestRef.update({
-      currentLocation:   { latitude, longitude },
-      locationUpdatedAt: nowISO(),
+    res.json({
+      success: true,
+      message: 'Success',
+      data: requests
     });
 
-    return successResponse(res, null, 'Location updated');
   } catch (error) {
-    return errorResponse(res, 'Location update failed', 500);
+    console.error('Fetch active requests error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch active requests',
+      error: error.message
+    });
+  }
+});
+
+// GET /:id - Get specific request details
+router.get('/:id', async (req, res) => {
+  try {
+    const { uid } = req.user;
+    const userRole = await getUserRole(uid);
+    const { id } = req.params;
+
+    if (!['reception', 'driver', 'cmo', 'admin_incharge'].includes(userRole)) {
+      return res.status(403).json({ success: false, message: 'Access denied' });
+    }
+
+    const doc = await db.collection('ambulanceRequests').doc(id).get();
+    if (!doc.exists) {
+      return res.status(404).json({ success: false, message: 'Request not found' });
+    }
+
+    res.json({
+      success: true,
+      data: { id: doc.id, ...doc.data() }
+    });
+
+  } catch (error) {
+    console.error('Fetch request error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch request',
+      error: error.message
+    });
+  }
+});
+
+// POST /:id/accept - Accept a pending request (reception workflow)
+router.post('/:id/accept', async (req, res) => {
+  try {
+    const { uid } = req.user;
+    const userRole = await getUserRole(uid);
+    const { id } = req.params;
+
+    if (!['reception', 'cmo'].includes(userRole)) {
+      return res.status(403).json({ success: false, message: 'Only reception and CMO can accept requests' });
+    }
+
+    const docRef = db.collection('ambulanceRequests').doc(id);
+    const doc = await docRef.get();
+    
+    if (!doc.exists) {
+      return res.status(404).json({ success: false, message: 'Request not found' });
+    }
+
+    const currentData = doc.data();
+    if (currentData.status !== AMBULANCE_STATUS.PENDING) {
+      return res.status(400).json({ 
+        success: false, 
+        message: `Cannot accept request with status: ${currentData.status}` 
+      });
+    }
+
+    await docRef.update({
+      status: AMBULANCE_STATUS.ACCEPTED,
+      acceptedBy: uid,
+      acceptedAt: Timestamp.now().toDate().toISOString(),
+    });
+
+    res.json({
+      success: true,
+      message: 'Request accepted successfully'
+    });
+
+  } catch (error) {
+    console.error('Accept request error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to accept request',
+      error: error.message
+    });
+  }
+});
+
+// POST /:id/assign - Assign driver and vehicle (only for accepted requests)
+router.post('/:id/assign', async (req, res) => {
+  try {
+    const { uid } = req.user;
+    const userRole = await getUserRole(uid);
+    const { id } = req.params;
+    const { driverUid, vehicleType } = req.body;
+
+    if (!['reception', 'cmo'].includes(userRole)) {
+      return res.status(403).json({ success: false, message: 'Access denied' });
+    }
+
+    if (!driverUid?.trim()) {
+      return res.status(400).json({ success: false, message: 'Driver UID is required' });
+    }
+
+    // Verify driver exists and has driver role
+    const driverDoc = await db.collection('users').doc(driverUid.trim()).get();
+    if (!driverDoc.exists || driverDoc.data().role !== 'driver') {
+      return res.status(400).json({ success: false, message: 'Invalid driver UID' });
+    }
+
+    const docRef = db.collection('ambulanceRequests').doc(id);
+    const doc = await docRef.get();
+    
+    if (!doc.exists) {
+      return res.status(404).json({ success: false, message: 'Request not found' });
+    }
+
+    const currentData = doc.data();
+    if (currentData.status !== AMBULANCE_STATUS.ACCEPTED) {
+      return res.status(400).json({ 
+        success: false, 
+        message: `Cannot assign driver to request with status: ${currentData.status}. Request must be accepted first.` 
+      });
+    }
+
+    await docRef.update({
+      assignedDriver: driverUid.trim(),
+      vehicleAssigned: vehicleType || currentData.vehicleType || 'mini',
+    });
+
+    res.json({
+      success: true,
+      message: 'Driver assigned successfully'
+    });
+
+  } catch (error) {
+    console.error('Assign driver error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to assign driver',
+      error: error.message
+    });
+  }
+});
+
+// POST /:id/dispatch - Dispatch ambulance (only for assigned requests)
+router.post('/:id/dispatch', async (req, res) => {
+  try {
+    const { uid } = req.user;
+    const userRole = await getUserRole(uid);
+    const { id } = req.params;
+
+    if (!['reception', 'cmo'].includes(userRole)) {
+      return res.status(403).json({ success: false, message: 'Access denied' });
+    }
+
+    const docRef = db.collection('ambulanceRequests').doc(id);
+    const doc = await docRef.get();
+    
+    if (!doc.exists) {
+      return res.status(404).json({ success: false, message: 'Request not found' });
+    }
+
+    const currentData = doc.data();
+    if (currentData.status !== AMBULANCE_STATUS.ACCEPTED || !currentData.assignedDriver) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Cannot dispatch. Request must be accepted and have assigned driver.' 
+      });
+    }
+
+    await docRef.update({
+      status: AMBULANCE_STATUS.DISPATCHED,
+      dispatchedAt: Timestamp.now().toDate().toISOString(),
+    });
+
+    res.json({
+      success: true,
+      message: 'Ambulance dispatched successfully'
+    });
+
+  } catch (error) {
+    console.error('Dispatch error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to dispatch ambulance',
+      error: error.message
+    });
+  }
+});
+
+// POST /:id/pickup - Mark as picked up (driver only)
+router.post('/:id/pickup', async (req, res) => {
+  try {
+    const { uid } = req.user;
+    const userRole = await getUserRole(uid);
+    const { id } = req.params;
+
+    if (userRole !== 'driver') {
+      return res.status(403).json({ success: false, message: 'Only drivers can mark pickup' });
+    }
+
+    const docRef = db.collection('ambulanceRequests').doc(id);
+    const doc = await docRef.get();
+    
+    if (!doc.exists) {
+      return res.status(404).json({ success: false, message: 'Request not found' });
+    }
+
+    const currentData = doc.data();
+    if (currentData.assignedDriver !== uid) {
+      return res.status(403).json({ success: false, message: 'Not assigned to this request' });
+    }
+    
+    if (currentData.status !== AMBULANCE_STATUS.DISPATCHED) {
+      return res.status(400).json({ 
+        success: false, 
+        message: `Cannot pickup from status: ${currentData.status}` 
+      });
+    }
+
+    await docRef.update({
+      status: AMBULANCE_STATUS.PICKED_UP,
+      pickedUpAt: Timestamp.now().toDate().toISOString(),
+    });
+
+    res.json({
+      success: true,
+      message: 'Patient picked up successfully'
+    });
+
+  } catch (error) {
+    console.error('Pickup error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to update pickup status',
+      error: error.message
+    });
+  }
+});
+
+// POST /:id/return - Mark as returned to medical center (driver only)
+router.post('/:id/return', async (req, res) => {
+  try {
+    const { uid } = req.user;
+    const userRole = await getUserRole(uid);
+    const { id } = req.params;
+
+    if (userRole !== 'driver') {
+      return res.status(403).json({ success: false, message: 'Only drivers can mark return' });
+    }
+
+    const docRef = db.collection('ambulanceRequests').doc(id);
+    const doc = await docRef.get();
+    
+    if (!doc.exists) {
+      return res.status(404).json({ success: false, message: 'Request not found' });
+    }
+
+    const currentData = doc.data();
+    if (currentData.assignedDriver !== uid) {
+      return res.status(403).json({ success: false, message: 'Not assigned to this request' });
+    }
+    
+    if (currentData.status !== AMBULANCE_STATUS.PICKED_UP) {
+      return res.status(400).json({ 
+        success: false, 
+        message: `Cannot return from status: ${currentData.status}` 
+      });
+    }
+
+    await docRef.update({
+      status: AMBULANCE_STATUS.RETURNED,
+      returnedAt: Timestamp.now().toDate().toISOString(),
+    });
+
+    res.json({
+      success: true,
+      message: 'Returned to medical center successfully'
+    });
+
+  } catch (error) {
+    console.error('Return error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to update return status',
+      error: error.message
+    });
+  }
+});
+
+// POST /:id/complete - Mark request as completed (reception only)
+router.post('/:id/complete', async (req, res) => {
+  try {
+    const { uid } = req.user;
+    const userRole = await getUserRole(uid);
+    const { id } = req.params;
+
+    if (!['reception', 'cmo'].includes(userRole)) {
+      return res.status(403).json({ success: false, message: 'Only reception and CMO can complete requests' });
+    }
+
+    const docRef = db.collection('ambulanceRequests').doc(id);
+    const doc = await docRef.get();
+    
+    if (!doc.exists) {
+      return res.status(404).json({ success: false, message: 'Request not found' });
+    }
+
+    const currentData = doc.data();
+    if (currentData.status !== AMBULANCE_STATUS.RETURNED) {
+      return res.status(400).json({ 
+        success: false, 
+        message: `Cannot complete from status: ${currentData.status}` 
+      });
+    }
+
+    await docRef.update({
+      status: AMBULANCE_STATUS.COMPLETED,
+      completedAt: Timestamp.now().toDate().toISOString(),
+    });
+
+    res.json({
+      success: true,
+      message: 'Request completed successfully'
+    });
+
+  } catch (error) {
+    console.error('Complete error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to complete request',
+      error: error.message
+    });
+  }
+});
+
+// POST /:id/cancel - Cancel request 
+router.post('/:id/cancel', async (req, res) => {
+  try {
+    const { uid } = req.user;
+    const userRole = await getUserRole(uid);
+    const { id } = req.params;
+    const { reason } = req.body;
+
+    const docRef = db.collection('ambulanceRequests').doc(id);
+    const doc = await docRef.get();
+    
+    if (!doc.exists) {
+      return res.status(404).json({ success: false, message: 'Request not found' });
+    }
+
+    const currentData = doc.data();
+    
+    // Permission checks based on role and status
+    if (userRole === 'reception' || userRole === 'cmo') {
+      // Reception and CMO can cancel at any stage
+    } else if (userRole === 'driver' && currentData.assignedDriver === uid) {
+      // Driver can only cancel if dispatched or picked up
+      if (!['dispatched', 'picked_up'].includes(currentData.status)) {
+        return res.status(403).json({ 
+          success: false, 
+          message: 'Drivers can only cancel during dispatch or pickup phases' 
+        });
+      }
+    } else {
+      return res.status(403).json({ success: false, message: 'Access denied' });
+    }
+
+    if (['completed', 'cancelled'].includes(currentData.status)) {
+      return res.status(400).json({ 
+        success: false, 
+        message: `Cannot cancel ${currentData.status} request` 
+      });
+    }
+
+    await docRef.update({
+      status: AMBULANCE_STATUS.CANCELLED,
+      cancelledBy: uid,
+      cancelledAt: Timestamp.now().toDate().toISOString(),
+      cancelReason: reason?.trim() || 'No reason provided',
+    });
+
+    res.json({
+      success: true,
+      message: 'Request cancelled successfully'
+    });
+
+  } catch (error) {
+    console.error('Cancel error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to cancel request',
+      error: error.message
+    });
+  }
+});
+
+// GET /driver/active - Get active trip for current driver
+router.get('/driver/active', async (req, res) => {
+  try {
+    const { uid } = req.user;
+    const userRole = await getUserRole(uid);
+    
+    if (userRole !== 'driver') {
+      return res.status(403).json({ success: false, message: 'Driver access only' });
+    }
+
+    const snapshot = await db.collection('ambulanceRequests')
+      .where('assignedDriver', '==', uid)
+      .where('status', 'in', [AMBULANCE_STATUS.DISPATCHED, AMBULANCE_STATUS.PICKED_UP])
+      .orderBy('dispatchedAt', 'desc')
+      .limit(1)
+      .get();
+
+    const activeTrip = snapshot.empty ? null : {
+      id: snapshot.docs[0].id,
+      ...snapshot.docs[0].data()
+    };
+
+    res.json({
+      success: true,
+      data: activeTrip
+    });
+
+  } catch (error) {
+    console.error('Driver active trip error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch active trip',
+      error: error.message
+    });
   }
 });
 

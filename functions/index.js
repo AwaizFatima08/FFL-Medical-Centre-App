@@ -1,11 +1,13 @@
 const { onRequest } = require('firebase-functions/v2/https');
 const { onSchedule } = require('firebase-functions/v2/scheduler');
-const admin = require('firebase-admin');
+const admin   = require('firebase-admin');
+const express = require('express');
+const cors    = require('cors');
 
-// ─── INITIALIZE FIREBASE ADMIN ───────────────────────────
+// ─── INITIALIZE FIREBASE ADMIN ────────────────────────────────────────────────
 admin.initializeApp();
 
-// ─── IMPORT ROUTE HANDLERS ───────────────────────────────
+// ─── IMPORT ROUTE HANDLERS ────────────────────────────────────────────────────
 const authRoutes         = require('./src/auth/authRoutes');
 const employeeRoutes     = require('./src/employees/employeeRoutes');
 const ambulanceRoutes    = require('./src/ambulance/ambulanceRoutes');
@@ -18,47 +20,73 @@ const directoryRoutes    = require('./src/directory/directoryRoutes');
 const feedbackRoutes     = require('./src/feedback/feedbackRoutes');
 const reportRoutes       = require('./src/reports/reportRoutes');
 
-// ─── SCHEDULED JOBS ──────────────────────────────────────
-const { autoUpdateAvailability } = require('./src/availability/availabilityScheduler');
+// ─── SCHEDULED JOBS ───────────────────────────────────────────────────────────
+const { autoUpdateAvailability }   = require('./src/availability/availabilityScheduler');
 const { sendVaccinationReminders } = require('./src/vaccination/vaccinationScheduler');
-const { sendTripReminders } = require('./src/trips/tripScheduler');
-const { sendFitnessReminders } = require('./src/fitness/fitnessScheduler');
+const { sendTripReminders }        = require('./src/trips/tripScheduler');
+const { sendFitnessReminders }     = require('./src/fitness/fitnessScheduler');
 
-// ─── HTTP ENDPOINTS ──────────────────────────────────────
-exports.auth         = onRequest({ region: 'asia-south1' }, authRoutes);
-exports.employees    = onRequest({ region: 'asia-south1' }, employeeRoutes);
-exports.ambulance    = onRequest({ region: 'asia-south1' }, ambulanceRoutes);
-exports.trips        = onRequest({ region: 'asia-south1' }, tripRoutes);
-exports.vaccination  = onRequest({ region: 'asia-south1' }, vaccinationRoutes);
-exports.notifications= onRequest({ region: 'asia-south1' }, notificationRoutes);
-exports.availability = onRequest({ region: 'asia-south1' }, availabilityRoutes);
-exports.fitness      = onRequest({ region: 'asia-south1' }, fitnessRoutes);
-exports.directory    = onRequest({ region: 'asia-south1' }, directoryRoutes);
-exports.feedback     = onRequest({ region: 'asia-south1' }, feedbackRoutes);
-exports.reports      = onRequest({ region: 'asia-south1' }, reportRoutes);
+// ─── CORS MIDDLEWARE ──────────────────────────────────────────────────────────
+// Allow requests from any origin — required for web and mobile clients
+const corsMiddleware = cors({ origin: true });
 
-// ─── SCHEDULED FUNCTIONS ─────────────────────────────────
+// ─── AUTH MIDDLEWARE ───────────────────────────────────────────────────────────
+async function authMiddleware(req, res, next) {
+  const authHeader = req.headers.authorization;
+  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    return res.status(401).json({ success: false, message: 'No token provided' });
+  }
+  try {
+    const token = authHeader.split('Bearer ')[1];
+    const decoded = await admin.auth().verifyIdToken(token);
+    req.user = decoded;
+    next();
+  } catch (error) {
+    return res.status(401).json({ success: false, message: 'Invalid or expired token' });
+  }
+}
 
-// Runs every 15 minutes — auto updates doctor availability status
+// ─── HELPER: wrap a router in an Express app with CORS + AUTH ─────────────────
+function makeApp(router, skipAuth = false) {
+  const app = express();
+  app.use(corsMiddleware);
+  app.use(express.json());
+  if (!skipAuth) {
+    app.use(authMiddleware);
+  }
+  app.use(router);
+  return app;
+}
+
+// ─── HTTP ENDPOINTS ───────────────────────────────────────────────────────────
+const OPTS = { region: 'asia-south1', cors: true };
+
+exports.auth          = onRequest(OPTS, makeApp(authRoutes, true));
+exports.employees     = onRequest(OPTS, makeApp(employeeRoutes));
+exports.ambulance     = onRequest(OPTS, makeApp(ambulanceRoutes));
+exports.trips         = onRequest(OPTS, makeApp(tripRoutes));
+exports.vaccination   = onRequest(OPTS, makeApp(vaccinationRoutes));
+exports.notifications = onRequest(OPTS, makeApp(notificationRoutes));
+exports.availability  = onRequest(OPTS, makeApp(availabilityRoutes));
+exports.fitness       = onRequest(OPTS, makeApp(fitnessRoutes));
+exports.directory     = onRequest(OPTS, makeApp(directoryRoutes));
+exports.feedback      = onRequest(OPTS, makeApp(feedbackRoutes));
+exports.reports       = onRequest(OPTS, makeApp(reportRoutes));
+
+// ─── SCHEDULED FUNCTIONS ──────────────────────────────────────────────────────
 exports.scheduledAvailabilityUpdate = onSchedule(
   { schedule: 'every 15 minutes', region: 'asia-south1' },
   autoUpdateAvailability
 );
-
-// Runs daily at 8am PKT — sends vaccination reminders
 exports.scheduledVaccinationReminders = onSchedule(
-  { schedule: '0 3 * * *', region: 'asia-south1' }, // 3am UTC = 8am PKT
+  { schedule: '0 3 * * *', region: 'asia-south1' },
   sendVaccinationReminders
 );
-
-// Runs on trip days at 12pm PKT — sends trip reminders
 exports.scheduledTripReminders = onSchedule(
-  { schedule: '0 7 * * 1,3,6', region: 'asia-south1' }, // 7am UTC = 12pm PKT
+  { schedule: '0 7 * * 1,3,6', region: 'asia-south1' },
   sendTripReminders
 );
-
-// Runs daily at 9am PKT — sends fitness appointment reminders
 exports.scheduledFitnessReminders = onSchedule(
-  { schedule: '0 4 * * *', region: 'asia-south1' }, // 4am UTC = 9am PKT
+  { schedule: '0 4 * * *', region: 'asia-south1' },
   sendFitnessReminders
 );

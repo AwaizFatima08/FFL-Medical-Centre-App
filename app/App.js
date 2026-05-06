@@ -9,9 +9,9 @@ import AuthNavigator from './src/navigation/AuthNavigator';
 import AppNavigator from './src/navigation/AppNavigator';
 
 export default function App() {
-  const [user, setUser] = useState(null);
+  const [user, setUser]         = useState(null);
   const [userRole, setUserRole] = useState(null);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading]   = useState(true);
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
@@ -54,12 +54,17 @@ export default function App() {
   }
 
   return (
-    <NavigationContainer>
-      {user ? <AppNavigator userRole={userRole} /> : <AuthNavigator />}
-    </NavigationContainer>
+    // flex: 1 on this wrapper ensures all screens fill the viewport height on web,
+    // which is required for ScrollView to work correctly.
+    <View style={styles.root}>
+      <NavigationContainer>
+        {user ? <AppNavigator userRole={userRole} /> : <AuthNavigator />}
+      </NavigationContainer>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
+  root:   { flex: 1 },
   loader: { flex: 1, justifyContent: 'center', alignItems: 'center' },
 });

@@ -1,6 +1,6 @@
 // app/src/navigation/AppNavigator.js
 import React from 'react';
-import { createStackNavigator } from '@react-navigation/stack';
+import { createNativeStackNavigator } from '@react-navigation/native-stack';
 
 // Home screens
 import EmployeeHome  from '../screens/home/EmployeeHome';
@@ -14,11 +14,12 @@ import AdminHome     from '../screens/home/AdminHome';
 import CMOHome       from '../screens/home/CMOHome';
 
 // Ambulance flow screens
-import AmbulanceRequestScreen         from '../screens/ambulance/AmbulanceRequestScreen';
+import AmbulanceRequestScreen          from '../screens/ambulance/AmbulanceRequestScreen';
 import AmbulanceRequestReceptionScreen from '../screens/ambulance/AmbulanceRequestReceptionScreen';
-import AmbulanceReceptionHubScreen    from '../screens/ambulance/AmbulanceReceptionHubScreen';
+import AmbulanceReceptionHubScreen     from '../screens/ambulance/AmbulanceReceptionHubScreen';
+import AmbulanceRequestDetailScreen    from '../screens/ambulance/AmbulanceRequestDetailScreen';
 
-const Stack = createStackNavigator();
+const Stack = createNativeStackNavigator();
 
 export default function AppNavigator({ userRole }) {
   const getHomeScreen = () => {
@@ -43,9 +44,10 @@ export default function AppNavigator({ userRole }) {
       <Stack.Screen name="Home" component={HomeScreen} />
 
       {/* Ambulance flow */}
-      <Stack.Screen name="AmbulanceRequest"         component={AmbulanceRequestScreen} />
+      <Stack.Screen name="AmbulanceRequest"          component={AmbulanceRequestScreen} />
       <Stack.Screen name="AmbulanceRequestReception" component={AmbulanceRequestReceptionScreen} />
-      <Stack.Screen name="AmbulanceReceptionHub"    component={AmbulanceReceptionHubScreen} />
+      <Stack.Screen name="AmbulanceReceptionHub"     component={AmbulanceReceptionHubScreen} />
+      <Stack.Screen name="AmbulanceRequestDetail"    component={AmbulanceRequestDetailScreen} />
     </Stack.Navigator>
   );
 }

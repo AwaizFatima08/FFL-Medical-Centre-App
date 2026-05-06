@@ -29,8 +29,8 @@ const TILES = [
     id: 'feedback',
     label: 'Feedback',
     icon: '📋',
-    screen: null,
-    active: false,
+    screen: 'FeedbackForm',
+    active: true,
   },
   {
     id: 'availability',

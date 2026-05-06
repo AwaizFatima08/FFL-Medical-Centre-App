@@ -23,6 +23,11 @@ import AmbulanceRequestDetailScreen    from '../screens/ambulance/AmbulanceReque
 import DoctorAvailabilityScreen       from '../screens/availability/DoctorAvailabilityScreen';
 import DoctorAvailabilityManageScreen from '../screens/availability/DoctorAvailabilityManageScreen';
 
+// Feedback flow screens
+import FeedbackFormScreen   from '../screens/feedback/FeedbackFormScreen';
+import FeedbackListScreen   from '../screens/feedback/FeedbackListScreen';
+import FeedbackDetailScreen from '../screens/feedback/FeedbackDetailScreen';
+
 const Stack = createNativeStackNavigator();
 
 export default function AppNavigator({ userRole }) {
@@ -56,6 +61,11 @@ export default function AppNavigator({ userRole }) {
       {/* Availability flow */}
       <Stack.Screen name="DoctorAvailability"       component={DoctorAvailabilityScreen} />
       <Stack.Screen name="DoctorAvailabilityManage" component={DoctorAvailabilityManageScreen} />
+      
+      {/* Feedback flow */}
+      <Stack.Screen name="FeedbackForm"   component={FeedbackFormScreen} />
+      <Stack.Screen name="FeedbackList"   component={FeedbackListScreen} />
+      <Stack.Screen name="FeedbackDetail" component={FeedbackDetailScreen} />
     </Stack.Navigator>
   );
 }

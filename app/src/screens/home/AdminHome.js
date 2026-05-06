@@ -11,6 +11,13 @@ const TILES = [
     screen: 'DoctorAvailabilityManage',
     active: true,
   },
+  {
+    id: 'feedback',
+    label: 'Patient Feedback',
+    icon: '📋',
+    screen: 'FeedbackList',
+    active: true,
+  },
 ];
 
 export default function AdminHome({ navigation }) {

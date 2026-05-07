@@ -3,15 +3,16 @@
 // Bookable by: employee
 // Managed by: reception (confirm/cancel)
 // View only:  cmo, doctor
-// Seat cap:   24 per trip date
+// Seat cap:   24 total per trip date, max 4 per booking
 
 const express = require('express');
-const { getFirestore, Timestamp, FieldValue } = require('firebase-admin/firestore');
+const { getFirestore, Timestamp } = require('firebase-admin/firestore');
 
 const router = express.Router();
 const db = getFirestore();
 
-const SEAT_CAP = 24;
+const SEAT_CAP     = 24;
+const MAX_SEATS    = 4;
 
 const ROLES = {
   EMPLOYEE:  'employee',
@@ -28,14 +29,13 @@ const STATUS = {
   COMPLETED: 'completed',
 };
 
-// ── Helper: get user role ─────────────────────────────────────────────────────
+// ── Helpers ───────────────────────────────────────────────────────────────────
 async function getUserRole(uid) {
   const doc = await db.collection('users').doc(uid).get();
   if (!doc.exists) throw new Error('User not found');
   return doc.data().role;
 }
 
-// ── Helper: get employee record linked to a user ──────────────────────────────
 async function getEmployeeData(uid) {
   const snapshot = await db.collection('employees')
     .where('userId', '==', uid)
@@ -45,16 +45,16 @@ async function getEmployeeData(uid) {
   return { id: snapshot.docs[0].id, ...snapshot.docs[0].data() };
 }
 
-// ── Helper: count confirmed seats for a trip date ─────────────────────────────
-async function getConfirmedCount(tripDate) {
+// Returns total confirmed seats for a trip date (each booking may have multiple seats)
+async function getConfirmedSeats(tripDate) {
   const snapshot = await db.collection('tripBookings')
     .where('tripDate', '==', tripDate)
     .where('status', '==', STATUS.CONFIRMED)
     .get();
-  return snapshot.size;
+  return snapshot.docs.reduce((sum, doc) => sum + (doc.data().seats || 1), 0);
 }
 
-// ── POST /book — employee submits a booking request ───────────────────────────
+// ── POST /book ────────────────────────────────────────────────────────────────
 router.post('/book', async (req, res) => {
   try {
     const { uid } = req.user;
@@ -64,19 +64,35 @@ router.post('/book', async (req, res) => {
       return res.status(403).json({ success: false, message: 'Only employees can book trips' });
     }
 
-    const { tripDate, pickupHouse, referralConfirmed, overnightStay, returnTrip, notes } = req.body;
+    const {
+      tripDate, pickupHouse, seats = 1,
+      patientName, patientRelation,
+      doctorId, doctorName,
+      referralConfirmed, overnightStay, returnTrip, notes,
+    } = req.body;
 
-    if (!tripDate?.trim()) {
-      return res.status(400).json({ success: false, message: 'Trip date is required' });
-    }
-    if (!pickupHouse?.trim()) {
-      return res.status(400).json({ success: false, message: 'Pickup house number is required' });
+    // Required field validation
+    if (!tripDate?.trim())    return res.status(400).json({ success: false, message: 'Trip date is required' });
+    if (!pickupHouse?.trim()) return res.status(400).json({ success: false, message: 'Pickup house is required' });
+    if (!patientName?.trim()) return res.status(400).json({ success: false, message: 'Patient name is required' });
+
+    // Seat count validation
+    const seatCount = parseInt(seats, 10);
+    if (isNaN(seatCount) || seatCount < 1 || seatCount > MAX_SEATS) {
+      return res.status(400).json({
+        success: false,
+        message: `Number of seats must be between 1 and ${MAX_SEATS}`,
+      });
     }
 
-    // Validate trip date is Mon/Wed/Sat
-    const dayOfWeek = new Date(tripDate).getDay(); // 0=Sun,1=Mon,3=Wed,6=Sat
+    // Validate trip date is Mon/Wed/Sat — parse locally to avoid UTC shift
+    const [year, month, day] = tripDate.split('-').map(Number);
+    const dayOfWeek = new Date(year, month - 1, day).getDay();
     if (![1, 3, 6].includes(dayOfWeek)) {
-      return res.status(400).json({ success: false, message: 'Trips only run on Monday, Wednesday, and Saturday' });
+      return res.status(400).json({
+        success: false,
+        message: 'Trips only run on Monday, Wednesday, and Saturday',
+      });
     }
 
     // Check employee doesn't already have an active booking for this date
@@ -94,15 +110,18 @@ router.post('/book', async (req, res) => {
     }
 
     // Check seat availability
-    const confirmedCount = await getConfirmedCount(tripDate);
-    if (confirmedCount >= SEAT_CAP) {
+    const confirmedSeats = await getConfirmedSeats(tripDate);
+    if (confirmedSeats + seatCount > SEAT_CAP) {
+      const seatsLeft = SEAT_CAP - confirmedSeats;
       return res.status(400).json({
         success: false,
-        message: `All ${SEAT_CAP} seats are full for this trip date. Please choose another date.`,
+        message: seatsLeft <= 0
+          ? `All ${SEAT_CAP} seats are full for this date.`
+          : `Only ${seatsLeft} seat(s) remaining. You requested ${seatCount}.`,
       });
     }
 
-    // Fetch employee details to store on booking
+    // Fetch employee details
     const employee = await getEmployeeData(uid);
 
     const booking = {
@@ -113,9 +132,14 @@ router.post('/book', async (req, res) => {
       phone:             employee.phone || '',
       tripDate:          tripDate.trim(),
       pickupHouse:       pickupHouse.trim(),
+      seats:             seatCount,
+      patientName:       patientName.trim(),
+      patientRelation:   patientRelation || 'Self',
+      doctorId:          doctorId || null,
+      doctorName:        doctorName || null,
       referralConfirmed: referralConfirmed === true,
       overnightStay:     overnightStay === true,
-      returnTrip:        returnTrip !== false, // defaults to true
+      returnTrip:        returnTrip !== false,
       notes:             notes?.trim() || null,
       status:            STATUS.PENDING,
       confirmedAt:       null,
@@ -138,7 +162,7 @@ router.post('/book', async (req, res) => {
   }
 });
 
-// ── GET /my — employee views their own bookings ───────────────────────────────
+// ── GET /my ───────────────────────────────────────────────────────────────────
 router.get('/my', async (req, res) => {
   try {
     const { uid } = req.user;
@@ -162,8 +186,7 @@ router.get('/my', async (req, res) => {
   }
 });
 
-// ── GET /confirmedCount — seat count for a trip date ─────────────────────────
-// Must be defined before /:id to avoid route conflict
+// ── GET /confirmedCount — must be before /:id ─────────────────────────────────
 router.get('/confirmedCount', async (req, res) => {
   try {
     const role = await getUserRole(req.user.uid);
@@ -173,11 +196,9 @@ router.get('/confirmedCount', async (req, res) => {
     }
 
     const { tripDate } = req.query;
-    if (!tripDate) {
-      return res.status(400).json({ success: false, message: 'tripDate query param is required' });
-    }
+    if (!tripDate) return res.status(400).json({ success: false, message: 'tripDate is required' });
 
-    const count = await getConfirmedCount(tripDate);
+    const count = await getConfirmedSeats(tripDate);
     res.json({ success: true, count, seatsLeft: SEAT_CAP - count, capacity: SEAT_CAP });
 
   } catch (error) {
@@ -186,8 +207,7 @@ router.get('/confirmedCount', async (req, res) => {
   }
 });
 
-// ── GET /all — reception/cmo/doctor view all bookings for a date ──────────────
-// Must be defined before /:id to avoid route conflict
+// ── GET /all — must be before /:id ───────────────────────────────────────────
 router.get('/all', async (req, res) => {
   try {
     const role = await getUserRole(req.user.uid);
@@ -197,16 +217,12 @@ router.get('/all', async (req, res) => {
     }
 
     const { tripDate, status } = req.query;
-    if (!tripDate) {
-      return res.status(400).json({ success: false, message: 'tripDate query param is required' });
-    }
+    if (!tripDate) return res.status(400).json({ success: false, message: 'tripDate is required' });
 
     let query = db.collection('tripBookings').where('tripDate', '==', tripDate);
-    if (status) {
-      query = query.where('status', '==', status);
-    }
-
+    if (status) query = query.where('status', '==', status);
     const snapshot = await query.orderBy('createdAt', 'asc').get();
+
     const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
     res.json({ success: true, data });
 
@@ -216,7 +232,7 @@ router.get('/all', async (req, res) => {
   }
 });
 
-// ── GET /:id — fetch single booking ──────────────────────────────────────────
+// ── GET /:id ──────────────────────────────────────────────────────────────────
 router.get('/:id', async (req, res) => {
   try {
     const role = await getUserRole(req.user.uid);
@@ -226,13 +242,10 @@ router.get('/:id', async (req, res) => {
     }
 
     const doc = await db.collection('tripBookings').doc(req.params.id).get();
-    if (!doc.exists) {
-      return res.status(404).json({ success: false, message: 'Booking not found' });
-    }
+    if (!doc.exists) return res.status(404).json({ success: false, message: 'Booking not found' });
 
     const booking = { id: doc.id, ...doc.data() };
 
-    // Employees can only view their own bookings
     if (role === ROLES.EMPLOYEE && booking.bookedBy !== req.user.uid) {
       return res.status(403).json({ success: false, message: 'Access denied' });
     }
@@ -245,7 +258,7 @@ router.get('/:id', async (req, res) => {
   }
 });
 
-// ── POST /:id/confirm — reception confirms a seat ─────────────────────────────
+// ── POST /:id/confirm ─────────────────────────────────────────────────────────
 router.post('/:id/confirm', async (req, res) => {
   try {
     const { uid } = req.user;
@@ -257,24 +270,23 @@ router.post('/:id/confirm', async (req, res) => {
 
     const ref = db.collection('tripBookings').doc(req.params.id);
     const doc = await ref.get();
-    if (!doc.exists) {
-      return res.status(404).json({ success: false, message: 'Booking not found' });
-    }
+    if (!doc.exists) return res.status(404).json({ success: false, message: 'Booking not found' });
 
     const booking = doc.data();
     if (booking.status !== STATUS.PENDING) {
-      return res.status(400).json({
-        success: false,
-        message: `Cannot confirm a booking with status: ${booking.status}`,
-      });
+      return res.status(400).json({ success: false, message: `Cannot confirm a booking with status: ${booking.status}` });
     }
 
     // Re-check seat availability at confirm time
-    const confirmedCount = await getConfirmedCount(booking.tripDate);
-    if (confirmedCount >= SEAT_CAP) {
+    const confirmedSeats = await getConfirmedSeats(booking.tripDate);
+    const requestedSeats = booking.seats || 1;
+    if (confirmedSeats + requestedSeats > SEAT_CAP) {
+      const seatsLeft = SEAT_CAP - confirmedSeats;
       return res.status(400).json({
         success: false,
-        message: `All ${SEAT_CAP} seats are full. Cannot confirm this booking.`,
+        message: seatsLeft <= 0
+          ? `All ${SEAT_CAP} seats are full. Cannot confirm.`
+          : `Only ${seatsLeft} seat(s) left but this booking needs ${requestedSeats}.`,
       });
     }
 
@@ -292,7 +304,7 @@ router.post('/:id/confirm', async (req, res) => {
   }
 });
 
-// ── POST /:id/cancel — employee or reception cancels ─────────────────────────
+// ── POST /:id/cancel ──────────────────────────────────────────────────────────
 router.post('/:id/cancel', async (req, res) => {
   try {
     const { uid } = req.user;
@@ -305,17 +317,13 @@ router.post('/:id/cancel', async (req, res) => {
 
     const ref = db.collection('tripBookings').doc(req.params.id);
     const doc = await ref.get();
-    if (!doc.exists) {
-      return res.status(404).json({ success: false, message: 'Booking not found' });
-    }
+    if (!doc.exists) return res.status(404).json({ success: false, message: 'Booking not found' });
 
     const booking = doc.data();
 
-    // Employee can only cancel their own booking
     if (role === ROLES.EMPLOYEE && booking.bookedBy !== uid) {
       return res.status(403).json({ success: false, message: 'You can only cancel your own bookings' });
     }
-
     if (booking.status === STATUS.CANCELLED) {
       return res.status(400).json({ success: false, message: 'Booking is already cancelled' });
     }

@@ -7,6 +7,7 @@ import React, { useState, useEffect } from 'react';
 import {
   View, Text, TextInput, StyleSheet, TouchableOpacity,
   ScrollView, ActivityIndicator, KeyboardAvoidingView, Platform, Switch,
+  Modal, FlatList,
 } from 'react-native';
 import { getAuth } from 'firebase/auth';
 import { API } from '../../config/api';
@@ -44,24 +45,33 @@ export default function TripBookingScreen({ navigation, route }) {
   const { userRole } = route.params || {};
   const upcomingDates = getUpcomingTripDates(6);
 
-  const [selectedDate, setSelectedDate]             = useState('');
-  const [pickupHouse, setPickupHouse]               = useState('');
-  const [loadingProfile, setLoadingProfile]         = useState(true);
-  const [seats, setSeats]                           = useState(1);
-  const [patientName, setPatientName]               = useState('');
-  const [patientRelation, setPatientRelation]       = useState('Self');
-  const [doctors, setDoctors]                       = useState([]);
-  const [selectedDoctorId, setSelectedDoctorId]     = useState('');
-  const [selectedDoctorName, setSelectedDoctorName] = useState('');
-  const [doctorFreeText, setDoctorFreeText]         = useState('');
-  const [showDoctorList, setShowDoctorList]         = useState(false);
-  const [loadingDoctors, setLoadingDoctors]         = useState(true);
-  const [specialityFilter, setSpecialityFilter]     = useState(ALL);
-  const [referralConfirmed, setReferralConfirmed]   = useState(false);
-  const [overnightStay, setOvernightStay]           = useState(false);
-  const [returnTrip, setReturnTrip]                 = useState(true);
-  const [notes, setNotes]                           = useState('');
-  const [saving, setSaving]                         = useState(false);
+  const [selectedDate, setSelectedDate]               = useState('');
+  const [pickupHouse, setPickupHouse]                 = useState('');
+  const [loadingProfile, setLoadingProfile]           = useState(true);
+  const [seats, setSeats]                             = useState(1);
+  const [patientName, setPatientName]                 = useState('');
+  const [patientRelation, setPatientRelation]         = useState('Self');
+
+  // Doctor state
+  const [doctors, setDoctors]                         = useState([]);
+  const [loadingDoctors, setLoadingDoctors]           = useState(true);
+  const [selectedDoctorId, setSelectedDoctorId]       = useState('');
+  const [selectedDoctorName, setSelectedDoctorName]   = useState('');
+  const [selectedDoctorSpec, setSelectedDoctorSpec]   = useState('');
+  const [doctorFreeText, setDoctorFreeText]           = useState('');
+
+  // Modal state
+  const [showSpecModal, setShowSpecModal]             = useState(false);
+  const [showDoctorModal, setShowDoctorModal]         = useState(false);
+  const [specModalSearch, setSpecModalSearch]         = useState('');
+  const [doctorModalSearch, setDoctorModalSearch]     = useState('');
+  const [specialityFilter, setSpecialityFilter]       = useState(ALL);
+
+  const [referralConfirmed, setReferralConfirmed]     = useState(false);
+  const [overnightStay, setOvernightStay]             = useState(false);
+  const [returnTrip, setReturnTrip]                   = useState(true);
+  const [notes, setNotes]                             = useState('');
+  const [saving, setSaving]                           = useState(false);
 
   const getToken = async () => {
     const auth = getAuth();
@@ -100,29 +110,47 @@ export default function TripBookingScreen({ navigation, route }) {
     loadDoctors();
   }, []);
 
-  // Derive unique specialities from loaded doctors for the filter chips
+  // Unique specialities from loaded doctors
   const specialityOptions = [
     ALL,
     ...Array.from(new Set(doctors.map(d => d.speciality).filter(Boolean))).sort(),
   ];
 
-  // Filter doctors by selected speciality
-  const filteredDoctors = specialityFilter === ALL
-    ? doctors
-    : doctors.filter(d => d.speciality === specialityFilter);
+  // Doctors filtered by selected speciality + modal search
+  const filteredDoctors = doctors
+    .filter(d => specialityFilter === ALL || d.speciality === specialityFilter)
+    .filter(d => !doctorModalSearch.trim() ||
+      d.name?.toLowerCase().includes(doctorModalSearch.toLowerCase()) ||
+      d.hospital?.toLowerCase().includes(doctorModalSearch.toLowerCase())
+    );
 
-  const selectDoctor = (doctor) => {
+  const filteredSpecialities = specialityOptions.filter(s =>
+    s.toLowerCase().includes(specModalSearch.toLowerCase())
+  );
+
+  const handleSelectSpeciality = (spec) => {
+    setSpecialityFilter(spec);
+    setShowSpecModal(false);
+    // If current doctor no longer matches new filter, clear selection
+    if (selectedDoctorId && spec !== ALL) {
+      const doc = doctors.find(d => d.id === selectedDoctorId);
+      if (doc && doc.speciality !== spec) clearDoctor();
+    }
+  };
+
+  const handleSelectDoctor = (doctor) => {
     setSelectedDoctorId(doctor.id);
     setSelectedDoctorName(doctor.name);
+    setSelectedDoctorSpec(doctor.speciality);
     setDoctorFreeText('');
-    setShowDoctorList(false);
+    setShowDoctorModal(false);
   };
 
   const clearDoctor = () => {
     setSelectedDoctorId('');
     setSelectedDoctorName('');
+    setSelectedDoctorSpec('');
     setDoctorFreeText('');
-    setSpecialityFilter(ALL);
   };
 
   const getFinalDoctorName = () => {
@@ -147,17 +175,10 @@ export default function TripBookingScreen({ navigation, route }) {
     try {
       const token = await getToken();
       const payload = {
-        tripDate:          selectedDate,
-        pickupHouse:       pickupHouse.trim(),
-        seats,
-        patientName:       patientName.trim(),
-        patientRelation,
-        doctorId:          selectedDoctorId || null,
-        doctorName:        getFinalDoctorName(),
-        referralConfirmed,
-        overnightStay,
-        returnTrip,
-        notes:             notes.trim(),
+        tripDate: selectedDate, pickupHouse: pickupHouse.trim(),
+        seats, patientName: patientName.trim(), patientRelation,
+        doctorId: selectedDoctorId || null, doctorName: getFinalDoctorName(),
+        referralConfirmed, overnightStay, returnTrip, notes: notes.trim(),
       };
       const response = await fetch(`${API.trips}/book`, {
         method: 'POST',
@@ -216,11 +237,8 @@ export default function TripBookingScreen({ navigation, route }) {
           <Text style={styles.sectionTitle}>Patient Details</Text>
           <Text style={styles.fieldLabel}>Patient Name *</Text>
           <TextInput
-            style={styles.input}
-            value={patientName}
-            onChangeText={setPatientName}
-            placeholder="Full name of patient"
-            placeholderTextColor="#a0aec0"
+            style={styles.input} value={patientName} onChangeText={setPatientName}
+            placeholder="Full name of patient" placeholderTextColor="#a0aec0"
           />
           <Text style={[styles.fieldLabel, { marginTop: 12 }]}>Relation *</Text>
           <View style={styles.chipRow}>
@@ -253,9 +271,11 @@ export default function TripBookingScreen({ navigation, route }) {
 
           {selectedDoctorId ? (
             <View style={styles.selectedDoctor}>
-              <View>
+              <View style={{ flex: 1 }}>
                 <Text style={styles.selectedDoctorName}>{selectedDoctorName}</Text>
-                <Text style={styles.selectedDoctorSub}>Selected from directory</Text>
+                <Text style={styles.selectedDoctorSub}>
+                  {selectedDoctorSpec} · From directory
+                </Text>
               </View>
               <TouchableOpacity onPress={clearDoctor}>
                 <Text style={styles.clearDoctor}>✕ Clear</Text>
@@ -263,69 +283,38 @@ export default function TripBookingScreen({ navigation, route }) {
             </View>
           ) : (
             <>
-              {/* Speciality filter — only shown when doctor list is not yet loaded empty */}
+              {/* Two dropdown buttons side by side */}
               {!loadingDoctors && doctors.length > 0 && (
-                <View style={styles.specFilterWrapper}>
-                  <Text style={styles.specFilterLabel}>Filter by speciality</Text>
-                  <ScrollView
-                    horizontal
-                    showsHorizontalScrollIndicator={false}
-                    contentContainerStyle={styles.specFilterRow}
+                <View style={styles.doctorFilterRow}>
+                  {/* Speciality filter */}
+                  <TouchableOpacity
+                    style={[styles.filterDropBtn, specialityFilter !== ALL && styles.filterDropBtnActive]}
+                    onPress={() => { setSpecModalSearch(''); setShowSpecModal(true); }}
                   >
-                    {specialityOptions.map(s => (
-                      <TouchableOpacity
-                        key={s}
-                        style={[styles.specChip, specialityFilter === s && styles.specChipSelected]}
-                        onPress={() => {
-                          setSpecialityFilter(s);
-                          setShowDoctorList(true);
-                        }}
-                      >
-                        <Text style={[styles.specChipText, specialityFilter === s && styles.specChipTextSelected]}>
-                          {s}
-                        </Text>
-                      </TouchableOpacity>
-                    ))}
-                  </ScrollView>
+                    <Text
+                      style={[styles.filterDropText, specialityFilter !== ALL && styles.filterDropTextActive]}
+                      numberOfLines={1}
+                    >
+                      {specialityFilter === ALL ? '🩺 Speciality' : specialityFilter}
+                    </Text>
+                    <Text style={styles.filterDropArrow}>▾</Text>
+                  </TouchableOpacity>
+
+                  {/* Doctor selector */}
+                  <TouchableOpacity
+                    style={[styles.filterDropBtn, styles.doctorDropBtn]}
+                    onPress={() => { setDoctorModalSearch(''); setShowDoctorModal(true); }}
+                  >
+                    <Text style={styles.filterDropText} numberOfLines={1}>
+                      👨‍⚕️ Select Doctor
+                    </Text>
+                    <Text style={styles.filterDropArrow}>▾</Text>
+                  </TouchableOpacity>
                 </View>
               )}
 
-              <TouchableOpacity
-                style={styles.doctorDropdownBtn}
-                onPress={() => setShowDoctorList(!showDoctorList)}
-              >
-                <Text style={styles.doctorDropdownText}>
-                  {loadingDoctors
-                    ? 'Loading doctors...'
-                    : showDoctorList
-                      ? '▲  Hide list'
-                      : `🔍  Select from directory${specialityFilter !== ALL ? ` — ${specialityFilter}` : ''}`
-                  }
-                </Text>
-              </TouchableOpacity>
-
-              {showDoctorList && (
-                <View style={styles.doctorList}>
-                  {filteredDoctors.length === 0 ? (
-                    <Text style={styles.doctorListEmpty}>
-                      {doctors.length === 0
-                        ? 'No doctors in directory yet'
-                        : `No ${specialityFilter} doctors in directory`
-                      }
-                    </Text>
-                  ) : (
-                    filteredDoctors.map(d => (
-                      <TouchableOpacity
-                        key={d.id}
-                        style={styles.doctorListItem}
-                        onPress={() => selectDoctor(d)}
-                      >
-                        <Text style={styles.doctorListName}>{d.name}</Text>
-                        <Text style={styles.doctorListSub}>{d.speciality} · {d.city}</Text>
-                      </TouchableOpacity>
-                    ))
-                  )}
-                </View>
+              {loadingDoctors && (
+                <ActivityIndicator size="small" color="#3182ce" style={{ marginBottom: 10 }} />
               )}
 
               <Text style={styles.orDivider}>— or enter manually —</Text>
@@ -347,11 +336,8 @@ export default function TripBookingScreen({ navigation, route }) {
           {loadingProfile
             ? <ActivityIndicator size="small" color="#3182ce" style={{ marginTop: 8 }} />
             : <TextInput
-                style={styles.input}
-                value={pickupHouse}
-                onChangeText={setPickupHouse}
-                placeholder="e.g. 14-B"
-                placeholderTextColor="#a0aec0"
+                style={styles.input} value={pickupHouse} onChangeText={setPickupHouse}
+                placeholder="e.g. 14-B" placeholderTextColor="#a0aec0"
               />
           }
           <Text style={styles.fieldHint}>Auto-filled from your profile. Edit if needed.</Text>
@@ -369,13 +355,9 @@ export default function TripBookingScreen({ navigation, route }) {
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>Additional Notes</Text>
           <TextInput
-            style={[styles.input, styles.multiline]}
-            value={notes}
-            onChangeText={setNotes}
+            style={[styles.input, styles.multiline]} value={notes} onChangeText={setNotes}
             placeholder="Any special requirements for reception..."
-            placeholderTextColor="#a0aec0"
-            multiline
-            numberOfLines={3}
+            placeholderTextColor="#a0aec0" multiline numberOfLines={3}
           />
         </View>
 
@@ -387,8 +369,7 @@ export default function TripBookingScreen({ navigation, route }) {
 
         <TouchableOpacity
           style={[styles.bookBtn, saving && styles.bookBtnDisabled]}
-          onPress={handleBook}
-          disabled={saving}
+          onPress={handleBook} disabled={saving}
         >
           {saving
             ? <ActivityIndicator color="#ffffff" />
@@ -397,6 +378,99 @@ export default function TripBookingScreen({ navigation, route }) {
         </TouchableOpacity>
 
       </ScrollView>
+
+      {/* Speciality modal */}
+      <Modal visible={showSpecModal} animationType="slide" transparent onRequestClose={() => setShowSpecModal(false)}>
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalBox}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Filter by Speciality</Text>
+              <TouchableOpacity onPress={() => setShowSpecModal(false)}>
+                <Text style={styles.modalClose}>✕</Text>
+              </TouchableOpacity>
+            </View>
+            <TextInput
+              style={styles.modalSearch}
+              value={specModalSearch}
+              onChangeText={setSpecModalSearch}
+              placeholder="Search speciality..."
+              placeholderTextColor="#a0aec0"
+              autoFocus
+            />
+            <FlatList
+              data={filteredSpecialities}
+              keyExtractor={item => item}
+              style={styles.modalList}
+              renderItem={({ item }) => (
+                <TouchableOpacity
+                  style={[styles.modalItem, specialityFilter === item && styles.modalItemSelected]}
+                  onPress={() => handleSelectSpeciality(item)}
+                >
+                  <Text style={[styles.modalItemText, specialityFilter === item && styles.modalItemTextSelected]}>
+                    {item}
+                  </Text>
+                  {specialityFilter === item && <Text style={styles.modalItemCheck}>✓</Text>}
+                </TouchableOpacity>
+              )}
+            />
+          </View>
+        </View>
+      </Modal>
+
+      {/* Doctor modal */}
+      <Modal visible={showDoctorModal} animationType="slide" transparent onRequestClose={() => setShowDoctorModal(false)}>
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalBox}>
+            <View style={styles.modalHeader}>
+              <View>
+                <Text style={styles.modalTitle}>Select Doctor</Text>
+                {specialityFilter !== ALL && (
+                  <Text style={styles.modalSubtitle}>{specialityFilter}</Text>
+                )}
+              </View>
+              <TouchableOpacity onPress={() => setShowDoctorModal(false)}>
+                <Text style={styles.modalClose}>✕</Text>
+              </TouchableOpacity>
+            </View>
+            <TextInput
+              style={styles.modalSearch}
+              value={doctorModalSearch}
+              onChangeText={setDoctorModalSearch}
+              placeholder="Search by name or hospital..."
+              placeholderTextColor="#a0aec0"
+              autoFocus
+            />
+            <FlatList
+              data={filteredDoctors}
+              keyExtractor={item => item.id}
+              style={styles.modalList}
+              ListEmptyComponent={
+                <Text style={styles.modalEmpty}>
+                  {doctors.length === 0
+                    ? 'No doctors in directory yet'
+                    : 'No doctors match your filter'
+                  }
+                </Text>
+              }
+              renderItem={({ item }) => (
+                <TouchableOpacity
+                  style={styles.modalItem}
+                  onPress={() => handleSelectDoctor(item)}
+                >
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.modalItemText}>{item.name}</Text>
+                    <Text style={styles.modalItemSub}>{item.speciality} · {item.city}</Text>
+                    {item.hospital && (
+                      <Text style={styles.modalItemSub}>🏥 {item.hospital}</Text>
+                    )}
+                  </View>
+                </TouchableOpacity>
+              )}
+            />
+          </View>
+        </View>
+      </Modal>
+
     </KeyboardAvoidingView>
   );
 }
@@ -409,8 +483,7 @@ function ToggleRow({ label, hint, value, onChange }) {
         {hint && <Text style={styles.toggleHint}>{hint}</Text>}
       </View>
       <Switch
-        value={value}
-        onValueChange={onChange}
+        value={value} onValueChange={onChange}
         trackColor={{ false: '#e2e8f0', true: '#90cdf4' }}
         thumbColor={value ? '#3182ce' : '#a0aec0'}
       />
@@ -474,40 +547,26 @@ const styles = StyleSheet.create({
   seatsValue: { fontSize: 22, fontWeight: '800', color: '#2d3748', minWidth: 28, textAlign: 'center' },
   seatsHint: { fontSize: 12, color: '#a0aec0' },
 
-  // Speciality filter
-  specFilterWrapper: { marginBottom: 10 },
-  specFilterLabel: {
-    fontSize: 12, fontWeight: '700', color: '#718096', marginBottom: 6,
+  doctorFilterRow: { flexDirection: 'row', gap: 8, marginBottom: 12 },
+  filterDropBtn: {
+    flex: 1, flexDirection: 'row', alignItems: 'center',
+    borderWidth: 1, borderColor: '#e2e8f0', borderRadius: 8,
+    paddingHorizontal: 12, paddingVertical: 10, backgroundColor: '#f7fafc',
   },
-  specFilterRow: { gap: 6 },
-  specChip: {
-    borderWidth: 1, borderColor: '#e2e8f0', borderRadius: 16,
-    paddingHorizontal: 11, paddingVertical: 5, backgroundColor: '#f7fafc',
-  },
-  specChipSelected: { backgroundColor: '#3182ce', borderColor: '#3182ce' },
-  specChipText: { fontSize: 12, color: '#4a5568', fontWeight: '600' },
-  specChipTextSelected: { color: '#ffffff' },
+  filterDropBtnActive: { backgroundColor: '#3182ce', borderColor: '#3182ce' },
+  doctorDropBtn: { flex: 1.2 },
+  filterDropText: { fontSize: 13, color: '#4a5568', fontWeight: '600', flex: 1 },
+  filterDropTextActive: { color: '#ffffff' },
+  filterDropArrow: { fontSize: 12, color: '#718096', marginLeft: 4 },
 
   selectedDoctor: {
     flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
-    backgroundColor: '#f0fff4', borderRadius: 8, padding: 12, borderWidth: 1, borderColor: '#9ae6b4',
+    backgroundColor: '#f0fff4', borderRadius: 8, padding: 12,
+    borderWidth: 1, borderColor: '#9ae6b4',
   },
   selectedDoctorName: { fontSize: 14, fontWeight: '700', color: '#276749' },
   selectedDoctorSub: { fontSize: 12, color: '#48bb78', marginTop: 2 },
   clearDoctor: { fontSize: 13, color: '#c53030', fontWeight: '600' },
-  doctorDropdownBtn: {
-    backgroundColor: '#f7fafc', borderWidth: 1, borderColor: '#e2e8f0',
-    borderRadius: 8, paddingHorizontal: 12, paddingVertical: 11,
-  },
-  doctorDropdownText: { fontSize: 14, color: '#4a5568' },
-  doctorList: {
-    borderWidth: 1, borderColor: '#e2e8f0', borderRadius: 8,
-    marginTop: 6, backgroundColor: '#ffffff', maxHeight: 220, overflow: 'hidden',
-  },
-  doctorListEmpty: { padding: 12, color: '#a0aec0', fontSize: 13 },
-  doctorListItem: { padding: 12, borderBottomWidth: 1, borderBottomColor: '#f7fafc' },
-  doctorListName: { fontSize: 14, fontWeight: '600', color: '#2d3748' },
-  doctorListSub: { fontSize: 12, color: '#718096', marginTop: 2 },
   orDivider: { textAlign: 'center', color: '#a0aec0', fontSize: 12, marginVertical: 10 },
 
   toggleRow: {
@@ -528,4 +587,37 @@ const styles = StyleSheet.create({
   },
   bookBtnDisabled: { opacity: 0.6 },
   bookBtnText: { color: '#ffffff', fontWeight: '700', fontSize: 16 },
+
+  // Modals
+  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'flex-end' },
+  modalBox: {
+    backgroundColor: '#ffffff', borderTopLeftRadius: 16, borderTopRightRadius: 16,
+    maxHeight: '75%', paddingBottom: 20,
+  },
+  modalHeader: {
+    flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start',
+    paddingHorizontal: 20, paddingVertical: 16,
+    borderBottomWidth: 1, borderBottomColor: '#e2e8f0',
+  },
+  modalTitle: { fontSize: 16, fontWeight: '700', color: '#2d3748' },
+  modalSubtitle: { fontSize: 12, color: '#3182ce', fontWeight: '600', marginTop: 2 },
+  modalClose: { fontSize: 18, color: '#718096', fontWeight: '600' },
+  modalSearch: {
+    marginHorizontal: 16, marginTop: 12, marginBottom: 4,
+    backgroundColor: '#f7fafc', borderWidth: 1, borderColor: '#e2e8f0',
+    borderRadius: 8, paddingHorizontal: 12, paddingVertical: 9,
+    fontSize: 14, color: '#2d3748',
+  },
+  modalList: { marginTop: 4 },
+  modalItem: {
+    flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
+    paddingHorizontal: 20, paddingVertical: 13,
+    borderBottomWidth: 1, borderBottomColor: '#f7fafc',
+  },
+  modalItemSelected: { backgroundColor: '#ebf8ff' },
+  modalItemText: { fontSize: 14, color: '#2d3748', fontWeight: '600' },
+  modalItemTextSelected: { color: '#2b6cb0', fontWeight: '700' },
+  modalItemSub: { fontSize: 12, color: '#718096', marginTop: 2 },
+  modalItemCheck: { fontSize: 14, color: '#2b6cb0', fontWeight: '700' },
+  modalEmpty: { padding: 20, color: '#a0aec0', fontSize: 13, textAlign: 'center' },
 });

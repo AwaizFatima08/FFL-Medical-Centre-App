@@ -6,7 +6,7 @@
 import React, { useState, useCallback } from 'react';
 import {
   View, Text, TextInput, StyleSheet, TouchableOpacity,
-  ScrollView, ActivityIndicator, RefreshControl,
+  ScrollView, ActivityIndicator, RefreshControl, Modal, FlatList,
 } from 'react-native';
 import { getAuth } from 'firebase/auth';
 import { useFocusEffect } from '@react-navigation/native';
@@ -34,12 +34,14 @@ const SPECIALITY_FILTERS = [
 export default function DirectoryListScreen({ navigation, route }) {
   const { userRole } = route.params || {};
 
-  const [entries, setEntries]           = useState([]);
-  const [loading, setLoading]           = useState(true);
-  const [refreshing, setRefreshing]     = useState(false);
-  const [searchText, setSearchText]     = useState('');
-  const [cityFilter, setCityFilter]     = useState(ALL);
-  const [specFilter, setSpecFilter]     = useState(ALL);
+  const [entries, setEntries]               = useState([]);
+  const [loading, setLoading]               = useState(true);
+  const [refreshing, setRefreshing]         = useState(false);
+  const [searchText, setSearchText]         = useState('');
+  const [cityFilter, setCityFilter]         = useState(ALL);
+  const [specFilter, setSpecFilter]         = useState(ALL);
+  const [showSpecModal, setShowSpecModal]   = useState(false);
+  const [specSearch, setSpecSearch]         = useState('');
 
   const getToken = async () => {
     const auth = getAuth();
@@ -79,7 +81,6 @@ export default function DirectoryListScreen({ navigation, route }) {
     fetchDirectory();
   };
 
-  // Apply all filters
   const filtered = entries.filter(e => {
     const lower = searchText.toLowerCase();
     const matchesSearch = !lower.trim() || (
@@ -94,6 +95,10 @@ export default function DirectoryListScreen({ navigation, route }) {
   });
 
   const activeFilterCount = (cityFilter !== ALL ? 1 : 0) + (specFilter !== ALL ? 1 : 0);
+
+  const filteredSpecialities = SPECIALITY_FILTERS.filter(s =>
+    s.toLowerCase().includes(specSearch.toLowerCase())
+  );
 
   const renderEntry = (item) => (
     <TouchableOpacity
@@ -136,51 +141,52 @@ export default function DirectoryListScreen({ navigation, route }) {
         />
       </View>
 
-      {/* City filter */}
-      <View style={styles.filterSection}>
-        <Text style={styles.filterLabel}>City</Text>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filterRow}>
+      {/* Filter row — city chips + speciality dropdown */}
+      <View style={styles.filterBar}>
+        {/* City chips — horizontal scroll */}
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.cityRow}
+          style={styles.cityScroll}
+        >
           {CITY_FILTERS.map(c => (
             <TouchableOpacity
               key={c}
-              style={[styles.filterChip, cityFilter === c && styles.filterChipSelected]}
+              style={[styles.cityChip, cityFilter === c && styles.cityChipSelected]}
               onPress={() => setCityFilter(c)}
             >
-              <Text style={[styles.filterChipText, cityFilter === c && styles.filterChipTextSelected]}>
+              <Text style={[styles.cityChipText, cityFilter === c && styles.cityChipTextSelected]}>
                 {c}
               </Text>
             </TouchableOpacity>
           ))}
         </ScrollView>
-      </View>
 
-      {/* Speciality filter */}
-      <View style={styles.filterSection}>
-        <Text style={styles.filterLabel}>Speciality</Text>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filterRow}>
-          {SPECIALITY_FILTERS.map(s => (
-            <TouchableOpacity
-              key={s}
-              style={[styles.filterChip, specFilter === s && styles.filterChipSelected]}
-              onPress={() => setSpecFilter(s)}
-            >
-              <Text style={[styles.filterChipText, specFilter === s && styles.filterChipTextSelected]}>
-                {s}
-              </Text>
-            </TouchableOpacity>
-          ))}
-        </ScrollView>
+        {/* Speciality dropdown button */}
+        <TouchableOpacity
+          style={[styles.specDropdownBtn, specFilter !== ALL && styles.specDropdownBtnActive]}
+          onPress={() => { setSpecSearch(''); setShowSpecModal(true); }}
+        >
+          <Text
+            style={[styles.specDropdownText, specFilter !== ALL && styles.specDropdownTextActive]}
+            numberOfLines={1}
+          >
+            {specFilter === ALL ? '🩺 Speciality' : specFilter}
+          </Text>
+          <Text style={styles.specDropdownArrow}>▾</Text>
+        </TouchableOpacity>
       </View>
 
       {/* Results count + clear */}
       <View style={styles.resultsBar}>
         <Text style={styles.resultsCount}>
           {filtered.length} {filtered.length === 1 ? 'doctor' : 'doctors'}
-          {activeFilterCount > 0 ? ` (${activeFilterCount} filter${activeFilterCount > 1 ? 's' : ''} active)` : ''}
+          {activeFilterCount > 0 ? ` · ${activeFilterCount} filter${activeFilterCount > 1 ? 's' : ''} active` : ''}
         </Text>
         {activeFilterCount > 0 && (
           <TouchableOpacity onPress={() => { setCityFilter(ALL); setSpecFilter(ALL); }}>
-            <Text style={styles.clearFilters}>Clear filters</Text>
+            <Text style={styles.clearFilters}>Clear all</Text>
           </TouchableOpacity>
         )}
       </View>
@@ -220,6 +226,49 @@ export default function DirectoryListScreen({ navigation, route }) {
           )}
         </ScrollView>
       )}
+
+      {/* Speciality picker modal */}
+      <Modal
+        visible={showSpecModal}
+        animationType="slide"
+        transparent
+        onRequestClose={() => setShowSpecModal(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalBox}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Select Speciality</Text>
+              <TouchableOpacity onPress={() => setShowSpecModal(false)}>
+                <Text style={styles.modalClose}>✕</Text>
+              </TouchableOpacity>
+            </View>
+            <TextInput
+              style={styles.modalSearch}
+              value={specSearch}
+              onChangeText={setSpecSearch}
+              placeholder="Search speciality..."
+              placeholderTextColor="#a0aec0"
+              autoFocus
+            />
+            <FlatList
+              data={filteredSpecialities}
+              keyExtractor={item => item}
+              renderItem={({ item }) => (
+                <TouchableOpacity
+                  style={[styles.modalItem, specFilter === item && styles.modalItemSelected]}
+                  onPress={() => { setSpecFilter(item); setShowSpecModal(false); }}
+                >
+                  <Text style={[styles.modalItemText, specFilter === item && styles.modalItemTextSelected]}>
+                    {item}
+                  </Text>
+                  {specFilter === item && <Text style={styles.modalItemCheck}>✓</Text>}
+                </TouchableOpacity>
+              )}
+              style={styles.modalList}
+            />
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -245,27 +294,36 @@ const styles = StyleSheet.create({
     fontSize: 14, color: '#2d3748',
   },
 
-  filterSection: {
-    backgroundColor: '#ffffff', paddingVertical: 8,
-    borderBottomWidth: 1, borderBottomColor: '#e2e8f0',
+  filterBar: {
+    flexDirection: 'row', alignItems: 'center',
+    backgroundColor: '#ffffff', borderBottomWidth: 1, borderBottomColor: '#e2e8f0',
+    paddingVertical: 8,
   },
-  filterLabel: {
-    fontSize: 11, fontWeight: '700', color: '#a0aec0',
-    textTransform: 'uppercase', letterSpacing: 0.5,
-    paddingHorizontal: 16, marginBottom: 6,
-  },
-  filterRow: { paddingHorizontal: 12, gap: 6 },
-  filterChip: {
+  cityScroll: { flex: 1 },
+  cityRow: { paddingHorizontal: 12, gap: 6 },
+  cityChip: {
     borderWidth: 1, borderColor: '#e2e8f0', borderRadius: 16,
-    paddingHorizontal: 12, paddingVertical: 5, backgroundColor: '#f7fafc',
+    paddingHorizontal: 11, paddingVertical: 5, backgroundColor: '#f7fafc',
   },
-  filterChipSelected: { backgroundColor: '#3182ce', borderColor: '#3182ce' },
-  filterChipText: { fontSize: 12, color: '#4a5568', fontWeight: '600' },
-  filterChipTextSelected: { color: '#ffffff' },
+  cityChipSelected: { backgroundColor: '#3182ce', borderColor: '#3182ce' },
+  cityChipText: { fontSize: 12, color: '#4a5568', fontWeight: '600' },
+  cityChipTextSelected: { color: '#ffffff' },
+
+  specDropdownBtn: {
+    flexDirection: 'row', alignItems: 'center',
+    borderWidth: 1, borderColor: '#e2e8f0', borderRadius: 16,
+    paddingHorizontal: 11, paddingVertical: 5,
+    backgroundColor: '#f7fafc', marginRight: 12,
+    maxWidth: 140,
+  },
+  specDropdownBtnActive: { backgroundColor: '#3182ce', borderColor: '#3182ce' },
+  specDropdownText: { fontSize: 12, color: '#4a5568', fontWeight: '600', flex: 1 },
+  specDropdownTextActive: { color: '#ffffff' },
+  specDropdownArrow: { fontSize: 11, color: '#718096', marginLeft: 4 },
 
   resultsBar: {
     flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
-    paddingHorizontal: 16, paddingVertical: 8,
+    paddingHorizontal: 16, paddingVertical: 7,
     backgroundColor: '#f7fafc', borderBottomWidth: 1, borderBottomColor: '#e2e8f0',
   },
   resultsCount: { fontSize: 12, color: '#718096', fontWeight: '600' },
@@ -279,7 +337,6 @@ const styles = StyleSheet.create({
 
   list: { flex: 1 },
   listContent: { padding: 12 },
-
   card: {
     backgroundColor: '#ffffff', borderRadius: 10, padding: 14, marginBottom: 10,
     shadowColor: '#000', shadowOpacity: 0.06, shadowRadius: 4,
@@ -302,4 +359,34 @@ const styles = StyleSheet.create({
   emptyIcon: { fontSize: 40, marginBottom: 12 },
   emptyText: { fontSize: 16, color: '#4a5568', fontWeight: '600' },
   emptySubtext: { fontSize: 13, color: '#a0aec0', marginTop: 4 },
+
+  // Modal
+  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'flex-end' },
+  modalBox: {
+    backgroundColor: '#ffffff', borderTopLeftRadius: 16, borderTopRightRadius: 16,
+    maxHeight: '75%', paddingBottom: 20,
+  },
+  modalHeader: {
+    flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
+    paddingHorizontal: 20, paddingVertical: 16,
+    borderBottomWidth: 1, borderBottomColor: '#e2e8f0',
+  },
+  modalTitle: { fontSize: 16, fontWeight: '700', color: '#2d3748' },
+  modalClose: { fontSize: 18, color: '#718096', fontWeight: '600' },
+  modalSearch: {
+    marginHorizontal: 16, marginTop: 12, marginBottom: 4,
+    backgroundColor: '#f7fafc', borderWidth: 1, borderColor: '#e2e8f0',
+    borderRadius: 8, paddingHorizontal: 12, paddingVertical: 9,
+    fontSize: 14, color: '#2d3748',
+  },
+  modalList: { marginTop: 4 },
+  modalItem: {
+    flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
+    paddingHorizontal: 20, paddingVertical: 13,
+    borderBottomWidth: 1, borderBottomColor: '#f7fafc',
+  },
+  modalItemSelected: { backgroundColor: '#ebf8ff' },
+  modalItemText: { fontSize: 14, color: '#2d3748' },
+  modalItemTextSelected: { color: '#2b6cb0', fontWeight: '700' },
+  modalItemCheck: { fontSize: 14, color: '#2b6cb0', fontWeight: '700' },
 });

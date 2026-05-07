@@ -2,13 +2,12 @@
 // Flow 4 — Medical Trip
 // Reception views and manages a single booking — confirm or cancel
 
-import React, { useState, useCallback } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity,
-  ScrollView, ActivityIndicator, Alert,
+  ScrollView, ActivityIndicator, Alert, Platform,
 } from 'react-native';
 import { getAuth } from 'firebase/auth';
-import { useFocusEffect } from '@react-navigation/native';
 import { API } from '../../config/api';
 
 const STATUS_CONFIG = {
@@ -20,12 +19,32 @@ const STATUS_CONFIG = {
 
 const SEAT_CAP = 24;
 
+// Cross-platform confirmation dialog — web uses window.confirm, native uses Alert
+const confirmAction = (title, message, onConfirm) => {
+  if (Platform.OS === 'web') {
+    if (window.confirm(`${title}\n\n${message}`)) onConfirm();
+  } else {
+    Alert.alert(title, message, [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Confirm', style: 'destructive', onPress: onConfirm },
+    ]);
+  }
+};
+
+const showAlert = (title, message) => {
+  if (Platform.OS === 'web') {
+    window.alert(`${title}\n\n${message}`);
+  } else {
+    Alert.alert(title, message, [{ text: 'OK' }]);
+  }
+};
+
 export default function TripDetailScreen({ navigation, route }) {
   const { bookingId, userRole } = route.params || {};
 
-  const [booking, setBooking] = useState(null);
+  const [booking, setBooking]           = useState(null);
   const [seatsConfirmed, setSeatsConfirmed] = useState(0);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading]           = useState(true);
   const [actionLoading, setActionLoading] = useState(false);
 
   const getToken = async () => {
@@ -36,29 +55,22 @@ export default function TripDetailScreen({ navigation, route }) {
   const fetchBooking = async () => {
     try {
       const token = await getToken();
-
-      // Fetch booking detail and confirmed seat count in parallel
-      const [bookingRes, countRes] = await Promise.all([
-        fetch(`${API.trips}/${bookingId}`, {
-          headers: { 'Authorization': `Bearer ${token}` },
-        }),
-        fetch(`${API.trips}/confirmedCount?tripDate=_pending_`, {
-          headers: { 'Authorization': `Bearer ${token}` },
-        }),
-      ]);
-
+      const bookingRes = await fetch(`${API.trips}/${bookingId}`, {
+        headers: { 'Authorization': `Bearer ${token}` },
+      });
       const bookingData = await bookingRes.json();
+
       if (bookingRes.ok && bookingData.data) {
         const b = bookingData.data;
         setBooking(b);
 
-        // Now fetch confirmed count for this booking's trip date
-        const countRes2 = await fetch(
+        // Fetch confirmed seat count for this trip date
+        const countRes = await fetch(
           `${API.trips}/confirmedCount?tripDate=${b.tripDate}`,
           { headers: { 'Authorization': `Bearer ${token}` } }
         );
-        const countData = await countRes2.json();
-        if (countRes2.ok) {
+        const countData = await countRes.json();
+        if (countRes.ok) {
           setSeatsConfirmed(countData.count || 0);
         }
       } else {
@@ -73,46 +85,34 @@ export default function TripDetailScreen({ navigation, route }) {
     }
   };
 
-  useFocusEffect(useCallback(() => {
+  useEffect(() => {
     setLoading(true);
     fetchBooking();
-  }, [bookingId]));
+  }, [bookingId]);
 
   const handleConfirm = () => {
     const seatsLeft = SEAT_CAP - seatsConfirmed;
     if (seatsLeft <= 0) {
-      Alert.alert(
-        'No Seats Available',
-        `All ${SEAT_CAP} seats are confirmed for this trip. You cannot confirm this booking.`,
-        [{ text: 'OK' }]
-      );
+      showAlert('No Seats Available', `All ${SEAT_CAP} seats are confirmed for this trip.`);
       return;
     }
-
-    Alert.alert(
+    const requestedSeats = booking?.seats || 1;
+    if (seatsLeft < requestedSeats) {
+      showAlert('Not Enough Seats', `Only ${seatsLeft} seat(s) left but this booking needs ${requestedSeats}.`);
+      return;
+    }
+    confirmAction(
       'Confirm Booking',
-      `Confirm seat for ${booking?.employeeName}?\n\n${seatsLeft - 1} seats will remain after this.`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Confirm Seat', style: 'default',
-          onPress: () => performAction('confirm'),
-        },
-      ]
+      `Confirm ${requestedSeats} seat(s) for ${booking?.employeeName}? ${seatsLeft - requestedSeats} seats will remain.`,
+      () => performAction('confirm')
     );
   };
 
   const handleCancel = () => {
-    Alert.alert(
+    confirmAction(
       'Cancel Booking',
-      `Cancel ${booking?.employeeName}'s trip booking? They will be notified.`,
-      [
-        { text: 'No', style: 'cancel' },
-        {
-          text: 'Yes, Cancel', style: 'destructive',
-          onPress: () => performAction('cancel'),
-        },
-      ]
+      `Cancel ${booking?.employeeName}'s trip booking?`,
+      () => performAction('cancel')
     );
   };
 
@@ -139,7 +139,8 @@ export default function TripDetailScreen({ navigation, route }) {
 
   const formatDate = (dateStr) => {
     if (!dateStr) return '—';
-    return new Date(dateStr).toLocaleDateString('en-PK', {
+    const [y, m, d] = dateStr.split('-').map(Number);
+    return new Date(y, m - 1, d).toLocaleDateString('en-PK', {
       weekday: 'long', day: 'numeric', month: 'long', year: 'numeric',
     });
   };
@@ -169,7 +170,6 @@ export default function TripDetailScreen({ navigation, route }) {
 
   return (
     <View style={styles.wrapper}>
-      {/* Header */}
       <View style={styles.header}>
         <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
           <Text style={styles.backText}>← Back</Text>
@@ -182,23 +182,29 @@ export default function TripDetailScreen({ navigation, route }) {
 
       <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollContent}>
 
-        {/* Employee info */}
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>Employee</Text>
-          <DetailRow label="Full Name" value={booking.employeeName} />
+          <DetailRow label="Full Name"    value={booking.employeeName} />
           <DetailRow label="Employee No." value={booking.employeeNumber} />
-          <DetailRow label="Department" value={booking.department} />
-          <DetailRow label="Contact" value={booking.phone} />
+          <DetailRow label="Department"   value={booking.department} />
+          <DetailRow label="Contact"      value={booking.phone} />
         </View>
 
-        {/* Trip info */}
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Patient</Text>
+          <DetailRow label="Patient Name"   value={booking.patientName} />
+          <DetailRow label="Relation"       value={booking.patientRelation} />
+          <DetailRow label="Seats Requested" value={String(booking.seats || 1)} />
+          <DetailRow label="Referred Doctor" value={booking.doctorName} />
+        </View>
+
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>Trip Details</Text>
-          <DetailRow label="Trip Date" value={formatDate(booking.tripDate)} />
-          <DetailRow label="Departure" value="17:30 from FFL Township" />
+          <DetailRow label="Trip Date"    value={formatDate(booking.tripDate)} />
+          <DetailRow label="Departure"    value="17:30 from FFL Township" />
           <DetailRow label="Pickup House" value={booking.pickupHouse} />
-          <DetailRow label="Return Trip" value={booking.returnTrip ? 'Yes — 21:00 from RYK' : 'No'} />
-          <DetailRow label="Overnight Stay" value={booking.overnightStay ? 'Yes' : 'No'} />
+          <DetailRow label="Return Trip"  value={booking.returnTrip ? 'Yes — 21:00 from RYK' : 'No'} />
+          <DetailRow label="Overnight"    value={booking.overnightStay ? 'Yes' : 'No'} />
           <DetailRow
             label="Referral Confirmed"
             value={booking.referralConfirmed ? '✓ Yes' : '✗ No'}
@@ -206,7 +212,6 @@ export default function TripDetailScreen({ navigation, route }) {
           />
         </View>
 
-        {/* Notes */}
         {!!booking.notes && (
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>Employee Notes</Text>
@@ -214,21 +219,15 @@ export default function TripDetailScreen({ navigation, route }) {
           </View>
         )}
 
-        {/* Seat availability */}
         <View style={styles.seatBox}>
           <Text style={styles.seatBoxTitle}>Seat Availability — {formatDate(booking.tripDate)}</Text>
           <View style={styles.seatRow}>
             <SeatStat label="Confirmed" value={seatsConfirmed} color="#276749" />
-            <SeatStat
-              label="Seats Left"
-              value={seatsLeft}
-              color={seatsLeft <= 3 ? '#c53030' : '#2b6cb0'}
-            />
-            <SeatStat label="Capacity" value={SEAT_CAP} color="#718096" />
+            <SeatStat label="Seats Left" value={seatsLeft} color={seatsLeft <= 3 ? '#c53030' : '#2b6cb0'} />
+            <SeatStat label="Capacity"  value={SEAT_CAP}    color="#718096" />
           </View>
         </View>
 
-        {/* Booking metadata */}
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>Booking Info</Text>
           <DetailRow label="Submitted" value={formatTimestamp(booking.createdAt)} />
@@ -240,7 +239,6 @@ export default function TripDetailScreen({ navigation, route }) {
           )}
         </View>
 
-        {/* Action buttons — only for reception on actionable statuses */}
         {userRole === 'reception' && (
           <View style={styles.actions}>
             {booking.status === 'pending' && (
@@ -255,7 +253,6 @@ export default function TripDetailScreen({ navigation, route }) {
                 }
               </TouchableOpacity>
             )}
-
             {(booking.status === 'pending' || booking.status === 'confirmed') && (
               <TouchableOpacity
                 style={[styles.cancelBtn, actionLoading && styles.btnDisabled]}
@@ -298,105 +295,58 @@ function SeatStat({ label, value, color }) {
 
 const styles = StyleSheet.create({
   wrapper: { flex: 1, backgroundColor: '#f0f4f8' },
-
   header: {
-    paddingTop: 48,
-    paddingHorizontal: 20,
-    paddingBottom: 14,
-    backgroundColor: '#ffffff',
-    borderBottomWidth: 1,
-    borderBottomColor: '#e2e8f0',
-    flexDirection: 'row',
-    alignItems: 'flex-end',
-    justifyContent: 'space-between',
+    paddingTop: 48, paddingHorizontal: 20, paddingBottom: 14,
+    backgroundColor: '#ffffff', borderBottomWidth: 1, borderBottomColor: '#e2e8f0',
+    flexDirection: 'row', alignItems: 'flex-end', justifyContent: 'space-between',
   },
   backBtn: { marginBottom: 0 },
   backText: { fontSize: 14, color: '#3182ce', fontWeight: '600' },
   title: { fontSize: 18, fontWeight: 'bold', color: '#2d3748', flex: 1, marginLeft: 12 },
-  statusBadge: {
-    borderRadius: 12,
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderWidth: 1,
-  },
+  statusBadge: { borderRadius: 12, paddingHorizontal: 10, paddingVertical: 4, borderWidth: 1 },
   statusText: { fontSize: 12, fontWeight: '700' },
-
   scroll: { flex: 1 },
   scrollContent: { padding: 16 },
-
   section: {
-    backgroundColor: '#ffffff',
-    borderRadius: 12,
-    padding: 16,
-    marginBottom: 14,
-    shadowColor: '#000',
-    shadowOpacity: 0.06,
-    shadowRadius: 4,
-    shadowOffset: { width: 0, height: 2 },
-    elevation: 2,
+    backgroundColor: '#ffffff', borderRadius: 12, padding: 16, marginBottom: 14,
+    shadowColor: '#000', shadowOpacity: 0.06, shadowRadius: 4,
+    shadowOffset: { width: 0, height: 2 }, elevation: 2,
   },
   sectionTitle: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: '#a0aec0',
-    textTransform: 'uppercase',
-    letterSpacing: 0.8,
-    marginBottom: 12,
+    fontSize: 12, fontWeight: '700', color: '#a0aec0',
+    textTransform: 'uppercase', letterSpacing: 0.8, marginBottom: 12,
   },
-
   detailRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
-    paddingVertical: 8,
-    borderBottomWidth: 1,
-    borderBottomColor: '#f7fafc',
+    flexDirection: 'row', justifyContent: 'space-between',
+    alignItems: 'flex-start', paddingVertical: 8,
+    borderBottomWidth: 1, borderBottomColor: '#f7fafc',
   },
   detailLabel: { fontSize: 13, color: '#718096', flex: 1 },
   detailValue: { fontSize: 13, color: '#2d3748', fontWeight: '600', flex: 1.5, textAlign: 'right' },
-
   notesText: { fontSize: 14, color: '#4a5568', lineHeight: 20 },
-
   seatBox: {
-    backgroundColor: '#ebf8ff',
-    borderRadius: 12,
-    padding: 16,
-    marginBottom: 14,
-    borderLeftWidth: 4,
-    borderLeftColor: '#3182ce',
+    backgroundColor: '#ebf8ff', borderRadius: 12, padding: 16,
+    marginBottom: 14, borderLeftWidth: 4, borderLeftColor: '#3182ce',
   },
   seatBoxTitle: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: '#2b6cb0',
-    marginBottom: 12,
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
+    fontSize: 12, fontWeight: '700', color: '#2b6cb0',
+    marginBottom: 12, textTransform: 'uppercase', letterSpacing: 0.5,
   },
   seatRow: { flexDirection: 'row', justifyContent: 'space-around' },
   seatStat: { alignItems: 'center' },
   seatStatValue: { fontSize: 24, fontWeight: '800' },
   seatStatLabel: { fontSize: 11, color: '#718096', fontWeight: '600', marginTop: 2 },
-
   actions: { gap: 10, marginBottom: 40 },
   confirmBtn: {
-    backgroundColor: '#38a169',
-    borderRadius: 8,
-    paddingVertical: 14,
-    alignItems: 'center',
+    backgroundColor: '#38a169', borderRadius: 8, paddingVertical: 14, alignItems: 'center',
   },
   confirmBtnText: { color: '#ffffff', fontWeight: '700', fontSize: 16 },
   cancelBtn: {
-    borderWidth: 1,
-    borderColor: '#feb2b2',
-    borderRadius: 8,
-    paddingVertical: 14,
-    alignItems: 'center',
-    backgroundColor: '#fff5f5',
+    borderWidth: 1, borderColor: '#feb2b2', borderRadius: 8,
+    paddingVertical: 14, alignItems: 'center', backgroundColor: '#fff5f5',
   },
   cancelBtnText: { color: '#c53030', fontWeight: '700', fontSize: 16 },
   btnDisabled: { opacity: 0.6 },
-
   centered: { flex: 1, justifyContent: 'center', alignItems: 'center' },
   loadingText: { marginTop: 10, color: '#718096', fontSize: 14 },
 });

@@ -1,15 +1,13 @@
 // app/src/screens/trip/TripViewScreen.js
 // Flow 4 — Medical Trip
 // Read-only view of trip bookings for CMO and doctor roles
-// Mirrors ReceptionHub layout but with no actions
 
-import React, { useState, useCallback } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity,
   ScrollView, ActivityIndicator, RefreshControl,
 } from 'react-native';
 import { getAuth } from 'firebase/auth';
-import { useFocusEffect } from '@react-navigation/native';
 import { API } from '../../config/api';
 
 const STATUS_CONFIG = {
@@ -21,19 +19,24 @@ const STATUS_CONFIG = {
 
 const SEAT_CAP = 24;
 
+// Local date parts only — no UTC shift
 function getTripDates(count = 8) {
   const TRIP_DAYS = ['Monday', 'Wednesday', 'Saturday'];
   const results = [];
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  let cursor = new Date(today);
+  const now = new Date();
+  const todayLocal = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  let cursor = new Date(todayLocal);
   let attempts = 0;
+
   while (results.length < count && attempts < 60) {
     const dayName = cursor.toLocaleDateString('en-US', { weekday: 'long' });
     if (TRIP_DAYS.includes(dayName)) {
+      const y = cursor.getFullYear();
+      const m = String(cursor.getMonth() + 1).padStart(2, '0');
+      const d = String(cursor.getDate()).padStart(2, '0');
       results.push({
         label: cursor.toLocaleDateString('en-PK', { weekday: 'short', day: 'numeric', month: 'short' }),
-        value: cursor.toISOString().split('T')[0],
+        value: `${y}-${m}-${d}`,
       });
     }
     cursor.setDate(cursor.getDate() + 1);
@@ -47,9 +50,9 @@ export default function TripViewScreen({ navigation, route }) {
 
   const tripDates = getTripDates(8);
   const [selectedDate, setSelectedDate] = useState(tripDates[0]?.value || '');
-  const [bookings, setBookings] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
+  const [bookings, setBookings]         = useState([]);
+  const [loading, setLoading]           = useState(true);
+  const [refreshing, setRefreshing]     = useState(false);
 
   const getToken = async () => {
     const auth = getAuth();
@@ -76,10 +79,10 @@ export default function TripViewScreen({ navigation, route }) {
     }
   };
 
-  useFocusEffect(useCallback(() => {
+  useEffect(() => {
     setLoading(true);
     fetchBookings(selectedDate);
-  }, [selectedDate]));
+  }, [selectedDate]);
 
   const onRefresh = () => {
     setRefreshing(true);
@@ -88,15 +91,19 @@ export default function TripViewScreen({ navigation, route }) {
 
   const handleDateChange = (date) => {
     setSelectedDate(date);
-    setLoading(true);
   };
 
-  const confirmedCount = bookings.filter(b => b.status === 'confirmed').length;
-  const pendingCount = bookings.filter(b => b.status === 'pending').length;
-  const seatsLeft = SEAT_CAP - confirmedCount;
+  // Count seats not bookings
+  const confirmedSeats = bookings
+    .filter(b => b.status === 'confirmed')
+    .reduce((sum, b) => sum + (b.seats || 1), 0);
+  const pendingSeats = bookings
+    .filter(b => b.status === 'pending')
+    .reduce((sum, b) => sum + (b.seats || 1), 0);
+  const seatsLeft = SEAT_CAP - confirmedSeats;
 
   const confirmed = bookings.filter(b => b.status === 'confirmed');
-  const pending = bookings.filter(b => b.status === 'pending');
+  const pending   = bookings.filter(b => b.status === 'pending');
 
   const renderBooking = (item) => {
     const config = STATUS_CONFIG[item.status] || STATUS_CONFIG.pending;
@@ -108,6 +115,7 @@ export default function TripViewScreen({ navigation, route }) {
             <Text style={styles.employeeMeta}>
               {item.employeeNumber || '—'}
               {item.department ? `  ·  ${item.department}` : ''}
+              {item.seats > 1 ? `  ·  ${item.seats} seats` : ''}
             </Text>
           </View>
           <View style={[styles.statusBadge, { backgroundColor: config.bg, borderColor: config.border }]}>
@@ -116,7 +124,9 @@ export default function TripViewScreen({ navigation, route }) {
         </View>
 
         <View style={styles.cardMeta}>
+          <MetaItem icon="👤" value={`${item.patientName || '—'} (${item.patientRelation || '—'})`} />
           <MetaItem icon="🏠" value={`Pickup: ${item.pickupHouse || '—'}`} />
+          <MetaItem icon="🩺" value={item.doctorName || 'No doctor'} />
           <MetaItem icon="↩️" value={item.returnTrip ? 'Return: 21:00' : 'No return'} />
           <MetaItem icon="🌙" value={item.overnightStay ? 'Overnight' : 'Day trip'} />
           <MetaItem icon="📋" value={item.referralConfirmed ? 'Referral ✓' : 'No referral'} />
@@ -135,7 +145,6 @@ export default function TripViewScreen({ navigation, route }) {
 
   return (
     <View style={styles.wrapper}>
-      {/* Header */}
       <View style={styles.header}>
         <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
           <Text style={styles.backText}>← Back</Text>
@@ -144,7 +153,6 @@ export default function TripViewScreen({ navigation, route }) {
         <Text style={styles.subtitle}>{roleLabel} View — Read Only</Text>
       </View>
 
-      {/* Date filter tabs */}
       <View style={styles.dateTabsWrapper}>
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.dateTabs}>
           {tripDates.map(d => (
@@ -172,26 +180,19 @@ export default function TripViewScreen({ navigation, route }) {
           contentContainerStyle={styles.scrollContent}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
         >
-          {/* Seat summary */}
           <View style={styles.seatSummary}>
-            <SeatStat label="Confirmed" value={confirmedCount} color="#276749" />
-            <SeatStat label="Pending" value={pendingCount} color="#b7791f" />
-            <SeatStat
-              label="Seats Left"
-              value={seatsLeft}
-              color={seatsLeft <= 3 ? '#c53030' : '#2b6cb0'}
-            />
-            <SeatStat label="Capacity" value={SEAT_CAP} color="#718096" />
+            <SeatStat label="Confirmed" value={confirmedSeats} color="#276749" />
+            <SeatStat label="Pending"   value={pendingSeats}   color="#b7791f" />
+            <SeatStat label="Seats Left" value={seatsLeft} color={seatsLeft <= 3 ? '#c53030' : '#2b6cb0'} />
+            <SeatStat label="Capacity"  value={SEAT_CAP}       color="#718096" />
           </View>
 
-          {/* Read-only notice */}
           <View style={styles.readOnlyBanner}>
             <Text style={styles.readOnlyText}>
               👁  You have view-only access. Contact reception to make changes.
             </Text>
           </View>
 
-          {/* Confirmed */}
           {confirmed.length > 0 && (
             <>
               <Text style={styles.groupLabel}>CONFIRMED ({confirmed.length})</Text>
@@ -199,7 +200,6 @@ export default function TripViewScreen({ navigation, route }) {
             </>
           )}
 
-          {/* Pending */}
           {pending.length > 0 && (
             <>
               <Text style={styles.groupLabel}>PENDING ({pending.length})</Text>
@@ -207,7 +207,6 @@ export default function TripViewScreen({ navigation, route }) {
             </>
           )}
 
-          {/* Empty */}
           {bookings.length === 0 && (
             <View style={styles.emptyState}>
               <Text style={styles.emptyIcon}>🚌</Text>
@@ -215,7 +214,6 @@ export default function TripViewScreen({ navigation, route }) {
               <Text style={styles.emptySubtext}>Pull down to refresh</Text>
             </View>
           )}
-
         </ScrollView>
       )}
     </View>
@@ -242,122 +240,65 @@ function MetaItem({ icon, value }) {
 
 const styles = StyleSheet.create({
   wrapper: { flex: 1, backgroundColor: '#f0f4f8' },
-
   header: {
-    paddingTop: 48,
-    paddingHorizontal: 20,
-    paddingBottom: 14,
-    backgroundColor: '#ffffff',
-    borderBottomWidth: 1,
-    borderBottomColor: '#e2e8f0',
+    paddingTop: 48, paddingHorizontal: 20, paddingBottom: 14,
+    backgroundColor: '#ffffff', borderBottomWidth: 1, borderBottomColor: '#e2e8f0',
   },
   backBtn: { marginBottom: 6 },
   backText: { fontSize: 14, color: '#3182ce', fontWeight: '600' },
   title: { fontSize: 20, fontWeight: 'bold', color: '#2d3748' },
   subtitle: { fontSize: 13, color: '#718096', marginTop: 2 },
-
-  dateTabsWrapper: {
-    backgroundColor: '#ffffff',
-    borderBottomWidth: 1,
-    borderBottomColor: '#e2e8f0',
-  },
+  dateTabsWrapper: { backgroundColor: '#ffffff', borderBottomWidth: 1, borderBottomColor: '#e2e8f0' },
   dateTabs: { paddingHorizontal: 12, paddingVertical: 10, gap: 8 },
   dateTab: {
-    borderWidth: 1,
-    borderColor: '#e2e8f0',
-    borderRadius: 20,
-    paddingHorizontal: 14,
-    paddingVertical: 6,
-    backgroundColor: '#f7fafc',
+    borderWidth: 1, borderColor: '#e2e8f0', borderRadius: 20,
+    paddingHorizontal: 14, paddingVertical: 6, backgroundColor: '#f7fafc',
   },
   dateTabSelected: { backgroundColor: '#3182ce', borderColor: '#3182ce' },
   dateTabText: { fontSize: 13, color: '#4a5568', fontWeight: '600' },
   dateTabTextSelected: { color: '#ffffff' },
-
   scroll: { flex: 1 },
   scrollContent: { padding: 16 },
-
   seatSummary: {
-    flexDirection: 'row',
-    backgroundColor: '#ffffff',
-    borderRadius: 12,
-    padding: 16,
-    marginBottom: 12,
-    justifyContent: 'space-between',
-    shadowColor: '#000',
-    shadowOpacity: 0.06,
-    shadowRadius: 4,
-    shadowOffset: { width: 0, height: 2 },
-    elevation: 2,
+    flexDirection: 'row', backgroundColor: '#ffffff', borderRadius: 12,
+    padding: 16, marginBottom: 12, justifyContent: 'space-between',
+    shadowColor: '#000', shadowOpacity: 0.06, shadowRadius: 4,
+    shadowOffset: { width: 0, height: 2 }, elevation: 2,
   },
   seatStat: { alignItems: 'center' },
   seatStatValue: { fontSize: 22, fontWeight: '800' },
   seatStatLabel: { fontSize: 11, color: '#a0aec0', fontWeight: '600', marginTop: 2 },
-
   readOnlyBanner: {
-    backgroundColor: '#fffff0',
-    borderRadius: 8,
-    padding: 10,
-    marginBottom: 14,
-    borderLeftWidth: 3,
-    borderLeftColor: '#d69e2e',
+    backgroundColor: '#fffff0', borderRadius: 8, padding: 10,
+    marginBottom: 14, borderLeftWidth: 3, borderLeftColor: '#d69e2e',
   },
   readOnlyText: { fontSize: 13, color: '#744210' },
-
   groupLabel: {
-    fontSize: 11,
-    fontWeight: '800',
-    color: '#a0aec0',
-    letterSpacing: 1,
-    marginBottom: 8,
-    marginTop: 4,
+    fontSize: 11, fontWeight: '800', color: '#a0aec0',
+    letterSpacing: 1, marginBottom: 8, marginTop: 4,
   },
-
   card: {
-    backgroundColor: '#ffffff',
-    borderRadius: 12,
-    padding: 14,
-    marginBottom: 12,
-    shadowColor: '#000',
-    shadowOpacity: 0.06,
-    shadowRadius: 4,
-    shadowOffset: { width: 0, height: 2 },
-    elevation: 2,
+    backgroundColor: '#ffffff', borderRadius: 12, padding: 14, marginBottom: 12,
+    shadowColor: '#000', shadowOpacity: 0.06, shadowRadius: 4,
+    shadowOffset: { width: 0, height: 2 }, elevation: 2,
   },
   cardHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
-    marginBottom: 10,
+    flexDirection: 'row', justifyContent: 'space-between',
+    alignItems: 'flex-start', marginBottom: 10,
   },
   employeeInfo: { flex: 1, marginRight: 8 },
   employeeName: { fontSize: 15, fontWeight: '700', color: '#2d3748' },
   employeeMeta: { fontSize: 12, color: '#718096', marginTop: 1 },
-
-  statusBadge: {
-    borderRadius: 12,
-    paddingHorizontal: 10,
-    paddingVertical: 3,
-    borderWidth: 1,
-  },
+  statusBadge: { borderRadius: 12, paddingHorizontal: 10, paddingVertical: 3, borderWidth: 1 },
   statusText: { fontSize: 12, fontWeight: '700' },
-
   cardMeta: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   metaItem: { flexDirection: 'row', alignItems: 'center', gap: 4, width: '45%' },
   metaIcon: { fontSize: 13 },
   metaValue: { fontSize: 12, color: '#4a5568' },
-
-  notesBox: {
-    marginTop: 8,
-    backgroundColor: '#f7fafc',
-    borderRadius: 6,
-    padding: 8,
-  },
+  notesBox: { marginTop: 8, backgroundColor: '#f7fafc', borderRadius: 6, padding: 8 },
   notesText: { fontSize: 12, color: '#718096' },
-
   centered: { flex: 1, justifyContent: 'center', alignItems: 'center', marginTop: 60 },
   loadingText: { marginTop: 10, color: '#718096', fontSize: 14 },
-
   emptyState: { alignItems: 'center', marginTop: 60 },
   emptyIcon: { fontSize: 40, marginBottom: 12 },
   emptyText: { fontSize: 16, color: '#4a5568', fontWeight: '600' },

@@ -1,452 +1,339 @@
+// functions/src/trips/tripRoutes.js
+// Flow 4 — Medical Trip
+// Bookable by: employee
+// Managed by: reception (confirm/cancel)
+// View only:  cmo, doctor
+// Seat cap:   24 per trip date
+
 const express = require('express');
+const { getFirestore, Timestamp, FieldValue } = require('firebase-admin/firestore');
+
 const router = express.Router();
-const admin = require('firebase-admin');
-const { verifyToken, verifyRole } = require('../auth/authRoutes');
-const { successResponse, errorResponse, nowISO, getDayOfWeek } = require('../utils');
-const {
-  ROLES,
-  TRIP_STATUS,
-  BOOKING_STATUS,
-  MEDICAL_TRIP_TOTAL_SEATS,
-  MEDICAL_TRIP_DAYS,
-} = require('../constants');
+const db = getFirestore();
 
-// ─── POST /create ─────────────────────────────────────────
-// Reception creates a trip for a specific date
-router.post('/create', verifyToken, verifyRole([
-  ROLES.RECEPTION, ROLES.CMO,
-]), async (req, res) => {
+const SEAT_CAP = 24;
+
+const ROLES = {
+  EMPLOYEE:  'employee',
+  RECEPTION: 'reception',
+  CMO:       'cmo',
+  DOCTOR:    'doctor',
+  ADMIN:     'admin_incharge',
+};
+
+const STATUS = {
+  PENDING:   'pending',
+  CONFIRMED: 'confirmed',
+  CANCELLED: 'cancelled',
+  COMPLETED: 'completed',
+};
+
+// ── Helper: get user role ─────────────────────────────────────────────────────
+async function getUserRole(uid) {
+  const doc = await db.collection('users').doc(uid).get();
+  if (!doc.exists) throw new Error('User not found');
+  return doc.data().role;
+}
+
+// ── Helper: get employee record linked to a user ──────────────────────────────
+async function getEmployeeData(uid) {
+  const snapshot = await db.collection('employees')
+    .where('userId', '==', uid)
+    .limit(1)
+    .get();
+  if (snapshot.empty) throw new Error('Employee record not found');
+  return { id: snapshot.docs[0].id, ...snapshot.docs[0].data() };
+}
+
+// ── Helper: count confirmed seats for a trip date ─────────────────────────────
+async function getConfirmedCount(tripDate) {
+  const snapshot = await db.collection('tripBookings')
+    .where('tripDate', '==', tripDate)
+    .where('status', '==', STATUS.CONFIRMED)
+    .get();
+  return snapshot.size;
+}
+
+// ── POST /book — employee submits a booking request ───────────────────────────
+router.post('/book', async (req, res) => {
   try {
-    const db = admin.firestore();
-    const { tripDate } = req.body;
+    const { uid } = req.user;
+    const role = await getUserRole(uid);
 
-    if (!tripDate) {
-      return errorResponse(res, 'tripDate is required (YYYY-MM-DD)', 400);
+    if (role !== ROLES.EMPLOYEE) {
+      return res.status(403).json({ success: false, message: 'Only employees can book trips' });
     }
 
-    const dayOfWeek = getDayOfWeek(tripDate);
-    if (!MEDICAL_TRIP_DAYS.includes(dayOfWeek)) {
-      return errorResponse(res,
-        'Trips can only be created on Monday, Wednesday or Saturday',
-        400);
+    const { tripDate, pickupHouse, referralConfirmed, overnightStay, returnTrip, notes } = req.body;
+
+    if (!tripDate?.trim()) {
+      return res.status(400).json({ success: false, message: 'Trip date is required' });
+    }
+    if (!pickupHouse?.trim()) {
+      return res.status(400).json({ success: false, message: 'Pickup house number is required' });
     }
 
-    // Check trip not already created for this date
-    const existing = await db.collection('medicalTrips')
+    // Validate trip date is Mon/Wed/Sat
+    const dayOfWeek = new Date(tripDate).getDay(); // 0=Sun,1=Mon,3=Wed,6=Sat
+    if (![1, 3, 6].includes(dayOfWeek)) {
+      return res.status(400).json({ success: false, message: 'Trips only run on Monday, Wednesday, and Saturday' });
+    }
+
+    // Check employee doesn't already have an active booking for this date
+    const existing = await db.collection('tripBookings')
+      .where('bookedBy', '==', uid)
       .where('tripDate', '==', tripDate)
+      .where('status', 'in', [STATUS.PENDING, STATUS.CONFIRMED])
       .get();
 
     if (!existing.empty) {
-      return errorResponse(res, 'A trip already exists for this date', 409);
-    }
-
-    const tripRef = db.collection('medicalTrips').doc();
-    await tripRef.set({
-      tripDate,
-      dayOfWeek,
-      departureMC:  '17:30',
-      departureRYK: '21:00',
-      totalSeats:   MEDICAL_TRIP_TOTAL_SEATS,
-      seatsBooked:  0,
-      status:       TRIP_STATUS.OPEN,
-      createdBy:    req.user.uid,
-      createdAt:    nowISO(),
-    });
-
-    return successResponse(res,
-      { tripId: tripRef.id },
-      'Trip created successfully',
-      201
-    );
-  } catch (error) {
-    console.error('Create trip error:', error);
-    return errorResponse(res, 'Failed to create trip', 500);
-  }
-});
-
-// ─── GET /upcoming ────────────────────────────────────────
-// All upcoming open trips
-router.get('/upcoming', verifyToken, async (req, res) => {
-  try {
-    const db = admin.firestore();
-    const today = new Date().toISOString().split('T')[0];
-
-    const snapshot = await db.collection('medicalTrips')
-      .where('tripDate', '>=', today)
-      .where('status', 'in', [TRIP_STATUS.OPEN, TRIP_STATUS.FULL])
-      .orderBy('tripDate', 'asc')
-      .get();
-
-    const trips = snapshot.docs.map(doc => ({
-      id: doc.id,
-      ...doc.data(),
-      seatsAvailable: MEDICAL_TRIP_TOTAL_SEATS - doc.data().seatsBooked,
-    }));
-
-    return successResponse(res, trips);
-  } catch (error) {
-    return errorResponse(res, 'Failed to fetch upcoming trips', 500);
-  }
-});
-
-// ─── GET /all ─────────────────────────────────────────────
-// Reception/Doctor/CMO views all trips
-router.get('/all', verifyToken, verifyRole([
-  ROLES.RECEPTION, ROLES.DOCTOR, ROLES.CMO, ROLES.ADMIN_INCHARGE,
-]), async (req, res) => {
-  try {
-    const db = admin.firestore();
-    const { month, year } = req.query;
-
-    let query = db.collection('medicalTrips').orderBy('tripDate', 'desc');
-
-    const snapshot = await query.get();
-    let trips = snapshot.docs.map(doc => ({
-      id: doc.id,
-      ...doc.data(),
-      seatsAvailable: MEDICAL_TRIP_TOTAL_SEATS - doc.data().seatsBooked,
-    }));
-
-    // Filter by month/year if provided
-    if (month && year) {
-      trips = trips.filter(trip => {
-        const date = new Date(trip.tripDate);
-        return date.getMonth() + 1 === parseInt(month) &&
-               date.getFullYear() === parseInt(year);
+      return res.status(400).json({
+        success: false,
+        message: 'You already have an active booking for this trip date',
       });
     }
 
-    return successResponse(res, trips);
+    // Check seat availability
+    const confirmedCount = await getConfirmedCount(tripDate);
+    if (confirmedCount >= SEAT_CAP) {
+      return res.status(400).json({
+        success: false,
+        message: `All ${SEAT_CAP} seats are full for this trip date. Please choose another date.`,
+      });
+    }
+
+    // Fetch employee details to store on booking
+    const employee = await getEmployeeData(uid);
+
+    const booking = {
+      bookedBy:          uid,
+      employeeName:      employee.fullName || '',
+      employeeNumber:    employee.officialEmployeeNumber || '',
+      department:        employee.department || '',
+      phone:             employee.phone || '',
+      tripDate:          tripDate.trim(),
+      pickupHouse:       pickupHouse.trim(),
+      referralConfirmed: referralConfirmed === true,
+      overnightStay:     overnightStay === true,
+      returnTrip:        returnTrip !== false, // defaults to true
+      notes:             notes?.trim() || null,
+      status:            STATUS.PENDING,
+      confirmedAt:       null,
+      confirmedBy:       null,
+      cancelledAt:       null,
+      cancelledBy:       null,
+      createdAt:         Timestamp.now(),
+    };
+
+    const ref = await db.collection('tripBookings').add(booking);
+    res.json({
+      success: true,
+      message: 'Booking submitted. Reception will confirm your seat.',
+      data: { id: ref.id, ...booking },
+    });
+
   } catch (error) {
-    return errorResponse(res, 'Failed to fetch trips', 500);
+    console.error('Trip book error:', error);
+    res.status(500).json({ success: false, message: 'Failed to submit booking', error: error.message });
   }
 });
 
-// ─── GET /:tripId ─────────────────────────────────────────
-router.get('/:tripId', verifyToken, async (req, res) => {
+// ── GET /my — employee views their own bookings ───────────────────────────────
+router.get('/my', async (req, res) => {
   try {
-    const db = admin.firestore();
-    const doc = await db.collection('medicalTrips').doc(req.params.tripId).get();
+    const { uid } = req.user;
+    const role = await getUserRole(uid);
 
+    if (role !== ROLES.EMPLOYEE) {
+      return res.status(403).json({ success: false, message: 'Access denied' });
+    }
+
+    const snapshot = await db.collection('tripBookings')
+      .where('bookedBy', '==', uid)
+      .orderBy('tripDate', 'desc')
+      .get();
+
+    const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+    res.json({ success: true, data });
+
+  } catch (error) {
+    console.error('Trip my bookings error:', error);
+    res.status(500).json({ success: false, message: 'Failed to load bookings', error: error.message });
+  }
+});
+
+// ── GET /confirmedCount — seat count for a trip date ─────────────────────────
+// Must be defined before /:id to avoid route conflict
+router.get('/confirmedCount', async (req, res) => {
+  try {
+    const role = await getUserRole(req.user.uid);
+    const allowed = [ROLES.RECEPTION, ROLES.CMO, ROLES.DOCTOR, ROLES.ADMIN];
+    if (!allowed.includes(role)) {
+      return res.status(403).json({ success: false, message: 'Access denied' });
+    }
+
+    const { tripDate } = req.query;
+    if (!tripDate) {
+      return res.status(400).json({ success: false, message: 'tripDate query param is required' });
+    }
+
+    const count = await getConfirmedCount(tripDate);
+    res.json({ success: true, count, seatsLeft: SEAT_CAP - count, capacity: SEAT_CAP });
+
+  } catch (error) {
+    console.error('Confirmed count error:', error);
+    res.status(500).json({ success: false, message: 'Failed to get seat count', error: error.message });
+  }
+});
+
+// ── GET /all — reception/cmo/doctor view all bookings for a date ──────────────
+// Must be defined before /:id to avoid route conflict
+router.get('/all', async (req, res) => {
+  try {
+    const role = await getUserRole(req.user.uid);
+    const allowed = [ROLES.RECEPTION, ROLES.CMO, ROLES.DOCTOR, ROLES.ADMIN];
+    if (!allowed.includes(role)) {
+      return res.status(403).json({ success: false, message: 'Access denied' });
+    }
+
+    const { tripDate, status } = req.query;
+    if (!tripDate) {
+      return res.status(400).json({ success: false, message: 'tripDate query param is required' });
+    }
+
+    let query = db.collection('tripBookings').where('tripDate', '==', tripDate);
+    if (status) {
+      query = query.where('status', '==', status);
+    }
+
+    const snapshot = await query.orderBy('createdAt', 'asc').get();
+    const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+    res.json({ success: true, data });
+
+  } catch (error) {
+    console.error('Trip all error:', error);
+    res.status(500).json({ success: false, message: 'Failed to load bookings', error: error.message });
+  }
+});
+
+// ── GET /:id — fetch single booking ──────────────────────────────────────────
+router.get('/:id', async (req, res) => {
+  try {
+    const role = await getUserRole(req.user.uid);
+    const allowed = [ROLES.EMPLOYEE, ROLES.RECEPTION, ROLES.CMO, ROLES.DOCTOR, ROLES.ADMIN];
+    if (!allowed.includes(role)) {
+      return res.status(403).json({ success: false, message: 'Access denied' });
+    }
+
+    const doc = await db.collection('tripBookings').doc(req.params.id).get();
     if (!doc.exists) {
-      return errorResponse(res, 'Trip not found', 404);
+      return res.status(404).json({ success: false, message: 'Booking not found' });
     }
 
-    return successResponse(res, {
-      id: doc.id,
-      ...doc.data(),
-      seatsAvailable: MEDICAL_TRIP_TOTAL_SEATS - doc.data().seatsBooked,
-    });
+    const booking = { id: doc.id, ...doc.data() };
+
+    // Employees can only view their own bookings
+    if (role === ROLES.EMPLOYEE && booking.bookedBy !== req.user.uid) {
+      return res.status(403).json({ success: false, message: 'Access denied' });
+    }
+
+    res.json({ success: true, data: booking });
+
   } catch (error) {
-    return errorResponse(res, 'Failed to fetch trip', 500);
+    console.error('Trip get error:', error);
+    res.status(500).json({ success: false, message: 'Failed to load booking', error: error.message });
   }
 });
 
-// ─── POST /:tripId/book ───────────────────────────────────
-// Employee books seats on a trip
-router.post('/:tripId/book', verifyToken, verifyRole([
-  ROLES.EMPLOYEE, ROLES.RECEPTION, ROLES.CMO,
-]), async (req, res) => {
+// ── POST /:id/confirm — reception confirms a seat ─────────────────────────────
+router.post('/:id/confirm', async (req, res) => {
   try {
-    const db = admin.firestore();
-    const {
-      patientName,
-      patientRelation,
-      consultantToVisit,
-      seatsRequired,
-      referralConfirmed,
-      familyMemberId,
-    } = req.body;
+    const { uid } = req.user;
+    const role = await getUserRole(uid);
 
-    if (!patientName || !consultantToVisit || !seatsRequired) {
-      return errorResponse(res,
-        'patientName, consultantToVisit and seatsRequired are required',
-        400);
+    if (role !== ROLES.RECEPTION) {
+      return res.status(403).json({ success: false, message: 'Only reception can confirm bookings' });
     }
 
-    if (!referralConfirmed) {
-      return errorResponse(res,
-        'Please confirm you have a valid doctor referral to proceed',
-        400);
+    const ref = db.collection('tripBookings').doc(req.params.id);
+    const doc = await ref.get();
+    if (!doc.exists) {
+      return res.status(404).json({ success: false, message: 'Booking not found' });
     }
 
-    const tripRef = db.collection('medicalTrips').doc(req.params.tripId);
-
-    // Run as transaction to prevent overbooking
-    const result = await db.runTransaction(async (transaction) => {
-      const tripDoc = await transaction.get(tripRef);
-
-      if (!tripDoc.exists) {
-        throw new Error('Trip not found');
-      }
-
-      const tripData = tripDoc.data();
-
-      if (tripData.status === TRIP_STATUS.CANCELLED) {
-        throw new Error('This trip has been cancelled');
-      }
-
-      if (tripData.status === TRIP_STATUS.COMPLETED) {
-        throw new Error('This trip has already been completed');
-      }
-
-      const seatsAvailable = tripData.totalSeats - tripData.seatsBooked;
-
-      if (seatsRequired > seatsAvailable) {
-        throw new Error(
-          `Only ${seatsAvailable} seat(s) available on this trip`
-        );
-      }
-
-      // Check employee hasn't already booked this trip
-      const existingBooking = await db.collection('medicalTrips')
-        .doc(req.params.tripId)
-        .collection('bookings')
-        .where('bookedBy', '==', req.user.uid)
-        .where('status', '!=', BOOKING_STATUS.CANCELLED)
-        .get();
-
-      if (!existingBooking.empty) {
-        throw new Error('You already have a booking on this trip');
-      }
-
-      const newSeatsBooked = tripData.seatsBooked + seatsRequired;
-      const newStatus = newSeatsBooked >= tripData.totalSeats
-        ? TRIP_STATUS.FULL
-        : TRIP_STATUS.OPEN;
-
-      const bookingRef = tripRef.collection('bookings').doc();
-
-      transaction.update(tripRef, {
-        seatsBooked: newSeatsBooked,
-        status:      newStatus,
+    const booking = doc.data();
+    if (booking.status !== STATUS.PENDING) {
+      return res.status(400).json({
+        success: false,
+        message: `Cannot confirm a booking with status: ${booking.status}`,
       });
+    }
 
-      transaction.set(bookingRef, {
-        bookedBy:          req.user.uid,
-        patientName,
-        patientRelation:   patientRelation || null,
-        familyMemberId:    familyMemberId || null,
-        consultantToVisit,
-        seatsRequired,
-        referralConfirmed: true,
-        status:            BOOKING_STATUS.PENDING,
-        approvedBy:        null,
-        approvedAt:        null,
-        locationSharingEnabled: false,
-        createdAt:         nowISO(),
+    // Re-check seat availability at confirm time
+    const confirmedCount = await getConfirmedCount(booking.tripDate);
+    if (confirmedCount >= SEAT_CAP) {
+      return res.status(400).json({
+        success: false,
+        message: `All ${SEAT_CAP} seats are full. Cannot confirm this booking.`,
       });
+    }
 
-      return { bookingId: bookingRef.id, tripStatus: newStatus };
+    await ref.update({
+      status:      STATUS.CONFIRMED,
+      confirmedAt: Timestamp.now(),
+      confirmedBy: uid,
     });
 
-    return successResponse(res, result,
-      'Booking created successfully. Awaiting reception approval.',
-      201
-    );
+    res.json({ success: true, message: 'Booking confirmed successfully' });
+
   } catch (error) {
-    console.error('Booking error:', error);
-    if (error.message.includes('seat') ||
-        error.message.includes('booking') ||
-        error.message.includes('cancelled') ||
-        error.message.includes('completed')) {
-      return errorResponse(res, error.message, 409);
-    }
-    return errorResponse(res, 'Booking failed', 500);
+    console.error('Trip confirm error:', error);
+    res.status(500).json({ success: false, message: 'Failed to confirm booking', error: error.message });
   }
 });
 
-// ─── GET /:tripId/bookings ────────────────────────────────
-// Reception/Doctor/CMO views all bookings for a trip
-router.get('/:tripId/bookings', verifyToken, verifyRole([
-  ROLES.RECEPTION, ROLES.DOCTOR, ROLES.CMO, ROLES.ADMIN_INCHARGE,
-]), async (req, res) => {
+// ── POST /:id/cancel — employee or reception cancels ─────────────────────────
+router.post('/:id/cancel', async (req, res) => {
   try {
-    const db = admin.firestore();
-    const snapshot = await db.collection('medicalTrips')
-      .doc(req.params.tripId)
-      .collection('bookings')
-      .get();
+    const { uid } = req.user;
+    const role = await getUserRole(uid);
 
-    const bookings = snapshot.docs.map(doc => ({
-      id: doc.id,
-      ...doc.data(),
-    }));
-
-    return successResponse(res, bookings);
-  } catch (error) {
-    return errorResponse(res, 'Failed to fetch bookings', 500);
-  }
-});
-
-// ─── GET /:tripId/my-booking ──────────────────────────────
-// Employee views own booking on a trip
-router.get('/:tripId/my-booking', verifyToken, async (req, res) => {
-  try {
-    const db = admin.firestore();
-    const snapshot = await db.collection('medicalTrips')
-      .doc(req.params.tripId)
-      .collection('bookings')
-      .where('bookedBy', '==', req.user.uid)
-      .get();
-
-    if (snapshot.empty) {
-      return errorResponse(res, 'No booking found for this trip', 404);
+    const allowed = [ROLES.EMPLOYEE, ROLES.RECEPTION, ROLES.ADMIN];
+    if (!allowed.includes(role)) {
+      return res.status(403).json({ success: false, message: 'Access denied' });
     }
 
-    return successResponse(res, {
-      id: snapshot.docs[0].id,
-      ...snapshot.docs[0].data(),
-    });
-  } catch (error) {
-    return errorResponse(res, 'Failed to fetch booking', 500);
-  }
-});
-
-// ─── POST /:tripId/bookings/:bookingId/approve ────────────
-// Reception approves a booking
-router.post('/:tripId/bookings/:bookingId/approve', verifyToken, verifyRole([
-  ROLES.RECEPTION, ROLES.CMO,
-]), async (req, res) => {
-  try {
-    const db = admin.firestore();
-    const bookingRef = db.collection('medicalTrips')
-      .doc(req.params.tripId)
-      .collection('bookings')
-      .doc(req.params.bookingId);
-
-    const bookingDoc = await bookingRef.get();
-    if (!bookingDoc.exists) {
-      return errorResponse(res, 'Booking not found', 404);
+    const ref = db.collection('tripBookings').doc(req.params.id);
+    const doc = await ref.get();
+    if (!doc.exists) {
+      return res.status(404).json({ success: false, message: 'Booking not found' });
     }
 
-    await bookingRef.update({
-      status:     BOOKING_STATUS.APPROVED,
-      approvedBy: req.user.uid,
-      approvedAt: nowISO(),
+    const booking = doc.data();
+
+    // Employee can only cancel their own booking
+    if (role === ROLES.EMPLOYEE && booking.bookedBy !== uid) {
+      return res.status(403).json({ success: false, message: 'You can only cancel your own bookings' });
+    }
+
+    if (booking.status === STATUS.CANCELLED) {
+      return res.status(400).json({ success: false, message: 'Booking is already cancelled' });
+    }
+    if (booking.status === STATUS.COMPLETED) {
+      return res.status(400).json({ success: false, message: 'Cannot cancel a completed booking' });
+    }
+
+    await ref.update({
+      status:      STATUS.CANCELLED,
+      cancelledAt: Timestamp.now(),
+      cancelledBy: uid,
     });
 
-    return successResponse(res, null, 'Booking approved');
+    res.json({ success: true, message: 'Booking cancelled successfully' });
+
   } catch (error) {
-    return errorResponse(res, 'Approval failed', 500);
-  }
-});
-
-// ─── POST /:tripId/bookings/:bookingId/cancel ─────────────
-router.post('/:tripId/bookings/:bookingId/cancel', verifyToken, async (req, res) => {
-  try {
-    const db = admin.firestore();
-    const tripRef  = db.collection('medicalTrips').doc(req.params.tripId);
-    const bookingRef = tripRef.collection('bookings').doc(req.params.bookingId);
-
-    await db.runTransaction(async (transaction) => {
-      const tripDoc    = await transaction.get(tripRef);
-      const bookingDoc = await transaction.get(bookingRef);
-
-      if (!bookingDoc.exists) throw new Error('Booking not found');
-
-      const bookingData = bookingDoc.data();
-
-      // Employee can only cancel own booking
-      if (req.userRole === ROLES.EMPLOYEE &&
-          bookingData.bookedBy !== req.user.uid) {
-        throw new Error('Forbidden');
-      }
-
-      if (bookingData.status === BOOKING_STATUS.CANCELLED) {
-        throw new Error('Booking already cancelled');
-      }
-
-      const tripData       = tripDoc.data();
-      const newSeatsBooked = tripData.seatsBooked - bookingData.seatsRequired;
-      const newStatus      = tripData.status === TRIP_STATUS.FULL
-        ? TRIP_STATUS.OPEN
-        : tripData.status;
-
-      transaction.update(bookingRef, {
-        status:      BOOKING_STATUS.CANCELLED,
-        cancelledAt: nowISO(),
-        cancelledBy: req.user.uid,
-      });
-
-      transaction.update(tripRef, {
-        seatsBooked: newSeatsBooked,
-        status:      newStatus,
-      });
-    });
-
-    return successResponse(res, null, 'Booking cancelled');
-  } catch (error) {
-    if (error.message === 'Forbidden') {
-      return errorResponse(res, 'Forbidden', 403);
-    }
-    return errorResponse(res, 'Cancellation failed', 500);
-  }
-});
-
-// ─── POST /:tripId/bookings/:bookingId/location ───────────
-// Employee shares live location for pickup coordination
-router.post('/:tripId/bookings/:bookingId/location', verifyToken,
-  verifyRole([ROLES.EMPLOYEE]),
-  async (req, res) => {
-    try {
-      const db = admin.firestore();
-      const { latitude, longitude } = req.body;
-
-      if (!latitude || !longitude) {
-        return errorResponse(res, 'latitude and longitude are required', 400);
-      }
-
-      const bookingRef = db.collection('medicalTrips')
-        .doc(req.params.tripId)
-        .collection('bookings')
-        .doc(req.params.bookingId);
-
-      const bookingDoc = await bookingRef.get();
-      if (!bookingDoc.exists) {
-        return errorResponse(res, 'Booking not found', 404);
-      }
-
-      if (bookingDoc.data().bookedBy !== req.user.uid) {
-        return errorResponse(res, 'Forbidden', 403);
-      }
-
-      await bookingRef.update({
-        locationSharingEnabled: true,
-        currentLocation: { latitude, longitude },
-        locationUpdatedAt: nowISO(),
-      });
-
-      return successResponse(res, null, 'Location updated');
-    } catch (error) {
-      return errorResponse(res, 'Location update failed', 500);
-    }
-  }
-);
-
-// ─── POST /:tripId/complete ───────────────────────────────
-// Reception marks trip as completed
-router.post('/:tripId/complete', verifyToken, verifyRole([
-  ROLES.RECEPTION, ROLES.CMO,
-]), async (req, res) => {
-  try {
-    const db = admin.firestore();
-    const tripRef = db.collection('medicalTrips').doc(req.params.tripId);
-    const tripDoc = await tripRef.get();
-
-    if (!tripDoc.exists) {
-      return errorResponse(res, 'Trip not found', 404);
-    }
-
-    await tripRef.update({
-      status:      TRIP_STATUS.COMPLETED,
-      completedAt: nowISO(),
-      completedBy: req.user.uid,
-    });
-
-    return successResponse(res, null, 'Trip marked as completed');
-  } catch (error) {
-    return errorResponse(res, 'Failed to complete trip', 500);
+    console.error('Trip cancel error:', error);
+    res.status(500).json({ success: false, message: 'Failed to cancel booking', error: error.message });
   }
 });
 

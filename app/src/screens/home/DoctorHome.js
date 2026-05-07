@@ -11,6 +11,20 @@ const TILES = [
     screen: 'DoctorAvailability',
     active: true,
   },
+  {
+    id: 'trip',
+    label: 'Medical Trip',
+    icon: '🚌',
+    screen: 'TripView',       // ← added — read-only view
+    active: true,
+  },
+  {
+    id: 'directory',
+    label: 'Doctors Directory',
+    icon: '🏥',
+    screen: 'DirectoryList',  // ← added — read-only view
+    active: true,
+  },
 ];
 
 export default function DoctorHome({ navigation }) {
@@ -19,7 +33,7 @@ export default function DoctorHome({ navigation }) {
       alert('Coming Soon');
       return;
     }
-    navigation.navigate(tile.screen);
+    navigation.navigate(tile.screen, { userRole: 'doctor' }); // ← userRole added
   };
 
   return (

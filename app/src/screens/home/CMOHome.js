@@ -18,6 +18,20 @@ const TILES = [
     screen: 'FeedbackList',
     active: true,
   },
+  {
+    id: 'trip',
+    label: 'Medical Trip',
+    icon: '🚌',
+    screen: 'TripView',       // ← added
+    active: true,
+  },
+  {
+    id: 'directory',
+    label: 'Doctors Directory',
+    icon: '🏥',
+    screen: 'DirectoryList',  // ← added
+    active: true,
+  },
 ];
 
 export default function CMOHome({ navigation }) {
@@ -26,7 +40,7 @@ export default function CMOHome({ navigation }) {
       alert('Coming Soon');
       return;
     }
-    navigation.navigate(tile.screen);
+    navigation.navigate(tile.screen, { userRole: 'cmo' }); // ← userRole added
   };
 
   return (

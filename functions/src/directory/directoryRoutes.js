@@ -1,237 +1,165 @@
+// functions/src/directory/directoryRoutes.js
+// Flow 5 — Doctor Directory
+// Accessible to: employee, reception, doctor, cmo (read)
+//                admin_incharge (read + write)
+
 const express = require('express');
+const { getFirestore, Timestamp } = require('firebase-admin/firestore');
+
 const router = express.Router();
-const admin = require('firebase-admin');
-const { verifyToken, verifyRole } = require('../auth/authRoutes');
-const { successResponse, errorResponse, nowISO } = require('../utils');
-const { ROLES } = require('../constants');
+const db = getFirestore();
 
-// ─── VALID CITIES ─────────────────────────────────────────
-const VALID_CITIES = ['RYK', 'Sadiqabad', 'other'];
+const READ_ROLES  = ['employee', 'reception', 'doctor', 'cmo', 'admin_incharge'];
+const WRITE_ROLES = ['admin_incharge'];
 
-// ─── POST /add ────────────────────────────────────────────
-// Authorized roles add a new doctor entry
-router.post('/add', verifyToken, verifyRole([
-  ROLES.DOCTOR, ROLES.CMO, ROLES.NURSE, ROLES.RECEPTION,
-]), async (req, res) => {
+// Helper: get user role from users collection
+async function getUserRole(uid) {
+  const doc = await db.collection('users').doc(uid).get();
+  if (!doc.exists) throw new Error('User not found');
+  return doc.data().role;
+}
+
+// ── GET /list — fetch all directory entries ───────────────────────────────────
+router.get('/list', async (req, res) => {
   try {
-    const db = admin.firestore();
-    const {
-      doctorName,
-      specialization,
-      hospitalName,
-      address,
-      city,
-      phoneNumbers,
-    } = req.body;
-
-    if (!doctorName || !specialization || !hospitalName || !city) {
-      return errorResponse(res,
-        'doctorName, specialization, hospitalName and city are required',
-        400);
+    const role = await getUserRole(req.user.uid);
+    if (!READ_ROLES.includes(role)) {
+      return res.status(403).json({ success: false, message: 'Access denied' });
     }
 
-    if (!VALID_CITIES.includes(city)) {
-      return errorResponse(res,
-        `Invalid city. Valid values: ${VALID_CITIES.join(', ')}`,
-        400);
-    }
-
-    if (!phoneNumbers || !Array.isArray(phoneNumbers) ||
-        phoneNumbers.length === 0) {
-      return errorResponse(res,
-        'At least one phone number is required',
-        400);
-    }
-
-    const entryRef = db.collection('doctorsDirectory').doc();
-    await entryRef.set({
-      doctorName,
-      specialization,
-      hospitalName,
-      address:      address || null,
-      city,
-      phoneNumbers,
-      isActive:     true,
-      addedBy:      req.user.uid,
-      updatedBy:    null,
-      createdAt:    nowISO(),
-      updatedAt:    null,
-    });
-
-    return successResponse(res,
-      { entryId: entryRef.id },
-      'Doctor added to directory successfully',
-      201
-    );
-  } catch (error) {
-    console.error('Add doctor directory error:', error);
-    return errorResponse(res, 'Failed to add doctor', 500);
-  }
-});
-
-// ─── GET /all ─────────────────────────────────────────────
-// All authenticated users can browse directory
-router.get('/all', verifyToken, async (req, res) => {
-  try {
-    const db = admin.firestore();
-    const { city, specialization, search } = req.query;
-
-    const snapshot = await db.collection('doctorsDirectory')
-      .where('isActive', '==', true)
-      .orderBy('doctorName', 'asc')
+    const snapshot = await db.collection('doctorDirectory')
+      .orderBy('createdAt', 'desc')
       .get();
 
-    let entries = snapshot.docs.map(doc => ({
-      id: doc.id,
-      ...doc.data(),
-    }));
+    const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+    res.json({ success: true, data });
 
-    // Filter by city
-    if (city) {
-      entries = entries.filter(e =>
-        e.city.toLowerCase() === city.toLowerCase()
-      );
-    }
-
-    // Filter by specialization
-    if (specialization) {
-      entries = entries.filter(e =>
-        e.specialization.toLowerCase()
-          .includes(specialization.toLowerCase())
-      );
-    }
-
-    // Search by name or hospital
-    if (search) {
-      const searchLower = search.toLowerCase();
-      entries = entries.filter(e =>
-        e.doctorName.toLowerCase().includes(searchLower)    ||
-        e.hospitalName.toLowerCase().includes(searchLower)  ||
-        e.specialization.toLowerCase().includes(searchLower)
-      );
-    }
-
-    return successResponse(res, entries);
   } catch (error) {
-    return errorResponse(res, 'Failed to fetch directory', 500);
+    console.error('Directory list error:', error);
+    res.status(500).json({ success: false, message: 'Failed to load directory', error: error.message });
   }
 });
 
-// ─── GET /:entryId ────────────────────────────────────────
-router.get('/:entryId', verifyToken, async (req, res) => {
+// ── GET /:id — fetch single entry ────────────────────────────────────────────
+router.get('/:id', async (req, res) => {
   try {
-    const db = admin.firestore();
-    const doc = await db.collection('doctorsDirectory')
-      .doc(req.params.entryId).get();
+    const role = await getUserRole(req.user.uid);
+    if (!READ_ROLES.includes(role)) {
+      return res.status(403).json({ success: false, message: 'Access denied' });
+    }
 
+    const doc = await db.collection('doctorDirectory').doc(req.params.id).get();
     if (!doc.exists) {
-      return errorResponse(res, 'Entry not found', 404);
+      return res.status(404).json({ success: false, message: 'Entry not found' });
     }
 
-    return successResponse(res, { id: doc.id, ...doc.data() });
+    res.json({ success: true, data: { id: doc.id, ...doc.data() } });
+
   } catch (error) {
-    return errorResponse(res, 'Failed to fetch entry', 500);
+    console.error('Directory get error:', error);
+    res.status(500).json({ success: false, message: 'Failed to load entry', error: error.message });
   }
 });
 
-// ─── PUT /:entryId ────────────────────────────────────────
-// Authorized roles update an entry
-router.put('/:entryId', verifyToken, verifyRole([
-  ROLES.DOCTOR, ROLES.CMO, ROLES.NURSE, ROLES.RECEPTION,
-]), async (req, res) => {
+// ── POST /add — create new entry ─────────────────────────────────────────────
+router.post('/add', async (req, res) => {
   try {
-    const db = admin.firestore();
-    const {
-      doctorName,
-      specialization,
-      hospitalName,
-      address,
-      city,
-      phoneNumbers,
-    } = req.body;
-
-    const entryRef = db.collection('doctorsDirectory')
-      .doc(req.params.entryId);
-    const entryDoc = await entryRef.get();
-
-    if (!entryDoc.exists) {
-      return errorResponse(res, 'Entry not found', 404);
+    const role = await getUserRole(req.user.uid);
+    if (!WRITE_ROLES.includes(role)) {
+      return res.status(403).json({ success: false, message: 'Only admin can add entries' });
     }
 
-    if (city && !VALID_CITIES.includes(city)) {
-      return errorResponse(res,
-        `Invalid city. Valid values: ${VALID_CITIES.join(', ')}`,
-        400);
-    }
+    const { name, speciality, hospital, address, phone, city } = req.body;
 
-    const updates = { updatedBy: req.user.uid, updatedAt: nowISO() };
-    if (doctorName)     updates.doctorName     = doctorName;
-    if (specialization) updates.specialization = specialization;
-    if (hospitalName)   updates.hospitalName   = hospitalName;
-    if (address)        updates.address        = address;
-    if (city)           updates.city           = city;
-    if (phoneNumbers && Array.isArray(phoneNumbers)) {
-      updates.phoneNumbers = phoneNumbers;
-    }
+    if (!name?.trim())       return res.status(400).json({ success: false, message: 'Name is required' });
+    if (!speciality?.trim()) return res.status(400).json({ success: false, message: 'Speciality is required' });
+    if (!hospital?.trim())   return res.status(400).json({ success: false, message: 'Hospital is required' });
+    if (!phone?.trim())      return res.status(400).json({ success: false, message: 'Phone is required' });
+    if (!city?.trim())       return res.status(400).json({ success: false, message: 'City is required' });
 
-    await entryRef.update(updates);
+    const entry = {
+      name:       name.trim(),
+      speciality: speciality.trim(),
+      hospital:   hospital.trim(),
+      address:    address?.trim() || null,
+      phone:      phone.trim(),
+      city:       city.trim(),
+      createdBy:  req.user.uid,
+      createdAt:  Timestamp.now(),
+      updatedAt:  Timestamp.now(),
+    };
 
-    return successResponse(res, null, 'Entry updated successfully');
+    const ref = await db.collection('doctorDirectory').add(entry);
+    res.json({ success: true, message: 'Doctor added successfully', data: { id: ref.id, ...entry } });
+
   } catch (error) {
-    return errorResponse(res, 'Failed to update entry', 500);
+    console.error('Directory add error:', error);
+    res.status(500).json({ success: false, message: 'Failed to add entry', error: error.message });
   }
 });
 
-// ─── POST /:entryId/deactivate ────────────────────────────
-// Soft delete — marks entry as inactive
-router.post('/:entryId/deactivate', verifyToken, verifyRole([
-  ROLES.DOCTOR, ROLES.CMO, ROLES.NURSE, ROLES.RECEPTION,
-]), async (req, res) => {
+// ── PUT /:id — update existing entry ─────────────────────────────────────────
+router.put('/:id', async (req, res) => {
   try {
-    const db = admin.firestore();
-    const entryRef = db.collection('doctorsDirectory')
-      .doc(req.params.entryId);
-    const entryDoc = await entryRef.get();
-
-    if (!entryDoc.exists) {
-      return errorResponse(res, 'Entry not found', 404);
+    const role = await getUserRole(req.user.uid);
+    if (!WRITE_ROLES.includes(role)) {
+      return res.status(403).json({ success: false, message: 'Only admin can edit entries' });
     }
 
-    await entryRef.update({
-      isActive:      false,
-      deactivatedBy: req.user.uid,
-      deactivatedAt: nowISO(),
-    });
+    const ref = db.collection('doctorDirectory').doc(req.params.id);
+    const doc = await ref.get();
+    if (!doc.exists) {
+      return res.status(404).json({ success: false, message: 'Entry not found' });
+    }
 
-    return successResponse(res, null, 'Entry deactivated successfully');
+    const { name, speciality, hospital, address, phone, city } = req.body;
+
+    if (!name?.trim())       return res.status(400).json({ success: false, message: 'Name is required' });
+    if (!speciality?.trim()) return res.status(400).json({ success: false, message: 'Speciality is required' });
+    if (!hospital?.trim())   return res.status(400).json({ success: false, message: 'Hospital is required' });
+    if (!phone?.trim())      return res.status(400).json({ success: false, message: 'Phone is required' });
+    if (!city?.trim())       return res.status(400).json({ success: false, message: 'City is required' });
+
+    const updates = {
+      name:       name.trim(),
+      speciality: speciality.trim(),
+      hospital:   hospital.trim(),
+      address:    address?.trim() || null,
+      phone:      phone.trim(),
+      city:       city.trim(),
+      updatedBy:  req.user.uid,
+      updatedAt:  Timestamp.now(),
+    };
+
+    await ref.update(updates);
+    res.json({ success: true, message: 'Doctor updated successfully', data: { id: req.params.id, ...updates } });
+
   } catch (error) {
-    return errorResponse(res, 'Failed to deactivate entry', 500);
+    console.error('Directory update error:', error);
+    res.status(500).json({ success: false, message: 'Failed to update entry', error: error.message });
   }
 });
 
-// ─── POST /:entryId/reactivate ────────────────────────────
-router.post('/:entryId/reactivate', verifyToken, verifyRole([
-  ROLES.DOCTOR, ROLES.CMO, ROLES.RECEPTION,
-]), async (req, res) => {
+// ── DELETE /:id — remove entry ───────────────────────────────────────────────
+router.delete('/:id', async (req, res) => {
   try {
-    const db = admin.firestore();
-    const entryRef = db.collection('doctorsDirectory')
-      .doc(req.params.entryId);
-    const entryDoc = await entryRef.get();
-
-    if (!entryDoc.exists) {
-      return errorResponse(res, 'Entry not found', 404);
+    const role = await getUserRole(req.user.uid);
+    if (!WRITE_ROLES.includes(role)) {
+      return res.status(403).json({ success: false, message: 'Only admin can delete entries' });
     }
 
-    await entryRef.update({
-      isActive:      true,
-      reactivatedBy: req.user.uid,
-      reactivatedAt: nowISO(),
-    });
+    const ref = db.collection('doctorDirectory').doc(req.params.id);
+    const doc = await ref.get();
+    if (!doc.exists) {
+      return res.status(404).json({ success: false, message: 'Entry not found' });
+    }
 
-    return successResponse(res, null, 'Entry reactivated successfully');
+    await ref.delete();
+    res.json({ success: true, message: 'Doctor removed from directory' });
+
   } catch (error) {
-    return errorResponse(res, 'Failed to reactivate entry', 500);
+    console.error('Directory delete error:', error);
+    res.status(500).json({ success: false, message: 'Failed to delete entry', error: error.message });
   }
 });
 

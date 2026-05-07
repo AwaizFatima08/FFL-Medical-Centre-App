@@ -18,6 +18,13 @@ const TILES = [
     screen: 'FeedbackList',
     active: true,
   },
+  {
+    id: 'directory',
+    label: 'Doctors Directory',
+    icon: '🏥',
+    screen: 'DirectoryList',  // ← added — admin can add/edit/delete
+    active: true,
+  },
 ];
 
 export default function AdminHome({ navigation }) {
@@ -26,7 +33,7 @@ export default function AdminHome({ navigation }) {
       alert('Coming Soon');
       return;
     }
-    navigation.navigate(tile.screen);
+    navigation.navigate(tile.screen, { userRole: 'admin_incharge' }); // ← userRole added
   };
 
   return (

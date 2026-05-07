@@ -1,55 +1,49 @@
+// functions/src/trips/tripScheduler.js
+// Runs on trip days (Mon/Wed/Sat) at 12:00 PKT (07:00 UTC)
+// Sends reminders to all confirmed passengers for that day's trip
+
 const admin = require('firebase-admin');
-const { TRIP_STATUS, BOOKING_STATUS } = require('../constants');
 
 // Runs on trip days at 12pm PKT
-// Sends reminders for departure from Medical Centre (17:30)
-// and reminder for departure from RYK (21:00)
 const sendTripReminders = async (event) => {
   try {
     const db = admin.firestore();
-    const today = new Date().toISOString().split('T')[0];
+    const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
 
-    const tripsSnapshot = await db.collection('medicalTrips')
+    // Fetch all confirmed bookings for today
+    const snapshot = await db.collection('tripBookings')   // ← fixed: flat collection
       .where('tripDate', '==', today)
-      .where('status', 'in', [TRIP_STATUS.OPEN, TRIP_STATUS.FULL])
+      .where('status', '==', 'confirmed')                  // ← fixed: correct status value
       .get();
 
-    if (tripsSnapshot.empty) return;
-
-    for (const tripDoc of tripsSnapshot.docs) {
-      const bookingsSnapshot = await db.collection('medicalTrips')
-        .doc(tripDoc.id)
-        .collection('bookings')
-        .where('status', '==', BOOKING_STATUS.APPROVED)
-        .get();
-
-      for (const bookingDoc of bookingsSnapshot.docs) {
-        const booking = bookingDoc.data();
-
-        // Get employee user for FCM token
-        const userSnapshot = await db.collection('users')
-          .where('__name__', '==', booking.bookedBy)
-          .get();
-
-        if (userSnapshot.empty) continue;
-
-        // Store notification in Firestore
-        await db.collection('notifications').add({
-          title:          'Medical Trip Reminder',
-          body:           `Your medical trip to RYK departs today at 17:30 from Medical Centre. Please be ready at your bus stop.`,
-          category:       'trip_reminder',
-          targetType:     'individual',
-          targetEmployeeId: booking.bookedBy,
-          tripId:         tripDoc.id,
-          sentBy:         'system',
-          sentByRole:     'system',
-          sentAt:         new Date().toISOString(),
-          whatsappDeferred: true,
-        });
-      }
+    if (snapshot.empty) {
+      console.log(`No confirmed trip bookings for ${today}`);
+      return;
     }
 
-    console.log('Trip reminders sent successfully');
+    console.log(`Sending trip reminders to ${snapshot.size} passengers for ${today}`);
+
+    for (const doc of snapshot.docs) {
+      const booking = doc.data();
+
+      // Store reminder notification in Firestore
+      await db.collection('notifications').add({
+        title:              'Medical Trip Reminder',
+        body:               'Your medical trip to RYK departs today at 17:30 from Medical Centre. Please be ready at your pickup point.',
+        category:           'trip_reminder',
+        targetType:         'individual',
+        targetEmployeeId:   booking.bookedBy,
+        bookingId:          doc.id,
+        tripDate:           today,
+        sentBy:             'system',
+        sentByRole:         'system',
+        sentAt:             new Date().toISOString(),
+        whatsappDeferred:   true,
+      });
+    }
+
+    console.log('Trip reminders stored successfully');
+
   } catch (error) {
     console.error('Trip reminder error:', error);
   }

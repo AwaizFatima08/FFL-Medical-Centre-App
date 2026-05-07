@@ -211,7 +211,7 @@ export const NOTIFICATION_TARGET_TYPES = {
 
 // ─── AVAILABILITY ─────────────────────────────────────────────────────────────
 export const AVAILABILITY_STATUS = {
-  AVAILABLE: 'available', NOT_AVAILABLE: 'not_available', OFF_DUTY: 'off_duty',
+  AVAILABLE: 'available', NOT_AVAILABLE: 'not_available', ON_LEAVE: 'on_leave',
 };
 
 // ─── FITNESS ──────────────────────────────────────────────────────────────────

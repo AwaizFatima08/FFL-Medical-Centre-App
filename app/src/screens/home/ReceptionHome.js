@@ -15,8 +15,15 @@ const TILES = [
     id: 'trip',
     label: 'Medical Trip',
     icon: '🚌',
-    screen: null,
-    active: false,
+    screen: 'TripReceptionHub',  // ← activated
+    active: true,                // ← activated
+  },
+  {
+    id: 'directory',
+    label: 'Doctors Directory',
+    icon: '🏥',
+    screen: 'DirectoryList',
+    active: true,
   },
   {
     id: 'availability',
@@ -33,7 +40,7 @@ export default function ReceptionHome({ navigation }) {
       alert('Coming Soon');
       return;
     }
-    navigation.navigate(tile.screen);
+    navigation.navigate(tile.screen, { userRole: 'reception' }); // ← userRole added
   };
 
   return (

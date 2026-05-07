@@ -21,7 +21,6 @@ const feedbackRoutes     = require('./src/feedback/feedbackRoutes');
 const reportRoutes       = require('./src/reports/reportRoutes');
 
 // ─── SCHEDULED JOBS ───────────────────────────────────────────────────────────
-const { autoUpdateAvailability }   = require('./src/availability/availabilityScheduler');
 const { sendVaccinationReminders } = require('./src/vaccination/vaccinationScheduler');
 const { sendTripReminders }        = require('./src/trips/tripScheduler');
 const { sendFitnessReminders }     = require('./src/fitness/fitnessScheduler');
@@ -74,10 +73,6 @@ exports.feedback      = onRequest(OPTS, makeApp(feedbackRoutes));
 exports.reports       = onRequest(OPTS, makeApp(reportRoutes));
 
 // ─── SCHEDULED FUNCTIONS ──────────────────────────────────────────────────────
-exports.scheduledAvailabilityUpdate = onSchedule(
-  { schedule: 'every 15 minutes', region: 'asia-south1' },
-  autoUpdateAvailability
-);
 exports.scheduledVaccinationReminders = onSchedule(
   { schedule: '0 3 * * *', region: 'asia-south1' },
   sendVaccinationReminders

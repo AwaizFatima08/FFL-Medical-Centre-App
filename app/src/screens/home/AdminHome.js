@@ -25,6 +25,13 @@ const TILES = [
     screen: 'DirectoryList',  // ← added — admin can add/edit/delete
     active: true,
   },
+  {
+  id: 'circulars',
+  label: 'Circulars & Notices',
+  icon: '📢',
+  screen: 'Circulars',
+  active: true,
+  }
 ];
 
 export default function AdminHome({ navigation }) {

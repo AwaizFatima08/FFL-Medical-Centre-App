@@ -32,6 +32,13 @@ const TILES = [
     screen: 'DoctorAvailabilityManage',
     active: true,
   },
+  {
+  id: 'circulars',
+  label: 'Circulars & Notices',
+  icon: '📢',
+  screen: 'Circulars',
+  active: true,
+  },
 ];
 
 export default function ReceptionHome({ navigation }) {

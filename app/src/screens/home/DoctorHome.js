@@ -25,6 +25,13 @@ const TILES = [
     screen: 'DirectoryList',  // ← added — read-only view
     active: true,
   },
+  {
+  id: 'circulars',
+  label: 'Circulars & Notices',
+  icon: '📢',
+  screen: 'Circulars',
+  active: true,
+  },
 ];
 
 export default function DoctorHome({ navigation }) {

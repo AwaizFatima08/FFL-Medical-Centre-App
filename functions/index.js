@@ -3,6 +3,7 @@ const { onSchedule } = require('firebase-functions/v2/scheduler');
 const admin   = require('firebase-admin');
 const express = require('express');
 const cors    = require('cors');
+const circularRoutes = require('./src/circulars/circularRoutes');
 
 // ─── INITIALIZE FIREBASE ADMIN ────────────────────────────────────────────────
 admin.initializeApp();
@@ -71,6 +72,7 @@ exports.fitness       = onRequest(OPTS, makeApp(fitnessRoutes));
 exports.directory     = onRequest(OPTS, makeApp(directoryRoutes));
 exports.feedback      = onRequest(OPTS, makeApp(feedbackRoutes));
 exports.reports       = onRequest(OPTS, makeApp(reportRoutes));
+exports.circulars = onRequest(OPTS, makeApp(circularRoutes));
 
 // ─── SCHEDULED FUNCTIONS ──────────────────────────────────────────────────────
 exports.scheduledVaccinationReminders = onSchedule(

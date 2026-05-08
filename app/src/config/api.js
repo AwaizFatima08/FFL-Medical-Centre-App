@@ -16,4 +16,5 @@ export const API = {
   directory:     'https://directory-nnigmcbj4a-el.a.run.app',
   feedback:      'https://feedback-nnigmcbj4a-el.a.run.app',
   reports:       'https://reports-nnigmcbj4a-el.a.run.app',
+  circulars:     'https://circulars-nnigmcbj4a-el.a.run.app',
 };

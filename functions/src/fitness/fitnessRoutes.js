@@ -1,423 +1,569 @@
+// functions/src/fitness/fitnessRoutes.js
+
 const express = require('express');
+const { getFirestore } = require('firebase-admin/firestore');
+const { getAuth } = require('firebase-admin/auth');
+const { ROLES } = require('../constants');
+const { createNotification } = require('../notifications/notificationRoutes');
+
 const router = express.Router();
-const admin = require('firebase-admin');
-const { verifyToken, verifyRole } = require('../auth/authRoutes');
-const { successResponse, errorResponse, nowISO } = require('../utils');
-const { ROLES, FITNESS_STATUS, APPOINTMENT_STATUS } = require('../constants');
+const db = getFirestore();
 
-// ─── POST /schedule ───────────────────────────────────────
-// Admin Incharge creates fitness appointment for an employee
-router.post('/schedule', verifyToken, verifyRole([
-  ROLES.ADMIN_INCHARGE,
-]), async (req, res) => {
+// ─── AUTH MIDDLEWARE ──────────────────────────────────────────────────────────
+async function authenticate(req, res, next) {
   try {
-    const db = admin.firestore();
-    const {
-      employeeId,
-      scheduledDate,
-      scheduledTime,
-      cycleYear,
-    } = req.body;
+    const authHeader = req.headers.authorization || '';
+    const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : null;
+    if (!token) return res.status(401).json({ success: false, message: 'No token provided' });
 
-    if (!employeeId || !scheduledDate || !scheduledTime || !cycleYear) {
-      return errorResponse(res,
-        'employeeId, scheduledDate, scheduledTime and cycleYear are required',
-        400);
+    const decoded = await getAuth().verifyIdToken(token);
+    const userDoc = await db.collection('users').doc(decoded.uid).get();
+    if (!userDoc.exists) return res.status(401).json({ success: false, message: 'User not found' });
+
+    const userData = userDoc.data();
+    if (!userData.isActive) return res.status(403).json({ success: false, message: 'Account not active' });
+
+    req.user = { uid: decoded.uid, role: userData.role };
+    next();
+  } catch (err) {
+    return res.status(401).json({ success: false, message: 'Invalid token' });
+  }
+}
+
+// ─── FITNESS APPOINTMENT STATUSES ────────────────────────────────────────────
+const FITNESS_STATUS = {
+  SCHEDULED:             'scheduled',
+  CONFIRMED:             'confirmed',
+  RESCHEDULE_REQUESTED:  'reschedule_requested',
+  RESCHEDULED:           'rescheduled',
+  RESCHEDULE_REJECTED:   'reschedule_rejected',
+  COMPLETED:             'completed',
+  CANCELLED:             'cancelled',
+};
+
+// Statuses in which the employee can still take action
+const ACTIVE_STATUSES = [
+  FITNESS_STATUS.SCHEDULED,
+  FITNESS_STATUS.CONFIRMED,
+  FITNESS_STATUS.RESCHEDULED,
+  FITNESS_STATUS.RESCHEDULE_REJECTED,
+];
+
+// ─── HELPER: Get employee record by uid ──────────────────────────────────────
+async function getEmployeeByUid(uid) {
+  const snap = await db.collection('employees').where('userId', '==', uid).get();
+  if (snap.empty) return null;
+  return { id: snap.docs[0].id, ...snap.docs[0].data() };
+}
+
+// ─── POST /schedule — Admin assigns appointment to an employee ────────────────
+// Body: { employeeUid, scheduledDate, scheduledTime, cycleYear, notes }
+// employeeUid: Firebase Auth UID of the employee
+router.post('/schedule', authenticate, async (req, res) => {
+  try {
+    if (req.user.role !== ROLES.ADMIN_INCHARGE) {
+      return res.status(403).json({ success: false, message: 'Only Admin Incharge can schedule fitness appointments' });
     }
 
-    // Verify employee exists
-    const empDoc = await db.collection('employees').doc(employeeId).get();
-    if (!empDoc.exists) {
-      return errorResponse(res, 'Employee not found', 404);
+    const { employeeUid, scheduledDate, scheduledTime, cycleYear, notes } = req.body;
+
+    if (!employeeUid || !scheduledDate || !scheduledTime || !cycleYear) {
+      return res.status(400).json({
+        success: false,
+        message: 'employeeUid, scheduledDate, scheduledTime and cycleYear are required',
+      });
     }
 
-    // Check employee doesn't already have appointment this cycle year
-    const existing = await db.collection('fitnessAppointments')
-      .where('employeeId', '==', employeeId)
-      .where('cycleYear', '==', cycleYear)
-      .where('status', '!=', APPOINTMENT_STATUS.CANCELLED)
-      .get();
-
-    if (!existing.empty) {
-      return errorResponse(res,
-        `Employee already has a fitness appointment for ${cycleYear}`,
-        409);
+    // Validate date format YYYY-MM-DD
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(scheduledDate)) {
+      return res.status(400).json({ success: false, message: 'scheduledDate must be in YYYY-MM-DD format' });
     }
 
-    // Check no other appointment at same date/time
+    // Validate time format HH:MM
+    if (!/^\d{2}:\d{2}$/.test(scheduledTime)) {
+      return res.status(400).json({ success: false, message: 'scheduledTime must be in HH:MM format' });
+    }
+
+    // Verify employee exists in users collection
+    const employeeUserDoc = await db.collection('users').doc(employeeUid).get();
+    if (!employeeUserDoc.exists || employeeUserDoc.data().role !== ROLES.EMPLOYEE) {
+      return res.status(404).json({ success: false, message: 'Employee not found' });
+    }
+
+    // Get employee record for name/department
+    const empRecord = await getEmployeeByUid(employeeUid);
+    if (!empRecord) {
+      return res.status(404).json({ success: false, message: 'Employee profile not found' });
+    }
+
+    // Check slot not already taken
     const slotCheck = await db.collection('fitnessAppointments')
       .where('scheduledDate', '==', scheduledDate)
       .where('scheduledTime', '==', scheduledTime)
-      .where('status', '!=', APPOINTMENT_STATUS.CANCELLED)
+      .where('status', 'not-in', [FITNESS_STATUS.CANCELLED])
       .get();
 
     if (!slotCheck.empty) {
-      return errorResponse(res,
-        'This time slot is already booked. Please choose another.',
-        409);
+      return res.status(409).json({
+        success: false,
+        message: 'This time slot is already booked. Please choose a different time.',
+      });
     }
 
-    const appointmentRef = db.collection('fitnessAppointments').doc();
-    await appointmentRef.set({
-      employeeId,
+    const now = new Date().toISOString();
+    const docRef = await db.collection('fitnessAppointments').add({
+      employeeUid,
+      employeeId:         empRecord.id,
+      fullName:           empRecord.fullName || '',
+      department:         empRecord.department || '',
       scheduledDate,
       scheduledTime,
-      cycleYear,
-      scheduledBy:           req.user.uid,
-      status:                APPOINTMENT_STATUS.SCHEDULED,
-      rescheduleRequestedBy: null,
-      rescheduleReason:      null,
-      rescheduledDate:       null,
-      rescheduledTime:       null,
-      examinedBy:            null,
-      examinedAt:            null,
-      fitnessStatus:         null,
-      remarks:               null,
-      createdAt:             nowISO(),
+      cycleYear:          parseInt(cycleYear),
+      status:             FITNESS_STATUS.SCHEDULED,
+      notes:              notes?.trim() || null,
+      // Reschedule fields — populated when employee requests reschedule
+      rescheduleReason:         null,
+      rescheduleRequestedAt:    null,
+      // Admin action fields
+      adminNote:                null,
+      rejectedAt:               null,
+      rejectedBy:               null,
+      rescheduledDate:          null,
+      rescheduledTime:          null,
+      rescheduledAt:            null,
+      rescheduledBy:            null,
+      // Completion fields
+      completedAt:              null,
+      completedBy:              null,
+      fitnessOutcome:           null,   // 'fit' | 'unfit' | 'fit_with_restrictions'
+      completionRemarks:        null,
+      // Audit
+      assignedBy:         req.user.uid,
+      assignedAt:         now,
+      createdAt:          now,
     });
 
-    // Send notification to employee
-    await db.collection('notifications').add({
-      title:            'Annual Fitness Appointment Scheduled',
-      body:             `Your annual medical fitness examination is scheduled on ${scheduledDate} at ${scheduledTime} at the Medical Centre.`,
-      category:         'fitness_appointment',
-      targetType:       'individual',
-      targetEmployeeId: employeeId,
-      appointmentId:    appointmentRef.id,
-      sentBy:           req.user.uid,
-      sentByRole:       ROLES.ADMIN_INCHARGE,
-      sentAt:           nowISO(),
-      whatsappDeferred: true,
+    // Notify employee
+    await createNotification({
+      recipientUid:  employeeUid,
+      recipientRole: ROLES.EMPLOYEE,
+      title:         'Annual Fitness Appointment Scheduled',
+      body:          `Your annual medical fitness examination is scheduled on ${scheduledDate} at ${scheduledTime}. Please confirm your attendance or request a reschedule if needed.`,
+      type:          'fitness',
+      referenceId:   docRef.id,
     });
 
-    return successResponse(res,
-      { appointmentId: appointmentRef.id },
-      'Fitness appointment scheduled successfully',
-      201
-    );
+    return res.status(201).json({
+      success: true,
+      message: 'Fitness appointment scheduled successfully',
+      data: { appointmentId: docRef.id },
+    });
   } catch (error) {
-    console.error('Schedule fitness appointment error:', error);
-    return errorResponse(res, 'Failed to schedule appointment', 500);
+    console.error('Schedule fitness error:', error);
+    return res.status(500).json({ success: false, message: 'Failed to schedule appointment', error: error.message });
   }
 });
 
-// ─── GET /all ─────────────────────────────────────────────
-// Admin/Doctor/CMO views all appointments
-router.get('/all', verifyToken, verifyRole([
-  ROLES.ADMIN_INCHARGE, ROLES.DOCTOR, ROLES.CMO, ROLES.RECEPTION,
-]), async (req, res) => {
+// ─── GET /all — Admin/CMO/Doctor views all appointments ──────────────────────
+// Query params: ?cycleYear=2025&status=scheduled&date=2025-06-15
+router.get('/all', authenticate, async (req, res) => {
   try {
-    const db = admin.firestore();
+    const allowedRoles = [ROLES.ADMIN_INCHARGE, ROLES.CMO, ROLES.DOCTOR];
+    if (!allowedRoles.includes(req.user.role)) {
+      return res.status(403).json({ success: false, message: 'Access denied' });
+    }
+
     const { cycleYear, status, date } = req.query;
 
-    let query = db.collection('fitnessAppointments')
-      .orderBy('scheduledDate', 'asc');
-
+    let query = db.collection('fitnessAppointments').orderBy('scheduledDate', 'asc');
     const snapshot = await query.get();
-    let appointments = snapshot.docs.map(doc => ({
-      id: doc.id,
-      ...doc.data(),
-    }));
 
-    if (cycleYear) {
-      appointments = appointments.filter(
-        a => a.cycleYear === parseInt(cycleYear)
-      );
-    }
-    if (status) {
-      appointments = appointments.filter(a => a.status === status);
-    }
-    if (date) {
-      appointments = appointments.filter(a => a.scheduledDate === date);
-    }
+    let appointments = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
 
-    return successResponse(res, appointments);
+    if (cycleYear) appointments = appointments.filter(a => a.cycleYear === parseInt(cycleYear));
+    if (status)    appointments = appointments.filter(a => a.status === status);
+    if (date)      appointments = appointments.filter(a => a.scheduledDate === date);
+
+    return res.json({ success: true, data: appointments });
   } catch (error) {
-    return errorResponse(res, 'Failed to fetch appointments', 500);
+    return res.status(500).json({ success: false, message: 'Failed to fetch appointments' });
   }
 });
 
-// ─── GET /pending ─────────────────────────────────────────
-// Appointments not yet examined
-router.get('/pending', verifyToken, verifyRole([
-  ROLES.ADMIN_INCHARGE, ROLES.DOCTOR, ROLES.CMO, ROLES.RECEPTION,
-]), async (req, res) => {
+// ─── GET /my — Employee views own appointment(s) ─────────────────────────────
+router.get('/my', authenticate, async (req, res) => {
   try {
-    const db = admin.firestore();
+    if (req.user.role !== ROLES.EMPLOYEE) {
+      return res.status(403).json({ success: false, message: 'Access denied' });
+    }
+
     const snapshot = await db.collection('fitnessAppointments')
-      .where('status', 'in', [
-        APPOINTMENT_STATUS.SCHEDULED,
-        APPOINTMENT_STATUS.RESCHEDULED,
-      ])
-      .orderBy('scheduledDate', 'asc')
+      .where('employeeUid', '==', req.user.uid)
+      .orderBy('scheduledDate', 'desc')
       .get();
 
-    const appointments = snapshot.docs.map(doc => ({
-      id: doc.id,
-      ...doc.data(),
-    }));
-
-    return successResponse(res, appointments);
+    const appointments = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+    return res.json({ success: true, data: appointments });
   } catch (error) {
-    return errorResponse(res, 'Failed to fetch pending appointments', 500);
+    return res.status(500).json({ success: false, message: 'Failed to fetch appointment' });
   }
 });
 
-// ─── GET /my-appointment ─────────────────────────────────
-// Employee views own appointment
-router.get('/my-appointment', verifyToken,
-  verifyRole([ROLES.EMPLOYEE]),
-  async (req, res) => {
-    try {
-      const db = admin.firestore();
-
-      const empQuery = await db.collection('employees')
-        .where('userId', '==', req.user.uid).get();
-
-      if (empQuery.empty) {
-        return errorResponse(res, 'Employee record not found', 404);
-      }
-
-      const employeeId = empQuery.docs[0].id;
-
-      const snapshot = await db.collection('fitnessAppointments')
-        .where('employeeId', '==', employeeId)
-        .orderBy('scheduledDate', 'desc')
-        .get();
-
-      const appointments = snapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data(),
-      }));
-
-      return successResponse(res, appointments);
-    } catch (error) {
-      return errorResponse(res, 'Failed to fetch appointment', 500);
-    }
-  }
-);
-
-// ─── GET /:appointmentId ──────────────────────────────────
-router.get('/:appointmentId', verifyToken, async (req, res) => {
+// ─── GET /:id — Get single appointment ───────────────────────────────────────
+router.get('/:id', authenticate, async (req, res) => {
   try {
-    const db = admin.firestore();
-    const doc = await db.collection('fitnessAppointments')
-      .doc(req.params.appointmentId).get();
-
+    const doc = await db.collection('fitnessAppointments').doc(req.params.id).get();
     if (!doc.exists) {
-      return errorResponse(res, 'Appointment not found', 404);
+      return res.status(404).json({ success: false, message: 'Appointment not found' });
     }
 
     const data = doc.data();
 
-    // Employee can only view own appointment
-    if (req.userRole === ROLES.EMPLOYEE) {
-      const empQuery = await db.collection('employees')
-        .where('userId', '==', req.user.uid).get();
-      if (empQuery.empty || empQuery.docs[0].id !== data.employeeId) {
-        return errorResponse(res, 'Forbidden', 403);
-      }
+    // Employee can only view their own
+    if (req.user.role === ROLES.EMPLOYEE && data.employeeUid !== req.user.uid) {
+      return res.status(403).json({ success: false, message: 'Forbidden' });
     }
 
-    return successResponse(res, { id: doc.id, ...data });
+    return res.json({ success: true, data: { id: doc.id, ...data } });
   } catch (error) {
-    return errorResponse(res, 'Failed to fetch appointment', 500);
+    return res.status(500).json({ success: false, message: 'Failed to fetch appointment' });
   }
 });
 
-// ─── POST /:appointmentId/reschedule-request ──────────────
-// Employee requests reschedule
-router.post('/:appointmentId/reschedule-request', verifyToken,
-  verifyRole([ROLES.EMPLOYEE]),
-  async (req, res) => {
-    try {
-      const db = admin.firestore();
-      const { reason } = req.body;
-
-      const appointmentRef = db.collection('fitnessAppointments')
-        .doc(req.params.appointmentId);
-      const appointmentDoc = await appointmentRef.get();
-
-      if (!appointmentDoc.exists) {
-        return errorResponse(res, 'Appointment not found', 404);
-      }
-
-      const data = appointmentDoc.data();
-
-      // Verify own appointment
-      const empQuery = await db.collection('employees')
-        .where('userId', '==', req.user.uid).get();
-      if (empQuery.empty || empQuery.docs[0].id !== data.employeeId) {
-        return errorResponse(res, 'Forbidden', 403);
-      }
-
-      if (data.status === APPOINTMENT_STATUS.COMPLETED) {
-        return errorResponse(res,
-          'Cannot reschedule a completed appointment',
-          409);
-      }
-
-      await appointmentRef.update({
-        rescheduleRequestedBy: req.user.uid,
-        rescheduleReason:      reason || null,
-        rescheduleRequestedAt: nowISO(),
-      });
-
-      // Notify admin incharge
-      await db.collection('notifications').add({
-        title:            'Fitness Appointment Reschedule Request',
-        body:             `An employee has requested to reschedule their fitness appointment on ${data.scheduledDate} at ${data.scheduledTime}.`,
-        category:         'fitness_appointment',
-        targetType:       'individual',
-        targetEmployeeId: data.employeeId,
-        appointmentId:    req.params.appointmentId,
-        sentBy:           'system',
-        sentByRole:       'system',
-        sentAt:           nowISO(),
-        whatsappDeferred: true,
-      });
-
-      return successResponse(res, null,
-        'Reschedule request submitted. Admin will assign new date.');
-    } catch (error) {
-      return errorResponse(res, 'Reschedule request failed', 500);
+// ─── POST /:id/confirm — Employee confirms attendance ────────────────────────
+router.post('/:id/confirm', authenticate, async (req, res) => {
+  try {
+    if (req.user.role !== ROLES.EMPLOYEE) {
+      return res.status(403).json({ success: false, message: 'Only employees can confirm appointments' });
     }
-  }
-);
 
-// ─── POST /:appointmentId/reschedule ──────────────────────
-// Admin Incharge sets new date/time
-router.post('/:appointmentId/reschedule', verifyToken,
-  verifyRole([ROLES.ADMIN_INCHARGE]),
-  async (req, res) => {
-    try {
-      const db = admin.firestore();
-      const { rescheduledDate, rescheduledTime } = req.body;
+    const docRef = db.collection('fitnessAppointments').doc(req.params.id);
+    const doc = await docRef.get();
 
-      if (!rescheduledDate || !rescheduledTime) {
-        return errorResponse(res,
-          'rescheduledDate and rescheduledTime are required',
-          400);
-      }
+    if (!doc.exists) return res.status(404).json({ success: false, message: 'Appointment not found' });
 
-      // Check slot not already taken
-      const slotCheck = await db.collection('fitnessAppointments')
-        .where('scheduledDate', '==', rescheduledDate)
-        .where('scheduledTime', '==', rescheduledTime)
-        .where('status', '!=', APPOINTMENT_STATUS.CANCELLED)
-        .get();
-
-      if (!slotCheck.empty) {
-        return errorResponse(res,
-          'This time slot is already booked.',
-          409);
-      }
-
-      const appointmentRef = db.collection('fitnessAppointments')
-        .doc(req.params.appointmentId);
-      const appointmentDoc = await appointmentRef.get();
-
-      if (!appointmentDoc.exists) {
-        return errorResponse(res, 'Appointment not found', 404);
-      }
-
-      const data = appointmentDoc.data();
-
-      await appointmentRef.update({
-        scheduledDate:    rescheduledDate,
-        scheduledTime:    rescheduledTime,
-        rescheduledDate,
-        rescheduledTime,
-        rescheduledBy:    req.user.uid,
-        rescheduledAt:    nowISO(),
-        status:           APPOINTMENT_STATUS.RESCHEDULED,
-      });
-
-      // Notify employee
-      await db.collection('notifications').add({
-        title:            'Fitness Appointment Rescheduled',
-        body:             `Your annual fitness examination has been rescheduled to ${rescheduledDate} at ${rescheduledTime} at the Medical Centre.`,
-        category:         'fitness_appointment',
-        targetType:       'individual',
-        targetEmployeeId: data.employeeId,
-        appointmentId:    req.params.appointmentId,
-        sentBy:           req.user.uid,
-        sentByRole:       ROLES.ADMIN_INCHARGE,
-        sentAt:           nowISO(),
-        whatsappDeferred: true,
-      });
-
-      return successResponse(res, null, 'Appointment rescheduled successfully');
-    } catch (error) {
-      return errorResponse(res, 'Reschedule failed', 500);
+    const data = doc.data();
+    if (data.employeeUid !== req.user.uid) {
+      return res.status(403).json({ success: false, message: 'Forbidden' });
     }
-  }
-);
 
-// ─── POST /:appointmentId/complete ────────────────────────
-// Doctor marks examination as completed
-router.post('/:appointmentId/complete', verifyToken,
-  verifyRole([ROLES.DOCTOR, ROLES.CMO]),
-  async (req, res) => {
-    try {
-      const db = admin.firestore();
-      const { fitnessStatus, remarks } = req.body;
-
-      if (!fitnessStatus ||
-          !Object.values(FITNESS_STATUS).includes(fitnessStatus)) {
-        return errorResponse(res,
-          `fitnessStatus is required. Valid values: ${Object.values(FITNESS_STATUS).join(', ')}`,
-          400);
-      }
-
-      const appointmentRef = db.collection('fitnessAppointments')
-        .doc(req.params.appointmentId);
-      const appointmentDoc = await appointmentRef.get();
-
-      if (!appointmentDoc.exists) {
-        return errorResponse(res, 'Appointment not found', 404);
-      }
-
-      if (appointmentDoc.data().status === APPOINTMENT_STATUS.COMPLETED) {
-        return errorResponse(res, 'Appointment already completed', 409);
-      }
-
-      const data = appointmentDoc.data();
-
-      await appointmentRef.update({
-        status:        APPOINTMENT_STATUS.COMPLETED,
-        fitnessStatus,
-        remarks:       remarks || null,
-        examinedBy:    req.user.uid,
-        examinedAt:    nowISO(),
-      });
-
-      // Update fitness status on employee profile
-      await db.collection('employees').doc(data.employeeId).update({
-        fitnessStatus,
-        fitnessExaminedAt: nowISO(),
-        fitnessExaminedBy: req.user.uid,
-      });
-
-      // Notify employee of result
-      await db.collection('notifications').add({
-        title:            'Fitness Examination Result',
-        body:             `Your annual fitness examination result: ${fitnessStatus.toUpperCase()}. ${remarks ? 'Remarks: ' + remarks : ''}`,
-        category:         'fitness_appointment',
-        targetType:       'individual',
-        targetEmployeeId: data.employeeId,
-        appointmentId:    req.params.appointmentId,
-        sentBy:           req.user.uid,
-        sentByRole:       req.userRole,
-        sentAt:           nowISO(),
-        whatsappDeferred: true,
-      });
-
-      return successResponse(res, null, 'Examination completed successfully');
-    } catch (error) {
-      return errorResponse(res, 'Failed to complete examination', 500);
+    if (![FITNESS_STATUS.SCHEDULED, FITNESS_STATUS.RESCHEDULED, FITNESS_STATUS.RESCHEDULE_REJECTED].includes(data.status)) {
+      return res.status(409).json({ success: false, message: `Cannot confirm appointment with status: ${data.status}` });
     }
+
+    await docRef.update({
+      status:      FITNESS_STATUS.CONFIRMED,
+      confirmedAt: new Date().toISOString(),
+    });
+
+    return res.json({ success: true, message: 'Appointment confirmed' });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: 'Failed to confirm appointment' });
   }
-);
+});
+
+// ─── POST /:id/reschedule-request — Employee requests reschedule ──────────────
+// Body: { reason }
+// Employee can request reschedule as long as appointment is not completed/cancelled.
+// Only one pending reschedule request allowed at a time.
+router.post('/:id/reschedule-request', authenticate, async (req, res) => {
+  try {
+    if (req.user.role !== ROLES.EMPLOYEE) {
+      return res.status(403).json({ success: false, message: 'Only employees can request reschedule' });
+    }
+
+    const { reason } = req.body;
+    if (!reason?.trim()) {
+      return res.status(400).json({ success: false, message: 'A reason is required for reschedule request' });
+    }
+
+    const docRef = db.collection('fitnessAppointments').doc(req.params.id);
+    const doc = await docRef.get();
+
+    if (!doc.exists) return res.status(404).json({ success: false, message: 'Appointment not found' });
+
+    const data = doc.data();
+    if (data.employeeUid !== req.user.uid) {
+      return res.status(403).json({ success: false, message: 'Forbidden' });
+    }
+
+    if (!ACTIVE_STATUSES.includes(data.status)) {
+      return res.status(409).json({
+        success: false,
+        message: `Cannot request reschedule for an appointment with status: ${data.status}`,
+      });
+    }
+
+    // Prevent duplicate pending request
+    if (data.status === FITNESS_STATUS.RESCHEDULE_REQUESTED) {
+      return res.status(409).json({
+        success: false,
+        message: 'A reschedule request is already pending. Please wait for admin to respond.',
+      });
+    }
+
+    await docRef.update({
+      status:                   FITNESS_STATUS.RESCHEDULE_REQUESTED,
+      rescheduleReason:         reason.trim(),
+      rescheduleRequestedAt:    new Date().toISOString(),
+      // Clear any previous rejection note
+      adminNote:                null,
+      rejectedAt:               null,
+      rejectedBy:               null,
+    });
+
+    // Notify admin incharge
+    // We find admin uids to notify — notify all admin_incharge users
+    const adminSnap = await db.collection('users')
+      .where('role', '==', ROLES.ADMIN_INCHARGE)
+      .where('isActive', '==', true)
+      .get();
+
+    await Promise.all(adminSnap.docs.map(adminDoc =>
+      createNotification({
+        recipientUid:  adminDoc.id,
+        recipientRole: ROLES.ADMIN_INCHARGE,
+        title:         'Fitness Appointment Reschedule Request',
+        body:          `${data.fullName} has requested to reschedule their fitness appointment on ${data.scheduledDate} at ${data.scheduledTime}. Reason: ${reason.trim()}`,
+        type:          'fitness',
+        referenceId:   req.params.id,
+      })
+    ));
+
+    return res.json({ success: true, message: 'Reschedule request submitted. Admin will assign a new date.' });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: 'Failed to submit reschedule request' });
+  }
+});
+
+// ─── POST /:id/reschedule — Admin approves reschedule with new date ───────────
+// Body: { newDate, newTime }
+router.post('/:id/reschedule', authenticate, async (req, res) => {
+  try {
+    if (req.user.role !== ROLES.ADMIN_INCHARGE) {
+      return res.status(403).json({ success: false, message: 'Only Admin Incharge can approve reschedules' });
+    }
+
+    const { newDate, newTime } = req.body;
+    if (!newDate || !newTime) {
+      return res.status(400).json({ success: false, message: 'newDate and newTime are required' });
+    }
+
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(newDate)) {
+      return res.status(400).json({ success: false, message: 'newDate must be in YYYY-MM-DD format' });
+    }
+    if (!/^\d{2}:\d{2}$/.test(newTime)) {
+      return res.status(400).json({ success: false, message: 'newTime must be in HH:MM format' });
+    }
+
+    // Check new slot not already taken
+    const slotCheck = await db.collection('fitnessAppointments')
+      .where('scheduledDate', '==', newDate)
+      .where('scheduledTime', '==', newTime)
+      .where('status', 'not-in', [FITNESS_STATUS.CANCELLED])
+      .get();
+
+    // Exclude current appointment from slot check
+    const conflict = slotCheck.docs.filter(d => d.id !== req.params.id);
+    if (conflict.length > 0) {
+      return res.status(409).json({ success: false, message: 'This time slot is already booked. Please choose a different time.' });
+    }
+
+    const docRef = db.collection('fitnessAppointments').doc(req.params.id);
+    const doc = await docRef.get();
+
+    if (!doc.exists) return res.status(404).json({ success: false, message: 'Appointment not found' });
+
+    const data = doc.data();
+    if (data.status !== FITNESS_STATUS.RESCHEDULE_REQUESTED) {
+      return res.status(409).json({ success: false, message: 'No pending reschedule request for this appointment' });
+    }
+
+    const now = new Date().toISOString();
+    await docRef.update({
+      status:         FITNESS_STATUS.RESCHEDULED,
+      scheduledDate:  newDate,
+      scheduledTime:  newTime,
+      rescheduledDate: newDate,
+      rescheduledTime: newTime,
+      rescheduledAt:  now,
+      rescheduledBy:  req.user.uid,
+    });
+
+    // Notify employee
+    await createNotification({
+      recipientUid:  data.employeeUid,
+      recipientRole: ROLES.EMPLOYEE,
+      title:         'Fitness Appointment Rescheduled',
+      body:          `Your fitness appointment has been rescheduled to ${newDate} at ${newTime}. Please confirm your attendance.`,
+      type:          'fitness',
+      referenceId:   req.params.id,
+    });
+
+    return res.json({ success: true, message: 'Appointment rescheduled successfully' });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: 'Failed to reschedule appointment' });
+  }
+});
+
+// ─── POST /:id/reject-reschedule — Admin rejects reschedule request ───────────
+// Original date/time stands. Body: { adminNote }
+router.post('/:id/reject-reschedule', authenticate, async (req, res) => {
+  try {
+    if (req.user.role !== ROLES.ADMIN_INCHARGE) {
+      return res.status(403).json({ success: false, message: 'Only Admin Incharge can reject reschedule requests' });
+    }
+
+    const { adminNote } = req.body;
+
+    const docRef = db.collection('fitnessAppointments').doc(req.params.id);
+    const doc = await docRef.get();
+
+    if (!doc.exists) return res.status(404).json({ success: false, message: 'Appointment not found' });
+
+    const data = doc.data();
+    if (data.status !== FITNESS_STATUS.RESCHEDULE_REQUESTED) {
+      return res.status(409).json({ success: false, message: 'No pending reschedule request for this appointment' });
+    }
+
+    const now = new Date().toISOString();
+    await docRef.update({
+      status:      FITNESS_STATUS.RESCHEDULE_REJECTED,
+      adminNote:   adminNote?.trim() || null,
+      rejectedAt:  now,
+      rejectedBy:  req.user.uid,
+    });
+
+    // Notify employee — original date stands
+    await createNotification({
+      recipientUid:  data.employeeUid,
+      recipientRole: ROLES.EMPLOYEE,
+      title:         'Reschedule Request Declined',
+      body:          `Your request to reschedule your fitness appointment has been declined. Your appointment remains on ${data.scheduledDate} at ${data.scheduledTime}.${adminNote ? ` Note from admin: ${adminNote.trim()}` : ''}`,
+      type:          'fitness',
+      referenceId:   req.params.id,
+    });
+
+    return res.json({ success: true, message: 'Reschedule request rejected. Original date stands.' });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: 'Failed to reject reschedule request' });
+  }
+});
+
+// ─── POST /:id/complete — Doctor/CMO marks examination as completed ───────────
+// Body: { fitnessOutcome, completionRemarks }
+// fitnessOutcome: 'fit' | 'unfit' | 'fit_with_restrictions'
+router.post('/:id/complete', authenticate, async (req, res) => {
+  try {
+    const allowedRoles = [ROLES.DOCTOR, ROLES.CMO];
+    if (!allowedRoles.includes(req.user.role)) {
+      return res.status(403).json({ success: false, message: 'Only Doctor or CMO can complete fitness examinations' });
+    }
+
+    const { fitnessOutcome, completionRemarks } = req.body;
+    const validOutcomes = ['fit', 'unfit', 'fit_with_restrictions'];
+
+    if (!fitnessOutcome || !validOutcomes.includes(fitnessOutcome)) {
+      return res.status(400).json({
+        success: false,
+        message: `fitnessOutcome is required. Valid values: ${validOutcomes.join(', ')}`,
+      });
+    }
+
+    const docRef = db.collection('fitnessAppointments').doc(req.params.id);
+    const doc = await docRef.get();
+
+    if (!doc.exists) return res.status(404).json({ success: false, message: 'Appointment not found' });
+
+    const data = doc.data();
+    if (data.status === FITNESS_STATUS.COMPLETED) {
+      return res.status(409).json({ success: false, message: 'Appointment already completed' });
+    }
+    if (data.status === FITNESS_STATUS.CANCELLED) {
+      return res.status(409).json({ success: false, message: 'Cannot complete a cancelled appointment' });
+    }
+
+    const now = new Date().toISOString();
+    await docRef.update({
+      status:             FITNESS_STATUS.COMPLETED,
+      fitnessOutcome,
+      completionRemarks:  completionRemarks?.trim() || null,
+      completedAt:        now,
+      completedBy:        req.user.uid,
+    });
+
+    // Also write fitness outcome back to the employee's record for quick lookup
+    await db.collection('employees').doc(data.employeeId).update({
+      lastFitnessOutcome:    fitnessOutcome,
+      lastFitnessDate:       data.scheduledDate,
+      lastFitnessCycleYear:  data.cycleYear,
+    });
+
+    // Notify employee of result
+    const outcomeLabels = {
+      fit:                   'Fit for Duty ✅',
+      unfit:                 'Unfit for Duty ❌',
+      fit_with_restrictions: 'Fit with Restrictions ⚠️',
+    };
+    await createNotification({
+      recipientUid:  data.employeeUid,
+      recipientRole: ROLES.EMPLOYEE,
+      title:         'Fitness Examination Result',
+      body:          `Your annual fitness examination result: ${outcomeLabels[fitnessOutcome]}.${completionRemarks ? ` Remarks: ${completionRemarks.trim()}` : ''}`,
+      type:          'fitness',
+      referenceId:   req.params.id,
+    });
+
+    return res.json({ success: true, message: 'Fitness examination completed successfully' });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: 'Failed to complete examination' });
+  }
+});
+
+// ─── POST /:id/cancel — Admin cancels an appointment ─────────────────────────
+// Body: { reason }
+router.post('/:id/cancel', authenticate, async (req, res) => {
+  try {
+    if (req.user.role !== ROLES.ADMIN_INCHARGE) {
+      return res.status(403).json({ success: false, message: 'Only Admin Incharge can cancel appointments' });
+    }
+
+    const { reason } = req.body;
+
+    const docRef = db.collection('fitnessAppointments').doc(req.params.id);
+    const doc = await docRef.get();
+
+    if (!doc.exists) return res.status(404).json({ success: false, message: 'Appointment not found' });
+
+    const data = doc.data();
+    if (data.status === FITNESS_STATUS.COMPLETED) {
+      return res.status(409).json({ success: false, message: 'Cannot cancel a completed appointment' });
+    }
+    if (data.status === FITNESS_STATUS.CANCELLED) {
+      return res.status(409).json({ success: false, message: 'Appointment already cancelled' });
+    }
+
+    await docRef.update({
+      status:       FITNESS_STATUS.CANCELLED,
+      cancelReason: reason?.trim() || null,
+      cancelledAt:  new Date().toISOString(),
+      cancelledBy:  req.user.uid,
+    });
+
+    // Notify employee
+    await createNotification({
+      recipientUid:  data.employeeUid,
+      recipientRole: ROLES.EMPLOYEE,
+      title:         'Fitness Appointment Cancelled',
+      body:          `Your fitness appointment on ${data.scheduledDate} at ${data.scheduledTime} has been cancelled.${reason ? ` Reason: ${reason.trim()}` : ' Please contact the Medical Centre for details.'}`,
+      type:          'fitness',
+      referenceId:   req.params.id,
+    });
+
+    return res.json({ success: true, message: 'Appointment cancelled successfully' });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: 'Failed to cancel appointment' });
+  }
+});
 
 module.exports = router;

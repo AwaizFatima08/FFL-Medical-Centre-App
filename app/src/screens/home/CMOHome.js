@@ -1,7 +1,9 @@
 // app/src/screens/home/CMOHome.js
+
 import React from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, ScrollView } from 'react-native';
-import LogoutButton from '../../components/LogoutButton';
+import LogoutButton     from '../../components/LogoutButton';
+import NotificationBell from '../../components/NotificationBell';
 
 const TILES = [
   {
@@ -22,22 +24,29 @@ const TILES = [
     id: 'trip',
     label: 'Medical Trip',
     icon: '🚌',
-    screen: 'TripView',       // ← added
+    screen: 'TripView',
     active: true,
   },
   {
     id: 'directory',
     label: 'Doctors Directory',
     icon: '🏥',
-    screen: 'DirectoryList',  // ← added
+    screen: 'DirectoryList',
     active: true,
   },
   {
-  id: 'circulars',
-  label: 'Circulars & Notices',
-  icon: '📢',
-  screen: 'Circulars',
-  active: true,
+    id: 'circulars',
+    label: 'Circulars & Notices',
+    icon: '📢',
+    screen: 'Circulars',
+    active: true,
+  },
+  {
+    id: 'fitness',
+    label: 'Annual Fitness',
+    icon: '🏃',
+    screen: 'FitnessAdmin',   // CMO uses same screen — GET /all allows cmo role
+    active: true,
   },
 ];
 
@@ -47,14 +56,20 @@ export default function CMOHome({ navigation }) {
       alert('Coming Soon');
       return;
     }
-    navigation.navigate(tile.screen, { userRole: 'cmo' }); // ← userRole added
+    navigation.navigate(tile.screen, { userRole: 'cmo' });
   };
 
   return (
     <ScrollView contentContainerStyle={styles.container}>
-      <LogoutButton />
+      {/* Header row: logout left, bell right */}
+      <View style={styles.headerRow}>
+        <LogoutButton />
+        <NotificationBell navigation={navigation} />
+      </View>
+
       <Text style={styles.heading}>FFL Medical Centre</Text>
       <Text style={styles.subheading}>CMO Dashboard</Text>
+
       <View style={styles.grid}>
         {TILES.map((tile) => (
           <TouchableOpacity
@@ -78,11 +93,18 @@ export default function CMOHome({ navigation }) {
 const styles = StyleSheet.create({
   container: {
     flexGrow: 1, backgroundColor: '#f0f4f8',
-    alignItems: 'center', paddingTop: 80,
+    alignItems: 'center', paddingTop: 56,
     paddingBottom: 40, paddingHorizontal: 20,
   },
-  heading:    { fontSize: 22, fontWeight: 'bold', color: '#2d3748', marginBottom: 4 },
-  subheading: { fontSize: 14, color: '#718096', marginBottom: 36 },
+  headerRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    width: '100%',
+    marginBottom: 24,
+  },
+  heading:           { fontSize: 22, fontWeight: 'bold', color: '#2d3748', marginBottom: 4 },
+  subheading:        { fontSize: 14, color: '#718096', marginBottom: 36 },
   grid: {
     flexDirection: 'row', flexWrap: 'wrap',
     justifyContent: 'center', gap: 16,

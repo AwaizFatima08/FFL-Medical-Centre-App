@@ -1,7 +1,9 @@
 // app/src/screens/home/EmployeeHome.js
+
 import React from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, ScrollView } from 'react-native';
-import LogoutButton from '../../components/LogoutButton';
+import LogoutButton      from '../../components/LogoutButton';
+import NotificationBell  from '../../components/NotificationBell';
 
 const TILES = [
   {
@@ -47,11 +49,18 @@ const TILES = [
     active: false,
   },
   {
-  id: 'circulars',
-  label: 'Circulars & Notices',
-  icon: '📢',
-  screen: 'Circulars',
-  active: true,
+    id: 'circulars',
+    label: 'Circulars & Notices',
+    icon: '📢',
+    screen: 'Circulars',
+    active: true,
+  },
+  {
+    id: 'fitness',
+    label: 'Annual Fitness',
+    icon: '🏃',
+    screen: 'FitnessEmployee',
+    active: true,
   },
 ];
 
@@ -66,9 +75,15 @@ export default function EmployeeHome({ navigation }) {
 
   return (
     <ScrollView contentContainerStyle={styles.container}>
-      <LogoutButton />
+      {/* Header row: logout left, bell right */}
+      <View style={styles.headerRow}>
+        <LogoutButton />
+        <NotificationBell navigation={navigation} />
+      </View>
+
       <Text style={styles.heading}>FFL Medical Centre</Text>
       <Text style={styles.subheading}>Employee Portal</Text>
+
       <View style={styles.grid}>
         {TILES.map((tile) => (
           <TouchableOpacity
@@ -92,10 +107,18 @@ export default function EmployeeHome({ navigation }) {
 const styles = StyleSheet.create({
   container: {
     flexGrow: 1, backgroundColor: '#f0f4f8',
-    alignItems: 'center', paddingTop: 80,
+    alignItems: 'center', paddingTop: 56,
     paddingBottom: 40, paddingHorizontal: 20,
   },
-  heading: { fontSize: 22, fontWeight: 'bold', color: '#2d3748', marginBottom: 4 },
+  // Header row sits at top, full width
+  headerRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    width: '100%',
+    marginBottom: 24,
+  },
+  heading:    { fontSize: 22, fontWeight: 'bold', color: '#2d3748', marginBottom: 4 },
   subheading: { fontSize: 14, color: '#718096', marginBottom: 36 },
   grid: {
     flexDirection: 'row', flexWrap: 'wrap',
@@ -109,9 +132,9 @@ const styles = StyleSheet.create({
     shadowColor: '#000', shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.08, shadowRadius: 4, elevation: 3,
   },
-  tileDisabled: { backgroundColor: '#edf2f7', shadowOpacity: 0, elevation: 0 },
-  tileIcon: { fontSize: 36, marginBottom: 8 },
-  tileLabel: { fontSize: 13, fontWeight: '600', color: '#2d3748', textAlign: 'center' },
+  tileDisabled:      { backgroundColor: '#edf2f7', shadowOpacity: 0, elevation: 0 },
+  tileIcon:          { fontSize: 36, marginBottom: 8 },
+  tileLabel:         { fontSize: 13, fontWeight: '600', color: '#2d3748', textAlign: 'center' },
   tileLabelDisabled: { color: '#a0aec0' },
-  comingSoon: { fontSize: 10, color: '#a0aec0', marginTop: 4 },
+  comingSoon:        { fontSize: 10, color: '#a0aec0', marginTop: 4 },
 });

@@ -1,43 +1,62 @@
-const admin = require('firebase-admin');
-const { APPOINTMENT_STATUS } = require('../constants');
+// functions/src/fitness/fitnessScheduler.js
+// Runs daily at 9am PKT (4am UTC) — configured in index.js
+// Sends fitness appointment reminders: 1 day before and on the day
+
+const { getFirestore } = require('firebase-admin/firestore');
 
 const sendFitnessReminders = async (event) => {
   try {
-    const db = admin.firestore();
-    const today = new Date();
-    const reminderDays = [7, 3, 1];
+    const db = getFirestore();
 
+    // Get today's date and tomorrow's date in YYYY-MM-DD format (PKT = UTC+5)
+    const nowUTC = new Date();
+    const pktOffset = 5 * 60 * 60 * 1000; // UTC+5 in milliseconds
+    const nowPKT = new Date(nowUTC.getTime() + pktOffset);
+
+    const todayStr    = nowPKT.toISOString().slice(0, 10);
+    const tomorrowPKT = new Date(nowPKT.getTime() + 24 * 60 * 60 * 1000);
+    const tomorrowStr = tomorrowPKT.toISOString().slice(0, 10);
+
+    // Fetch appointments scheduled for today or tomorrow that are still active
     const snapshot = await db.collection('fitnessAppointments')
-      .where('status', 'in', [
-        APPOINTMENT_STATUS.SCHEDULED,
-        APPOINTMENT_STATUS.RESCHEDULED,
-      ])
+      .where('status', 'in', ['scheduled', 'confirmed', 'rescheduled', 'reschedule_rejected'])
       .get();
 
-    for (const doc of snapshot.docs) {
-      const appointment = doc.data();
-      const appointmentDate = new Date(appointment.scheduledDate);
-      const daysUntil = Math.ceil(
-        (appointmentDate - today) / (1000 * 60 * 60 * 24)
-      );
-
-      if (reminderDays.includes(daysUntil)) {
-        await db.collection('notifications').add({
-          title:            'Fitness Appointment Reminder',
-          body:             `Reminder: Your annual fitness examination is in ${daysUntil} day(s) on ${appointment.scheduledDate} at ${appointment.scheduledTime} at the Medical Centre.`,
-          category:         'fitness_appointment',
-          targetType:       'individual',
-          targetEmployeeId: appointment.employeeId,
-          appointmentId:    doc.id,
-          sentBy:           'system',
-          sentByRole:       'system',
-          sentAt:           new Date().toISOString(),
-          whatsappDeferred: true,
-        });
-      }
+    if (snapshot.empty) {
+      console.log('Fitness reminders: no upcoming appointments found');
+      return;
     }
 
-    console.log('Fitness reminders sent');
+    let remindersSent = 0;
+
+    for (const doc of snapshot.docs) {
+      const appt = doc.data();
+      const apptDate = appt.scheduledDate;
+
+      let reminderLabel = null;
+      if (apptDate === tomorrowStr) reminderLabel = 'tomorrow';
+      if (apptDate === todayStr)    reminderLabel = 'today';
+
+      if (!reminderLabel) continue; // Not a reminder day for this appointment
+
+      // Write notification directly using the new flat pattern
+      await db.collection('notifications').add({
+        recipientUid:  appt.employeeUid,
+        recipientRole: 'employee',
+        title:         'Fitness Appointment Reminder',
+        body:          reminderLabel === 'today'
+          ? `Reminder: Your annual fitness examination is today at ${appt.scheduledTime} at the Medical Centre.`
+          : `Reminder: Your annual fitness examination is tomorrow (${appt.scheduledDate}) at ${appt.scheduledTime} at the Medical Centre.`,
+        type:          'fitness',
+        referenceId:   doc.id,
+        isRead:        false,
+        createdAt:     new Date().toISOString(),
+      });
+
+      remindersSent++;
+    }
+
+    console.log(`Fitness reminders sent: ${remindersSent}`);
   } catch (error) {
     console.error('Fitness reminder error:', error);
   }

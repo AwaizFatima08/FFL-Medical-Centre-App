@@ -5,6 +5,7 @@
 
 const express = require('express');
 const admin   = require('firebase-admin');
+const { createNotification } = require('../notifications/notificationRoutes');
 
 const router = express.Router();
 
@@ -73,6 +74,32 @@ router.post('/save', async (req, res) => {
     };
 
     const ref = await db().collection('circulars').add(circular);
+
+    // ── Notify all active users about the new circular ────────────────────────
+    // Fetch all active users and notify each one
+    // Note: for V1 this is acceptable. Flag for V2 batch optimisation if user
+    // count grows significantly.
+    try {
+      const usersSnap = await db().collection('users')
+        .where('isActive', '==', true)
+        .get();
+
+      const categoryLabel = category === 'medical' ? 'Medical' : 'Administrative';
+      await Promise.all(usersSnap.docs.map(userDoc =>
+        createNotification({
+          recipientUid:  userDoc.id,
+          recipientRole: userDoc.data().role,
+          title:         `New ${categoryLabel} Circular`,
+          body:          `A new circular has been posted: "${title.trim()}". Tap to view.`,
+          type:          'circular',
+          referenceId:   ref.id,
+        })
+      ));
+    } catch (notifError) {
+      // Notification failure must not block the circular save response
+      console.error('Circular notification error:', notifError);
+    }
+
     res.json({ success: true, message: 'Circular saved successfully', data: { id: ref.id, ...circular } });
 
   } catch (error) {

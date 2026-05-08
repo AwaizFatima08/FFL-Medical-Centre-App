@@ -7,12 +7,13 @@
 
 const express = require('express');
 const { getFirestore, Timestamp } = require('firebase-admin/firestore');
+const { createNotification } = require('../notifications/notificationRoutes');
 
 const router = express.Router();
 const db = getFirestore();
 
-const SEAT_CAP     = 24;
-const MAX_SEATS    = 4;
+const SEAT_CAP  = 24;
+const MAX_SEATS = 4;
 
 const ROLES = {
   EMPLOYEE:  'employee',
@@ -45,7 +46,6 @@ async function getEmployeeData(uid) {
   return { id: snapshot.docs[0].id, ...snapshot.docs[0].data() };
 }
 
-// Returns total confirmed seats for a trip date (each booking may have multiple seats)
 async function getConfirmedSeats(tripDate) {
   const snapshot = await db.collection('tripBookings')
     .where('tripDate', '==', tripDate)
@@ -71,12 +71,10 @@ router.post('/book', async (req, res) => {
       referralConfirmed, overnightStay, returnTrip, notes,
     } = req.body;
 
-    // Required field validation
     if (!tripDate?.trim())    return res.status(400).json({ success: false, message: 'Trip date is required' });
     if (!pickupHouse?.trim()) return res.status(400).json({ success: false, message: 'Pickup house is required' });
     if (!patientName?.trim()) return res.status(400).json({ success: false, message: 'Patient name is required' });
 
-    // Seat count validation
     const seatCount = parseInt(seats, 10);
     if (isNaN(seatCount) || seatCount < 1 || seatCount > MAX_SEATS) {
       return res.status(400).json({
@@ -85,7 +83,7 @@ router.post('/book', async (req, res) => {
       });
     }
 
-    // Validate trip date is Mon/Wed/Sat — parse locally to avoid UTC shift
+    // Validate trip date is Mon/Wed/Sat
     const [year, month, day] = tripDate.split('-').map(Number);
     const dayOfWeek = new Date(year, month - 1, day).getDay();
     if (![1, 3, 6].includes(dayOfWeek)) {
@@ -121,7 +119,6 @@ router.post('/book', async (req, res) => {
       });
     }
 
-    // Fetch employee details
     const employee = await getEmployeeData(uid);
 
     const booking = {
@@ -150,6 +147,28 @@ router.post('/book', async (req, res) => {
     };
 
     const ref = await db.collection('tripBookings').add(booking);
+
+    // ── Notify all active reception staff of new booking ──────────────────────
+    try {
+      const receptionSnap = await db.collection('users')
+        .where('role', '==', ROLES.RECEPTION)
+        .where('isActive', '==', true)
+        .get();
+
+      await Promise.all(receptionSnap.docs.map(doc =>
+        createNotification({
+          recipientUid:  doc.id,
+          recipientRole: ROLES.RECEPTION,
+          title:         'New Medical Trip Booking',
+          body:          `${employee.fullName || 'An employee'} has requested a trip seat for ${tripDate}. Patient: ${patientName.trim()}.`,
+          type:          'trip',
+          referenceId:   ref.id,
+        })
+      ));
+    } catch (notifError) {
+      console.error('Trip booking notification error:', notifError);
+    }
+
     res.json({
       success: true,
       message: 'Booking submitted. Reception will confirm your seat.',
@@ -207,7 +226,7 @@ router.get('/confirmedCount', async (req, res) => {
   }
 });
 
-// ── GET /all — must be before /:id ───────────────────────────────────────────
+// ── GET /all — must be before /:id ────────────────────────────────────────────
 router.get('/all', async (req, res) => {
   try {
     const role = await getUserRole(req.user.uid);
@@ -296,6 +315,16 @@ router.post('/:id/confirm', async (req, res) => {
       confirmedBy: uid,
     });
 
+    // ── Notify employee their booking is confirmed ────────────────────────────
+    await createNotification({
+      recipientUid:  booking.bookedBy,
+      recipientRole: ROLES.EMPLOYEE,
+      title:         'Medical Trip Booking Confirmed',
+      body:          `Your trip booking for ${booking.tripDate} has been confirmed. Departure: 17:30. Patient: ${booking.patientName}.`,
+      type:          'trip',
+      referenceId:   req.params.id,
+    });
+
     res.json({ success: true, message: 'Booking confirmed successfully' });
 
   } catch (error) {
@@ -336,6 +365,18 @@ router.post('/:id/cancel', async (req, res) => {
       cancelledAt: Timestamp.now(),
       cancelledBy: uid,
     });
+
+    // ── Notify employee only if cancelled by someone else (reception/admin) ───
+    if (booking.bookedBy !== uid) {
+      await createNotification({
+        recipientUid:  booking.bookedBy,
+        recipientRole: ROLES.EMPLOYEE,
+        title:         'Medical Trip Booking Cancelled',
+        body:          `Your trip booking for ${booking.tripDate} (Patient: ${booking.patientName}) has been cancelled by reception.`,
+        type:          'trip',
+        referenceId:   req.params.id,
+      });
+    }
 
     res.json({ success: true, message: 'Booking cancelled successfully' });
 

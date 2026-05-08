@@ -27,20 +27,46 @@ import NotificationScreen from '../screens/notifications/NotificationScreen';
 import FitnessEmployeeScreen from '../screens/fitness/FitnessEmployeeScreen';
 import FitnessAdminScreen    from '../screens/fitness/FitnessAdminScreen';
 
+// ─── Trip flow ────────────────────────────────────────────────────────────────
+import TripBookingScreen      from '../screens/trip/TripBookingScreen';
+import TripMyBookingScreen    from '../screens/trip/TripMyBookingScreen';
+import TripDetailScreen       from '../screens/trip/TripDetailScreen';
+import TripReceptionHubScreen from '../screens/trip/TripReceptionHubScreen';
+import TripReportScreen       from '../screens/trip/TripReportScreen';
+import TripViewScreen         from '../screens/trip/TripViewScreen';
+
+// ─── Directory flow ───────────────────────────────────────────────────────────
+import DirectoryListScreen    from '../screens/directory/DirectoryListScreen';
+import DirectoryDetailScreen  from '../screens/directory/DirectoryDetailScreen';
+import DirectoryAddEditScreen from '../screens/directory/DirectoryAddEditScreen';
+
+// ─── Feedback flow ────────────────────────────────────────────────────────────
+import FeedbackFormScreen   from '../screens/feedback/FeedbackFormScreen';
+import FeedbackListScreen   from '../screens/feedback/FeedbackListScreen';
+import FeedbackDetailScreen from '../screens/feedback/FeedbackDetailScreen';
+
+// ─── Doctor Availability flow ─────────────────────────────────────────────────
+import DoctorAvailabilityScreen       from '../screens/availability/DoctorAvailabilityScreen';
+import DoctorAvailabilityManageScreen from '../screens/availability/DoctorAvailabilityManageScreen';
+
+// ─── Circulars flow ───────────────────────────────────────────────────────────
+import CircularsScreen      from '../screens/circulars/CircularsScreen';
+import CircularUploadScreen from '../screens/circulars/CircularUploadScreen';
+
 const Stack = createNativeStackNavigator();
 
 export default function AppNavigator({ userRole }) {
   const getHomeScreen = () => {
     switch (userRole) {
-      case 'reception':       return ReceptionHome;
-      case 'driver':          return DriverHome;
-      case 'doctor':          return DoctorHome;
-      case 'nurse':           return NurseHome;
-      case 'lab_technologist':return LabTechHome;
+      case 'reception':         return ReceptionHome;
+      case 'driver':            return DriverHome;
+      case 'doctor':            return DoctorHome;
+      case 'nurse':             return NurseHome;
+      case 'lab_technologist':  return LabTechHome;
       case 'pharmacy_incharge': return PharmacyHome;
-      case 'admin_incharge':  return AdminHome;
-      case 'cmo':             return CMOHome;
-      default:                return EmployeeHome;
+      case 'admin_incharge':    return AdminHome;
+      case 'cmo':               return CMOHome;
+      default:                  return EmployeeHome;
     }
   };
 
@@ -57,12 +83,39 @@ export default function AppNavigator({ userRole }) {
       <Stack.Screen name="AmbulanceReceptionHub"     component={AmbulanceReceptionHubScreen} />
       <Stack.Screen name="AmbulanceRequestDetail"    component={AmbulanceRequestDetailScreen} />
 
-      {/* Notification flow — accessible from any role via bell */}
+      {/* Notification flow */}
       <Stack.Screen name="Notifications" component={NotificationScreen} />
 
       {/* Fitness flow */}
       <Stack.Screen name="FitnessEmployee" component={FitnessEmployeeScreen} />
       <Stack.Screen name="FitnessAdmin"    component={FitnessAdminScreen} />
+
+      {/* Trip flow */}
+      <Stack.Screen name="TripBooking"      component={TripBookingScreen} />
+      <Stack.Screen name="TripMyBooking"    component={TripMyBookingScreen} />
+      <Stack.Screen name="TripDetail"       component={TripDetailScreen} />
+      <Stack.Screen name="TripReceptionHub" component={TripReceptionHubScreen} />
+      <Stack.Screen name="TripReport"       component={TripReportScreen} />
+      <Stack.Screen name="TripView"         component={TripViewScreen} />
+
+      {/* Directory flow */}
+      <Stack.Screen name="DirectoryList"    component={DirectoryListScreen} />
+      <Stack.Screen name="DirectoryDetail"  component={DirectoryDetailScreen} />
+      <Stack.Screen name="DirectoryAddEdit" component={DirectoryAddEditScreen} />
+
+      {/* Feedback flow */}
+      <Stack.Screen name="Feedback"        component={FeedbackFormScreen} />
+      <Stack.Screen name="FeedbackList"    component={FeedbackListScreen} />
+      <Stack.Screen name="FeedbackDetail"  component={FeedbackDetailScreen} />
+
+      {/* Doctor Availability flow */}
+      <Stack.Screen name="DoctorAvailability"       component={DoctorAvailabilityScreen} />
+      <Stack.Screen name="DoctorAvailabilityManage" component={DoctorAvailabilityManageScreen} />
+
+      {/* Circulars flow */}
+      <Stack.Screen name="Circulars"      component={CircularsScreen} />
+      <Stack.Screen name="CircularUpload" component={CircularUploadScreen} />
+
     </Stack.Navigator>
   );
 }

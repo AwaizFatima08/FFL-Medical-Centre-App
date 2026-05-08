@@ -18,6 +18,7 @@
     "axios": "^1.16.0",
     "expo": "~54.0.33",
     "expo-constants": "~18.0.13",
+    "expo-document-picker": "~14.0.8",
     "expo-location": "^55.1.8",
     "expo-notifications": "^55.0.22",
     "expo-secure-store": "^55.0.13",
@@ -29,7 +30,8 @@
     "react-native-maps": "^1.27.2",
     "react-native-safe-area-context": "^5.7.0",
     "react-native-screens": "^4.24.0",
-    "react-native-web": "^0.21.0"
+    "react-native-web": "^0.21.0",
+    "uuid": "^14.0.0"
   },
   "private": true
 }

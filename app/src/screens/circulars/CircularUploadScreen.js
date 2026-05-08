@@ -1,6 +1,7 @@
 // app/src/screens/circulars/CircularUploadScreen.js
 // Flow 3 — Upload a new circular
-// Accessible to: admin_incharge, cmo only
+// File uploads directly to Firebase Storage from the client
+// Only metadata is sent to the backend Cloud Function
 
 import React, { useState } from 'react';
 import {
@@ -8,7 +9,9 @@ import {
   ScrollView, ActivityIndicator, KeyboardAvoidingView, Platform,
 } from 'react-native';
 import { getAuth } from 'firebase/auth';
+import { getStorage, ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import * as DocumentPicker from 'expo-document-picker';
+import { v4 as uuidv4 } from 'uuid';
 import { API } from '../../config/api';
 
 const CATEGORIES = [
@@ -19,10 +22,11 @@ const CATEGORIES = [
 export default function CircularUploadScreen({ navigation, route }) {
   const { userRole, category: defaultCategory } = route.params || {};
 
-  const [title, setTitle]       = useState('');
-  const [category, setCategory] = useState(defaultCategory || 'medical');
-  const [file, setFile]         = useState(null);
+  const [title, setTitle]         = useState('');
+  const [category, setCategory]   = useState(defaultCategory || 'medical');
+  const [file, setFile]           = useState(null);
   const [uploading, setUploading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState('');
 
   const getToken = async () => {
     const auth = getAuth();
@@ -35,18 +39,13 @@ export default function CircularUploadScreen({ navigation, route }) {
         type: ['application/pdf', 'image/jpeg', 'image/png', 'image/jpg'],
         copyToCacheDirectory: true,
       });
-
       if (result.canceled) return;
-
       const picked = result.assets?.[0];
       if (!picked) return;
-
-      // 10MB limit
       if (picked.size && picked.size > 10 * 1024 * 1024) {
         alert('File is too large. Maximum size is 10MB.');
         return;
       }
-
       setFile(picked);
     } catch {
       alert('Could not open file picker. Please try again.');
@@ -64,22 +63,43 @@ export default function CircularUploadScreen({ navigation, route }) {
     setUploading(true);
 
     try {
-      const token = await getToken();
+      // Step 1 — fetch the file as a blob
+      setUploadProgress('Preparing file...');
+      const blobResponse = await fetch(file.uri);
+      const blob = await blobResponse.blob();
 
-      // Build FormData
-      const formData = new FormData();
-      formData.append('title', title.trim());
-      formData.append('category', category);
-      formData.append('file', {
-        uri:  file.uri,
-        name: file.name,
-        type: file.mimeType || 'application/octet-stream',
+      // Step 2 — upload blob directly to Firebase Storage
+      setUploadProgress('Uploading to storage...');
+      const ext         = file.name.split('.').pop() || 'pdf';
+      const storagePath = `circulars/${category}/${uuidv4()}.${ext}`;
+      const storage     = getStorage();
+      const storageRef  = ref(storage, storagePath);
+
+      await uploadBytes(storageRef, blob, {
+        contentType: file.mimeType || blob.type || 'application/octet-stream',
       });
 
-      const response = await fetch(`${API.circulars}/upload`, {
+      // Step 3 — get the public download URL
+      setUploadProgress('Getting download URL...');
+      const fileUrl = await getDownloadURL(storageRef);
+
+      // Step 4 — save metadata to Firestore via backend
+      setUploadProgress('Saving metadata...');
+      const token = await getToken();
+      const response = await fetch(`${API.circulars}/save`, {
         method: 'POST',
-        headers: { 'Authorization': `Bearer ${token}` },
-        body: formData,
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          title:            title.trim(),
+          category,
+          fileUrl,
+          storagePath,
+          mimeType:         file.mimeType || blob.type,
+          originalFilename: file.name,
+        }),
       });
 
       const data = await response.json();
@@ -87,12 +107,14 @@ export default function CircularUploadScreen({ navigation, route }) {
         alert('Circular uploaded successfully.');
         navigation.goBack();
       } else {
-        alert(data.message || 'Upload failed. Please try again.');
+        alert(data.message || 'Failed to save circular. Please try again.');
       }
-    } catch {
-      alert('Network error. Please try again.');
+    } catch (error) {
+      console.error('Upload error:', error);
+      alert('Upload failed: ' + (error.message || 'Please try again.'));
     } finally {
       setUploading(false);
+      setUploadProgress('');
     }
   };
 
@@ -123,10 +145,8 @@ export default function CircularUploadScreen({ navigation, route }) {
       </View>
 
       <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollContent}>
-
         <View style={styles.section}>
 
-          {/* Title */}
           <Text style={styles.fieldLabel}>Title *</Text>
           <TextInput
             style={styles.input}
@@ -136,7 +156,6 @@ export default function CircularUploadScreen({ navigation, route }) {
             placeholderTextColor="#a0aec0"
           />
 
-          {/* Category */}
           <Text style={[styles.fieldLabel, { marginTop: 16 }]}>Category *</Text>
           <View style={styles.categoryRow}>
             {CATEGORIES.map(c => (
@@ -152,7 +171,6 @@ export default function CircularUploadScreen({ navigation, route }) {
             ))}
           </View>
 
-          {/* File picker */}
           <Text style={[styles.fieldLabel, { marginTop: 16 }]}>File *</Text>
           <TouchableOpacity style={styles.filePicker} onPress={handlePickFile}>
             {file ? (
@@ -175,7 +193,6 @@ export default function CircularUploadScreen({ navigation, route }) {
 
         </View>
 
-        {/* Info box */}
         <View style={styles.infoBox}>
           <Text style={styles.infoText}>
             ℹ️  This circular will be visible to all staff immediately after upload. Ensure the document is approved before uploading.
@@ -187,10 +204,14 @@ export default function CircularUploadScreen({ navigation, route }) {
           onPress={handleUpload}
           disabled={uploading}
         >
-          {uploading
-            ? <ActivityIndicator color="#ffffff" />
-            : <Text style={styles.uploadBtnText}>Upload Circular</Text>
-          }
+          {uploading ? (
+            <View style={styles.uploadingRow}>
+              <ActivityIndicator color="#ffffff" size="small" />
+              <Text style={styles.uploadBtnText}>{uploadProgress || 'Uploading...'}</Text>
+            </View>
+          ) : (
+            <Text style={styles.uploadBtnText}>Upload Circular</Text>
+          )}
         </TouchableOpacity>
 
       </ScrollView>
@@ -208,23 +229,19 @@ const styles = StyleSheet.create({
   backText: { fontSize: 14, color: '#3182ce', fontWeight: '600' },
   title: { fontSize: 20, fontWeight: 'bold', color: '#2d3748' },
   subtitle: { fontSize: 13, color: '#718096', marginTop: 2 },
-
   scroll: { flex: 1 },
   scrollContent: { padding: 16 },
-
   section: {
     backgroundColor: '#ffffff', borderRadius: 12, padding: 16, marginBottom: 16,
     shadowColor: '#000', shadowOpacity: 0.06, shadowRadius: 4,
     shadowOffset: { width: 0, height: 2 }, elevation: 2,
   },
-
   fieldLabel: { fontSize: 13, fontWeight: '700', color: '#4a5568', marginBottom: 8 },
   input: {
     backgroundColor: '#f7fafc', borderWidth: 1, borderColor: '#e2e8f0',
     borderRadius: 8, paddingHorizontal: 12, paddingVertical: 10,
     fontSize: 14, color: '#2d3748',
   },
-
   categoryRow: { flexDirection: 'row', gap: 10 },
   categoryChip: {
     flex: 1, borderWidth: 1, borderColor: '#e2e8f0', borderRadius: 8,
@@ -233,7 +250,6 @@ const styles = StyleSheet.create({
   categoryChipSelected: { backgroundColor: '#3182ce', borderColor: '#3182ce' },
   categoryChipText: { fontSize: 14, color: '#4a5568', fontWeight: '600' },
   categoryChipTextSelected: { color: '#ffffff' },
-
   filePicker: {
     borderWidth: 2, borderColor: '#e2e8f0', borderRadius: 8,
     borderStyle: 'dashed', backgroundColor: '#f7fafc', overflow: 'hidden',
@@ -242,27 +258,22 @@ const styles = StyleSheet.create({
   fileEmptyIcon: { fontSize: 36, marginBottom: 8 },
   fileEmptyText: { fontSize: 14, color: '#4a5568', fontWeight: '600', marginBottom: 4 },
   fileEmptyHint: { fontSize: 12, color: '#a0aec0' },
-
-  fileSelected: {
-    flexDirection: 'row', alignItems: 'center',
-    padding: 14, gap: 12,
-  },
+  fileSelected: { flexDirection: 'row', alignItems: 'center', padding: 14, gap: 12 },
   fileIcon: { fontSize: 28 },
   fileInfo: { flex: 1 },
   fileName: { fontSize: 14, fontWeight: '600', color: '#2d3748' },
   fileSize: { fontSize: 12, color: '#718096', marginTop: 2 },
   fileChange: { fontSize: 13, color: '#3182ce', fontWeight: '700' },
-
   infoBox: {
     backgroundColor: '#fffbeb', borderRadius: 10, padding: 12,
     marginBottom: 16, borderLeftWidth: 3, borderLeftColor: '#d69e2e',
   },
   infoText: { fontSize: 13, color: '#744210', lineHeight: 18 },
-
   uploadBtn: {
     backgroundColor: '#3182ce', borderRadius: 8, paddingVertical: 14,
     alignItems: 'center', marginBottom: 40,
   },
   uploadBtnDisabled: { opacity: 0.6 },
   uploadBtnText: { color: '#ffffff', fontWeight: '700', fontSize: 16 },
+  uploadingRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
 });

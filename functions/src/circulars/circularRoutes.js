@@ -1,22 +1,17 @@
 // functions/src/circulars/circularRoutes.js
 // Flow 3 — Health Awareness Circulars & Administrative Notices
-// Upload by: admin_incharge, cmo
-// View by: all roles
+// File upload handled by client directly to Firebase Storage
+// This backend only saves/retrieves metadata in Firestore
 
-const express  = require('express');
-const admin    = require('firebase-admin');
-const Busboy   = require('busboy');
-const path     = require('path');
-const { v4: uuidv4 } = require('uuid');
+const express = require('express');
+const admin   = require('firebase-admin');
 
 const router = express.Router();
 
 const UPLOAD_ROLES = ['admin_incharge', 'cmo'];
 const CATEGORIES   = ['medical', 'administrative'];
 
-// Helpers — called inside handlers so admin is already initialized
-const db      = () => admin.firestore();
-const storage = () => admin.storage().bucket();
+const db = () => admin.firestore();
 
 async function getUserRole(uid) {
   const doc = await db().collection('users').doc(uid).get();
@@ -24,10 +19,10 @@ async function getUserRole(uid) {
   return doc.data().role;
 }
 
-// ── GET /list ─────────────────────────────────────────────────────────────────
+// ── GET /list — fetch all circulars, optionally filtered by category ──────────
 router.get('/list', async (req, res) => {
   try {
-    await getUserRole(req.user.uid); // any authenticated user
+    await getUserRole(req.user.uid);
 
     const { category } = req.query;
     let query = db().collection('circulars').orderBy('createdAt', 'desc');
@@ -47,8 +42,8 @@ router.get('/list', async (req, res) => {
   }
 });
 
-// ── POST /upload ──────────────────────────────────────────────────────────────
-router.post('/upload', async (req, res) => {
+// ── POST /save — save circular metadata after client uploads file to Storage ──
+router.post('/save', async (req, res) => {
   try {
     const { uid } = req.user;
     const role = await getUserRole(uid);
@@ -57,83 +52,36 @@ router.post('/upload', async (req, res) => {
       return res.status(403).json({ success: false, message: 'Only admin and CMO can upload circulars' });
     }
 
-    let title = '';
-    let category = '';
-    let fileBuffer = null;
-    let originalFilename = '';
-    let mimeType = '';
+    const { title, category, fileUrl, storagePath, mimeType, originalFilename } = req.body;
 
-    await new Promise((resolve, reject) => {
-      const busboy = Busboy({ headers: req.headers });
-
-      busboy.on('field', (fieldname, value) => {
-        if (fieldname === 'title')    title    = value.trim();
-        if (fieldname === 'category') category = value.trim();
-      });
-
-      busboy.on('file', (fieldname, file, info) => {
-        originalFilename = info.filename;
-        mimeType         = info.mimeType;
-        const chunks     = [];
-        file.on('data', chunk => chunks.push(chunk));
-        file.on('end',  ()    => { fileBuffer = Buffer.concat(chunks); });
-      });
-
-      busboy.on('finish', resolve);
-      busboy.on('error',  reject);
-      req.pipe(busboy);
-    });
-
-    if (!title)    return res.status(400).json({ success: false, message: 'Title is required' });
+    if (!title?.trim())    return res.status(400).json({ success: false, message: 'Title is required' });
     if (!category || !CATEGORIES.includes(category)) {
       return res.status(400).json({ success: false, message: 'Valid category is required' });
     }
-    if (!fileBuffer) return res.status(400).json({ success: false, message: 'File is required' });
-
-    const allowedTypes = ['application/pdf', 'image/jpeg', 'image/png', 'image/jpg'];
-    if (!allowedTypes.includes(mimeType)) {
-      return res.status(400).json({ success: false, message: 'Only PDF, JPG and PNG files are allowed' });
-    }
-
-    // Upload to Firebase Storage
-    const ext         = path.extname(originalFilename) || (mimeType === 'application/pdf' ? '.pdf' : '.jpg');
-    const storageName = `${uuidv4()}${ext}`;
-    const storagePath = `circulars/${category}/${storageName}`;
-    const fileRef     = storage().file(storagePath);
-    const token       = uuidv4();
-
-    await fileRef.save(fileBuffer, {
-      metadata: {
-        contentType: mimeType,
-        metadata: { firebaseStorageDownloadTokens: token },
-      },
-    });
-
-    await fileRef.makePublic();
-    const publicUrl = `https://storage.googleapis.com/${storage().name}/${storagePath}`;
+    if (!fileUrl?.trim())  return res.status(400).json({ success: false, message: 'File URL is required' });
 
     const circular = {
-      title,
+      title:            title.trim(),
       category,
-      fileUrl:          publicUrl,
-      storagePath,
-      mimeType,
-      originalFilename,
+      fileUrl,
+      storagePath:      storagePath || null,
+      mimeType:         mimeType || null,
+      originalFilename: originalFilename || null,
       uploadedBy:       uid,
       uploadedByRole:   role,
       createdAt:        admin.firestore.Timestamp.now(),
     };
 
     const ref = await db().collection('circulars').add(circular);
-    res.json({ success: true, message: 'Circular uploaded successfully', data: { id: ref.id, ...circular } });
+    res.json({ success: true, message: 'Circular saved successfully', data: { id: ref.id, ...circular } });
 
   } catch (error) {
-    console.error('Circular upload error:', error);
-    res.status(500).json({ success: false, message: 'Upload failed', error: error.message });
+    console.error('Circular save error:', error);
+    res.status(500).json({ success: false, message: 'Failed to save circular', error: error.message });
   }
 });
 
-// ── DELETE /:id ───────────────────────────────────────────────────────────────
+// ── DELETE /:id — remove circular metadata and storage file ──────────────────
 router.delete('/:id', async (req, res) => {
   try {
     const { uid } = req.user;
@@ -147,9 +95,14 @@ router.delete('/:id', async (req, res) => {
     const doc = await ref.get();
     if (!doc.exists) return res.status(404).json({ success: false, message: 'Circular not found' });
 
+    // Delete from Storage if path exists
     const { storagePath } = doc.data();
     if (storagePath) {
-      try { await storage().file(storagePath).delete(); } catch {}
+      try {
+        await admin.storage().bucket().file(storagePath).delete();
+      } catch {
+        // File may already be deleted — proceed
+      }
     }
 
     await ref.delete();

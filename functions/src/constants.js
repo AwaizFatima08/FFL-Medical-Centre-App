@@ -189,8 +189,10 @@ export const TRIP_STATUS    = { OPEN: 'open', FULL: 'full', COMPLETED: 'complete
 
 // ─── VACCINATION ──────────────────────────────────────────────────────────────
 export const VACCINE_STATUS = {
-  PENDING: 'pending', ADMINISTERED: 'administered',
-  RESCHEDULED: 'rescheduled', MISSED: 'missed',
+  SCHEDULED:    'scheduled',
+  ADMINISTERED: 'administered',
+  MISSED:       'missed',
+  NA:           'na',
 };
 
 // ─── NOTIFICATIONS ────────────────────────────────────────────────────────────
@@ -234,3 +236,38 @@ export const WORKING_HOURS = {
     SATURDAY: { start: '07:30', end: '17:15', lunchStart: '13:00', lunchEnd: '14:00' },
   },
 };
+
+// ─── FAMILY MODULE ────────────────────────────────────────────────────────────
+
+export const FAMILY_RELATIONS = ['spouse', 'son', 'daughter'];
+
+export const FAMILY_MEMBER_STATUS = {
+  PENDING:   'pending',
+  VALIDATED: 'validated',
+  REJECTED:  'rejected',
+};
+
+export const EMPLOYMENT_STATUSES = ['employed', 'unemployed'];
+
+
+// ─── VACCINATION ADDITIONAL CONSTANTS──────────────────────────────────────────────────────────────
+
+export const VACCINE_TYPES  = ['live', 'inactivated', 'oral'];
+export const VACCINE_ROUTES = ['intramuscular', 'subcutaneous', 'intradermal', 'oral'];
+
+export const VACCINATION_NURSE = {
+  name:        'Zulaikha Yameen',
+  designation: 'In-charge Nurse',
+  organisation:'Fatima Fertilizer Medical Centre',
+};
+
+export const CMO_CREDENTIALS = {
+  name:        'Dr. Humayun Shahzad',
+  designation: 'Chief Medical Officer',
+  organisation:'Fatima Fertilizer Medical Centre',
+};
+
+export const VACCINATION_REPORT_DISCLAIMER =
+  'This is an electronically generated report from the official FFL Medical Centre App ' +
+  'and does not require further signature or manual validation.';
+

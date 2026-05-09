@@ -1,23 +1,30 @@
-// app/src/screens/home/EmployeeHome.js
+// app/src/screens/home/CMOHome.js
 
 import React from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, ScrollView } from 'react-native';
-import LogoutButton      from '../../components/LogoutButton';
-import NotificationBell  from '../../components/NotificationBell';
+import LogoutButton     from '../../components/LogoutButton';
+import NotificationBell from '../../components/NotificationBell';
 
 const TILES = [
   {
-    id: 'ambulance',
-    label: 'Request Ambulance',
-    icon: '🚑',
-    screen: 'AmbulanceRequest',
+    id: 'availability',
+    label: 'Doctor Availability',
+    icon: '🩺',
+    screen: 'DoctorAvailability',
+    active: true,
+  },
+  {
+    id: 'feedback',
+    label: 'Patient Feedback',
+    icon: '📋',
+    screen: 'FeedbackList',
     active: true,
   },
   {
     id: 'trip',
     label: 'Medical Trip',
     icon: '🚌',
-    screen: 'TripMyBooking',
+    screen: 'TripView',
     active: true,
   },
   {
@@ -25,34 +32,6 @@ const TILES = [
     label: 'Doctors Directory',
     icon: '🏥',
     screen: 'DirectoryList',
-    active: true,
-  },
-  {
-    id: 'feedback',
-    label: 'Feedback',
-    icon: '📋',
-    screen: 'Feedback',
-    active: true,
-  },
-  {
-    id: 'availability',
-    label: 'Doctor Availability',
-    icon: '👨‍⚕️',
-    screen: 'DoctorAvailability',
-    active: true,
-  },
-  {
-    id: 'family',
-    label: 'My Family',
-    icon: '👨‍👩‍👧‍👦',
-    screen: 'FamilyMemberList',
-    active: true,
-  },
-  {
-    id: 'vaccination',
-    label: 'Vaccination',
-    icon: '💉',
-    screen: 'VaccinationChildList',
     active: true,
   },
   {
@@ -66,18 +45,18 @@ const TILES = [
     id: 'fitness',
     label: 'Annual Fitness',
     icon: '🏃',
-    screen: 'FitnessEmployee',
+    screen: 'FitnessAdmin',   // CMO uses same screen — GET /all allows cmo role
     active: true,
   },
 ];
 
-export default function EmployeeHome({ navigation }) {
+export default function CMOHome({ navigation }) {
   const handleTilePress = (tile) => {
     if (!tile.active) {
       alert('Coming Soon');
       return;
     }
-    navigation.navigate(tile.screen, { userRole: 'employee' });
+    navigation.navigate(tile.screen, { userRole: 'cmo' });
   };
 
   return (
@@ -89,7 +68,7 @@ export default function EmployeeHome({ navigation }) {
       </View>
 
       <Text style={styles.heading}>FFL Medical Centre</Text>
-      <Text style={styles.subheading}>Employee Portal</Text>
+      <Text style={styles.subheading}>CMO Dashboard</Text>
 
       <View style={styles.grid}>
         {TILES.map((tile) => (
@@ -124,8 +103,8 @@ const styles = StyleSheet.create({
     width: '100%',
     marginBottom: 24,
   },
-  heading:    { fontSize: 22, fontWeight: 'bold', color: '#2d3748', marginBottom: 4 },
-  subheading: { fontSize: 14, color: '#718096', marginBottom: 36 },
+  heading:           { fontSize: 22, fontWeight: 'bold', color: '#2d3748', marginBottom: 4 },
+  subheading:        { fontSize: 14, color: '#718096', marginBottom: 36 },
   grid: {
     flexDirection: 'row', flexWrap: 'wrap',
     justifyContent: 'center', gap: 16,

@@ -6,7 +6,7 @@ import React, { useState } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, StyleSheet,
   StatusBar, KeyboardAvoidingView, Platform, ActivityIndicator,
-  ScrollView, Alert,
+  ScrollView, Alert, Image,
 } from 'react-native';
 import { signInWithEmailAndPassword } from 'firebase/auth';
 import { auth } from '../../config/firebase';
@@ -160,7 +160,17 @@ export default function LoginScreen({ navigation }) {
           </TouchableOpacity>
         </View>
 
-        <Text style={styles.footer}>FFL Medical Centre · Fatima Group</Text>
+        {/* ── HomiLabs Credit ── */}
+        <View style={styles.creditBlock}>
+          <Text style={styles.creditLabel}>Developed by</Text>
+          <Image
+            source={require('../../../assets/homilabs_logo_light.png')}
+            style={styles.creditLogo}
+            resizeMode="contain"
+          />
+          <Text style={styles.creditSub}>homilabs.pk</Text>
+        </View>
+
       </ScrollView>
     </KeyboardAvoidingView>
   );
@@ -208,9 +218,7 @@ const styles = StyleSheet.create({
   },
   passRow:     { position: 'relative' },
   passInput:   { paddingRight: 48 },
-  eyeBtn:      {
-    position: 'absolute', right: 14, top: 12,
-  },
+  eyeBtn:      { position: 'absolute', right: 14, top: 12 },
   eyeText:     { fontSize: 18 },
 
   forgotBtn:   { alignSelf: 'flex-end', marginBottom: 20, marginTop: -8 },
@@ -238,8 +246,28 @@ const styles = StyleSheet.create({
   },
   signupBtnText: { color: '#003049', fontSize: 15, fontWeight: '700' },
 
-  footer: {
-    textAlign: 'center', color: '#fdf0d5',
-    fontSize: 11, marginTop: 24, opacity: 0.6,
+  // HomiLabs credit
+  creditBlock: {
+    alignItems: 'center',
+    marginTop: 28,
+    marginBottom: 8,
+    opacity: 0.75,
+  },
+  creditLabel: {
+    color: '#fdf0d5',
+    fontSize: 10,
+    letterSpacing: 1.2,
+    textTransform: 'uppercase',
+    marginBottom: 6,
+  },
+  creditLogo: {
+    width: 240,
+    height: 56,
+    marginBottom: 4,
+  },
+  creditSub: {
+    color: '#7fb3c8',
+    fontSize: 10,
+    letterSpacing: 0.5,
   },
 });

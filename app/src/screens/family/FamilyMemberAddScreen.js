@@ -62,7 +62,7 @@ function DropdownField({ label, value, options, onSelect, required, disabled }) 
   );
 }
 
-// ─── Date input — simple text field with validation hint ─────────────────────
+// ─── Date input ───────────────────────────────────────────────────────────────
 function DateField({ label, value, onChange, required }) {
   return (
     <View style={styles.fieldGroup}>
@@ -82,17 +82,15 @@ function DateField({ label, value, onChange, required }) {
   );
 }
 
-// ─── Parse DD/MM/YYYY to Date ─────────────────────────────────────────────────
+// ─── Helpers ──────────────────────────────────────────────────────────────────
 function parseDate(str) {
   if (!str || str.length !== 10) return null;
   const [d, m, y] = str.split('/').map(Number);
   if (!d || !m || !y) return null;
   const date = new Date(y, m - 1, d);
-  if (isNaN(date.getTime())) return null;
-  return date;
+  return isNaN(date.getTime()) ? null : date;
 }
 
-// ─── Calculate age in years from Date ────────────────────────────────────────
 function ageInYears(date) {
   if (!date) return 0;
   const today = new Date();
@@ -104,7 +102,7 @@ function ageInYears(date) {
   return age;
 }
 
-// ─── Main screen ─────────────────────────────────────────────────────────────
+// ─── Main screen ──────────────────────────────────────────────────────────────
 export default function FamilyMemberAddScreen({ navigation }) {
   const [relation,         setRelation]         = useState('');
   const [name,             setName]             = useState('');
@@ -116,87 +114,61 @@ export default function FamilyMemberAddScreen({ navigation }) {
   const [maritalStatus,    setMaritalStatus]    = useState('');
   const [employmentStatus, setEmploymentStatus] = useState('');
   const [motherId,         setMotherId]         = useState('');
-
-  const [spouses,          setSpouses]          = useState([]); // validated spouses
-  const [hasSpouse,        setHasSpouse]        = useState(false);
-  const [checkingSpouse,   setCheckingSpouse]   = useState(false);
+  const [spouses,          setSpouses]          = useState([]);
   const [saving,           setSaving]           = useState(false);
 
-  const db   = getFirestore();
+  const db  = getFirestore();
   const auth = getAuth();
   const uid  = auth.currentUser?.uid;
 
-  // ─── Parse DOB and derive age ───────────────────────────────────────────────
-  const dobDate = parseDate(dob);
-  const age     = ageInYears(dobDate);
-  const isAdult = dobDate ? age >= 25 : false;
+  const dobDate   = parseDate(dob);
+  const age       = ageInYears(dobDate);
+  const isAdult   = dobDate ? age >= 25 : false;
   const needsCnic = dobDate ? age >= 18 : false;
+  const isChild   = relation === 'son' || relation === 'daughter';
 
-  // ─── On relation change — check spouse rule ─────────────────────────────────
+  // ─── Load existing spouse records for optional mother linking ───────────────
   useEffect(() => {
-    if (relation === 'son' || relation === 'daughter') {
-      checkSpouseExists();
-    }
-  }, [relation]);
-
-  const checkSpouseExists = async () => {
-    setCheckingSpouse(true);
-    try {
-      const q = query(
-        collection(db, 'familyMembers'),
-        where('employeeId', '==', uid),
-        where('relation',   '==', 'spouse'),
-        where('status',     '==', 'validated'),
-        where('isActive',   '==', true),
-      );
-      const snap = await getDocs(q);
-      const spouseList = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-      setSpouses(spouseList);
-      setHasSpouse(spouseList.length > 0);
-    } catch (err) {
-      console.error('Spouse check error:', err);
-      setHasSpouse(false);
-    } finally {
-      setCheckingSpouse(false);
-    }
-  };
+    if (!isChild || !uid) return;
+    const fetchSpouses = async () => {
+      try {
+        const q    = query(
+          collection(db, 'familyMembers'),
+          where('employeeId', '==', uid),
+          where('relation',   '==', 'spouse'),
+          where('isActive',   '==', true),
+        );
+        const snap = await getDocs(q);
+        setSpouses(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+      } catch (err) {
+        console.error('Spouse fetch error:', err);
+      }
+    };
+    fetchSpouses();
+  }, [isChild, uid, db]);
 
   // ─── Validation ─────────────────────────────────────────────────────────────
   const validate = () => {
-    if (!relation)  { Alert.alert('Required', 'Please select a relation.'); return false; }
+    if (!relation)    { Alert.alert('Required', 'Please select a relation.'); return false; }
     if (!name.trim()) { Alert.alert('Required', 'Please enter the full name.'); return false; }
-    if (!dob)       { Alert.alert('Required', 'Please enter date of birth.'); return false; }
-    if (!dobDate)   { Alert.alert('Invalid Date', 'Please enter date as DD/MM/YYYY.'); return false; }
-    if (dobDate > new Date()) { Alert.alert('Invalid Date', 'Date of birth cannot be in the future.'); return false; }
-
-    if ((relation === 'son' || relation === 'daughter') && !hasSpouse) {
-      Alert.alert(
-        'Spouse Required',
-        'You must add and have a validated spouse record before adding a child.',
-      );
+    if (!dob)         { Alert.alert('Required', 'Please enter date of birth.'); return false; }
+    if (!dobDate)     { Alert.alert('Invalid Date', 'Please enter date as DD/MM/YYYY.'); return false; }
+    if (dobDate > new Date()) {
+      Alert.alert('Invalid Date', 'Date of birth cannot be in the future.');
       return false;
     }
-
     if (needsCnic && !cnic.trim()) {
       Alert.alert('Required', 'CNIC is mandatory for family members aged 18 and above.');
       return false;
     }
-
     if (isAdult && !maritalStatus) {
       Alert.alert('Required', 'Marital status is mandatory for members aged 25 and above.');
       return false;
     }
-
     if (isAdult && !employmentStatus) {
       Alert.alert('Required', 'Employment status is mandatory for members aged 25 and above.');
       return false;
     }
-
-    if ((relation === 'son' || relation === 'daughter') && spouses.length > 1 && !motherId) {
-      Alert.alert('Required', 'Please select the mother from your registered spouses.');
-      return false;
-    }
-
     return true;
   };
 
@@ -205,11 +177,13 @@ export default function FamilyMemberAddScreen({ navigation }) {
     if (!validate()) return;
     setSaving(true);
     try {
-      // Auto-select mother if only one spouse
-      const resolvedMotherId =
-        (relation === 'son' || relation === 'daughter')
-          ? (spouses.length === 1 ? spouses[0].id : motherId)
-          : null;
+      // Resolve motherId — auto-select if only one spouse, use selection if multiple
+      let resolvedMotherId = null;
+      if (isChild) {
+        if (spouses.length === 1)              resolvedMotherId = spouses[0].id;
+        else if (spouses.length > 1 && motherId) resolvedMotherId = motherId;
+        // No spouse records — motherId stays null, shows as Not provided on report
+      }
 
       await addDoc(collection(db, 'familyMembers'), {
         employeeId:       uid,
@@ -245,9 +219,10 @@ export default function FamilyMemberAddScreen({ navigation }) {
   };
 
   // ─── Render ─────────────────────────────────────────────────────────────────
+  const showSpouseFields = relation === 'spouse' || isAdult;
+
   return (
     <View style={styles.wrapper}>
-      {/* Header */}
       <View style={styles.header}>
         <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
           <Text style={styles.backText}>← Back</Text>
@@ -267,28 +242,24 @@ export default function FamilyMemberAddScreen({ navigation }) {
           required
         />
 
-        {/* Spouse-first warning */}
-        {(relation === 'son' || relation === 'daughter') && checkingSpouse && (
-          <ActivityIndicator style={{ marginBottom: 12 }} color="#3b82f6" />
-        )}
-        {(relation === 'son' || relation === 'daughter') && !checkingSpouse && !hasSpouse && (
-          <View style={styles.warningBox}>
-            <Text style={styles.warningText}>
-              ⚠️  A validated spouse record is required before adding a child.
-              Please add your spouse first.
-            </Text>
-          </View>
-        )}
-
-        {/* Mother selection — only if multiple spouses */}
-        {(relation === 'son' || relation === 'daughter') && hasSpouse && spouses.length > 1 && (
+        {/* Mother selection — only if child and multiple spouses exist */}
+        {isChild && spouses.length > 1 && (
           <DropdownField
-            label="Mother"
+            label="Mother (optional)"
             value={motherId}
             options={spouses.map(s => ({ label: s.name, value: s.id }))}
             onSelect={setMotherId}
-            required
           />
+        )}
+
+        {/* Soft advisory — child with no spouse records at all */}
+        {isChild && spouses.length === 0 && (
+          <View style={styles.infoBox}>
+            <Text style={styles.infoText}>
+              ℹ  Adding a spouse record will link this child to their mother on
+              vaccination records. This is optional — you can proceed without it.
+            </Text>
+          </View>
         )}
 
         {/* Name */}
@@ -305,12 +276,7 @@ export default function FamilyMemberAddScreen({ navigation }) {
         </View>
 
         {/* Date of Birth */}
-        <DateField
-          label="Date of Birth"
-          value={dob}
-          onChange={setDob}
-          required
-        />
+        <DateField label="Date of Birth" value={dob} onChange={setDob} required />
 
         {/* Age indicator */}
         {dobDate && (
@@ -320,7 +286,7 @@ export default function FamilyMemberAddScreen({ navigation }) {
           </Text>
         )}
 
-        {/* CNIC — mandatory 18+ */}
+        {/* CNIC */}
         <View style={styles.fieldGroup}>
           <Text style={styles.label}>
             CNIC{needsCnic ? <Text style={styles.required}> *</Text> : ' (optional)'}
@@ -336,7 +302,7 @@ export default function FamilyMemberAddScreen({ navigation }) {
           />
         </View>
 
-        {/* NADRA Smart Card — optional, under 18 only */}
+        {/* NADRA Smart Card — under 18 only */}
         {!needsCnic && (
           <View style={styles.fieldGroup}>
             <Text style={styles.label}>NADRA Smart Card No. (optional)</Text>
@@ -369,8 +335,8 @@ export default function FamilyMemberAddScreen({ navigation }) {
           />
         </View>
 
-        {/* Marital Status — mandatory 25+ */}
-        {(isAdult || relation === 'spouse') && (
+        {/* Marital & Employment Status */}
+        {showSpouseFields && (
           <DropdownField
             label="Marital Status"
             value={maritalStatus}
@@ -379,9 +345,7 @@ export default function FamilyMemberAddScreen({ navigation }) {
             required={isAdult}
           />
         )}
-
-        {/* Employment Status — mandatory 25+ */}
-        {(isAdult || relation === 'spouse') && (
+        {showSpouseFields && (
           <DropdownField
             label="Employment Status"
             value={employmentStatus}
@@ -412,8 +376,6 @@ export default function FamilyMemberAddScreen({ navigation }) {
 
 const styles = StyleSheet.create({
   wrapper:      { flex: 1, backgroundColor: '#f0f4f8' },
-
-  // Header
   header: {
     flexDirection: 'row', alignItems: 'center',
     justifyContent: 'space-between',
@@ -424,13 +386,10 @@ const styles = StyleSheet.create({
   backBtn:      { paddingRight: 8 },
   backText:     { fontSize: 15, color: '#3b82f6', fontWeight: '500' },
   headerTitle:  { fontSize: 18, fontWeight: 'bold', color: '#2d3748' },
-
-  // Form
   container:    { paddingHorizontal: 20, paddingTop: 20 },
   fieldGroup:   { marginBottom: 18 },
   label:        { fontSize: 13, fontWeight: '600', color: '#4a5568', marginBottom: 6 },
   required:     { color: '#e53e3e' },
-
   input: {
     backgroundColor: '#ffffff', borderRadius: 8,
     borderWidth: 1, borderColor: '#e2e8f0',
@@ -439,19 +398,22 @@ const styles = StyleSheet.create({
   },
   inputOptional: { backgroundColor: '#f7fafc' },
   inputDisabled: { backgroundColor: '#f7fafc', opacity: 0.6 },
-
   ageHint:      { fontSize: 12, color: '#3b82f6', marginTop: -12, marginBottom: 16 },
-
-  // Dropdown
+  infoBox: {
+    backgroundColor: '#eff6ff', borderRadius: 8,
+    padding: 12, marginBottom: 16,
+    borderLeftWidth: 3, borderLeftColor: '#3b82f6',
+  },
+  infoText:     { fontSize: 12, color: '#1e40af', lineHeight: 18 },
   dropdown: {
     backgroundColor: '#ffffff', borderRadius: 8,
     borderWidth: 1, borderColor: '#e2e8f0',
     paddingHorizontal: 14, paddingVertical: 11,
     flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
   },
-  dropdownValue:       { fontSize: 14, color: '#2d3748' },
-  dropdownPlaceholder: { fontSize: 14, color: '#a0aec0' },
-  dropdownChevron:     { fontSize: 12, color: '#718096' },
+  dropdownValue:            { fontSize: 14, color: '#2d3748' },
+  dropdownPlaceholder:      { fontSize: 14, color: '#a0aec0' },
+  dropdownChevron:          { fontSize: 12, color: '#718096' },
   dropdownList: {
     backgroundColor: '#ffffff', borderRadius: 8,
     borderWidth: 1, borderColor: '#e2e8f0',
@@ -461,11 +423,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14, paddingVertical: 11,
     borderBottomWidth: 1, borderBottomColor: '#f7fafc',
   },
-  dropdownItemSelected: { backgroundColor: '#eff6ff' },
-  dropdownItemText:     { fontSize: 14, color: '#2d3748' },
+  dropdownItemSelected:     { backgroundColor: '#eff6ff' },
+  dropdownItemText:         { fontSize: 14, color: '#2d3748' },
   dropdownItemTextSelected: { color: '#3b82f6', fontWeight: '600' },
-
-  // Switch row
   switchRow: {
     flexDirection: 'row', justifyContent: 'space-between',
     alignItems: 'center', marginBottom: 18,
@@ -473,20 +433,9 @@ const styles = StyleSheet.create({
     borderWidth: 1, borderColor: '#e2e8f0',
     paddingHorizontal: 14, paddingVertical: 10,
   },
-
-  // Warning
-  warningBox: {
-    backgroundColor: '#fef3c7', borderRadius: 8,
-    padding: 12, marginBottom: 16,
-    borderLeftWidth: 3, borderLeftColor: '#f59e0b',
-  },
-  warningText: { fontSize: 12, color: '#92400e', lineHeight: 18 },
-
-  // Submit
   submitBtn: {
     backgroundColor: '#3b82f6', borderRadius: 10,
-    paddingVertical: 15, alignItems: 'center',
-    marginTop: 8,
+    paddingVertical: 15, alignItems: 'center', marginTop: 8,
   },
   submitBtnDisabled: { opacity: 0.6 },
   submitText:        { color: '#ffffff', fontSize: 15, fontWeight: '600' },

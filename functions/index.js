@@ -65,7 +65,7 @@ exports.auth          = onRequest(OPTS, makeApp(authRoutes, true));
 exports.employees     = onRequest(OPTS, makeApp(employeeRoutes));
 exports.ambulance     = onRequest(OPTS, makeApp(ambulanceRoutes));
 exports.trips         = onRequest(OPTS, makeApp(tripRoutes));
-exports.vaccination   = onRequest(OPTS, makeApp(vaccinationRoutes));
+
 exports.notifications = onRequest(OPTS, makeApp(notificationRoutes));
 exports.availability  = onRequest(OPTS, makeApp(availabilityRoutes));
 exports.fitness       = onRequest(OPTS, makeApp(fitnessRoutes));
@@ -87,3 +87,14 @@ exports.scheduledFitnessReminders = onSchedule(
   { schedule: '0 4 * * *', region: 'asia-south1' },
   sendFitnessReminders
 );
+
+// ─── VACCINATION + FAMILY CLOUD FUNCTIONS ────────────────────────────────────
+const vaccinationFunctions = require('./src/vaccination/vaccinationRoutes');
+
+exports.onFamilyMemberValidated   = vaccinationFunctions.onFamilyMemberValidated;
+exports.onFamilyMemberEdited      = vaccinationFunctions.onFamilyMemberEdited;
+exports.onVaccinationAdministered = vaccinationFunctions.onVaccinationAdministered;
+exports.dailyVaccinationReminder  = vaccinationFunctions.dailyVaccinationReminder;
+exports.missedAppointmentDetector = vaccinationFunctions.missedAppointmentDetector;
+exports.fridayWeeklyReport        = vaccinationFunctions.fridayWeeklyReport;
+exports.childTurns25Notifier      = vaccinationFunctions.childTurns25Notifier;

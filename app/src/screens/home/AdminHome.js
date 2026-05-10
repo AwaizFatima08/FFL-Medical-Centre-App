@@ -1,11 +1,22 @@
 // app/src/screens/home/AdminHome.js
 
-import React from 'react';
+import React, { useState, useCallback } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, ScrollView } from 'react-native';
+import { getAuth } from 'firebase/auth';
+import { useFocusEffect } from '@react-navigation/native';
 import LogoutButton     from '../../components/LogoutButton';
 import NotificationBell from '../../components/NotificationBell';
+import { API } from '../../config/api';
 
 const TILES = [
+  {
+    id: 'approvals',
+    label: 'User Approvals',
+    icon: '👤',
+    screen: 'UserApproval',
+    active: true,
+    badge: true,   // ← will show pending count
+  },
   {
     id: 'availability',
     label: 'Doctor Availability',
@@ -51,6 +62,28 @@ const TILES = [
 ];
 
 export default function AdminHome({ navigation }) {
+  const [pendingCount, setPendingCount] = useState(0);
+
+  // Fetch pending approval count every time screen is focused
+  useFocusEffect(useCallback(() => {
+    const fetchPendingCount = async () => {
+      try {
+        const auth = getAuth();
+        const token = await auth.currentUser.getIdToken();
+        const res = await fetch(`${API.auth}/pending-users`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        const data = await res.json();
+        if (res.ok) {
+          setPendingCount((data.data || []).length);
+        }
+      } catch {
+        // Silent fail — badge just won't show
+      }
+    };
+    fetchPendingCount();
+  }, []));
+
   const handleTilePress = (tile) => {
     if (!tile.active) {
       alert('Coming Soon');
@@ -77,6 +110,12 @@ export default function AdminHome({ navigation }) {
             onPress={() => handleTilePress(tile)}
             activeOpacity={tile.active ? 0.7 : 1}
           >
+            {/* Pending badge for approvals tile */}
+            {tile.badge && pendingCount > 0 && (
+              <View style={styles.badge}>
+                <Text style={styles.badgeText}>{pendingCount}</Text>
+              </View>
+            )}
             <Text style={styles.tileIcon}>{tile.icon}</Text>
             <Text style={[styles.tileLabel, !tile.active && styles.tileLabelDisabled]}>
               {tile.label}
@@ -115,10 +154,21 @@ const styles = StyleSheet.create({
     alignItems: 'center', padding: 12,
     shadowColor: '#000', shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.08, shadowRadius: 4, elevation: 3,
+    position: 'relative',
   },
   tileDisabled:      { backgroundColor: '#edf2f7', shadowOpacity: 0, elevation: 0 },
   tileIcon:          { fontSize: 36, marginBottom: 8 },
   tileLabel:         { fontSize: 13, fontWeight: '600', color: '#2d3748', textAlign: 'center' },
   tileLabelDisabled: { color: '#a0aec0' },
   comingSoon:        { fontSize: 10, color: '#a0aec0', marginTop: 4 },
+
+  // Pending badge
+  badge: {
+    position: 'absolute', top: 10, right: 10,
+    backgroundColor: '#e53e3e',
+    borderRadius: 10, minWidth: 20, height: 20,
+    alignItems: 'center', justifyContent: 'center',
+    paddingHorizontal: 5,
+  },
+  badgeText: { color: '#ffffff', fontSize: 11, fontWeight: '800' },
 });

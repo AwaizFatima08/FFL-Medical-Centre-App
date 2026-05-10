@@ -216,6 +216,159 @@ router.post('/update-last-login', verifyToken, async (req, res) => {
   }
 });
 
+// ─── GET /pending-users — Admin lists all pending approval requests ────────────
+router.get('/pending-users', verifyToken, verifyRole([ROLES.ADMIN_INCHARGE, ROLES.CMO]), async (req, res) => {
+  try {
+    const db = admin.firestore();
+
+    // Get all inactive users
+    const usersSnap = await db.collection('users')
+      .where('isActive', '==', false)
+      .get();
+
+    if (usersSnap.empty) {
+      return successResponse(res, [], 'No pending users');
+    }
+
+    // Enrich with employee data
+    const pending = await Promise.all(usersSnap.docs.map(async (userDoc) => {
+      const userData = userDoc.data();
+      const empSnap = await db.collection('employees')
+        .where('userId', '==', userDoc.id)
+        .limit(1)
+        .get();
+      const empData = empSnap.empty ? {} : empSnap.docs[0].data();
+
+      return {
+        uid:                    userDoc.id,
+        email:                  userData.email || null,
+        phone:                  userData.phone || null,
+        role:                   userData.role,
+        createdAt:              userData.createdAt,
+        fullName:               empData.fullName || '—',
+        officialEmployeeNumber: empData.officialEmployeeNumber || '—',
+        phoneNumber:            empData.phoneNumber || userData.phone || '—',
+        employeeId:             empSnap.empty ? null : empSnap.docs[0].id,
+      };
+    }));
+
+    // Sort newest first
+    pending.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+
+    return successResponse(res, pending, 'Pending users fetched');
+  } catch (error) {
+    console.error('Pending users error:', error);
+    return errorResponse(res, 'Failed to fetch pending users', 500);
+  }
+});
+
+// ─── POST /approve-user — Admin approves a signup request ────────────────────
+// Body: { uid, role }
+router.post('/approve-user', verifyToken, verifyRole([ROLES.ADMIN_INCHARGE]), async (req, res) => {
+  try {
+    const db = admin.firestore();
+    const { uid, role } = req.body;
+
+    if (!uid || !role) {
+      return errorResponse(res, 'uid and role are required', 400);
+    }
+
+    const validRoles = Object.values(ROLES);
+    if (!validRoles.includes(role)) {
+      return errorResponse(res, `Invalid role. Valid roles: ${validRoles.join(', ')}`, 400);
+    }
+
+    const userDoc = await db.collection('users').doc(uid).get();
+    if (!userDoc.exists) {
+      return errorResponse(res, 'User not found', 404);
+    }
+    if (userDoc.data().isActive) {
+      return errorResponse(res, 'User is already active', 409);
+    }
+
+    // Activate user and assign role
+    await db.collection('users').doc(uid).update({
+      isActive:   true,
+      role:       role,
+      approvedBy: req.user.uid,
+      approvedAt: nowISO(),
+    });
+
+    // Mark employee as validated
+    const empSnap = await db.collection('employees')
+      .where('userId', '==', uid)
+      .limit(1)
+      .get();
+    if (!empSnap.empty) {
+      await empSnap.docs[0].ref.update({
+        isValidated:  true,
+        validatedAt:  nowISO(),
+        validatedBy:  req.user.uid,
+      });
+    }
+
+    // Send email verification via Firebase Auth
+    try {
+      const verificationLink = await admin.auth().generateEmailVerificationLink(
+        userDoc.data().email,
+        { url: 'https://ffl-medical-centre-app.firebaseapp.com' }
+      );
+      // Note: In production, send this via email service
+      // For now Firebase Auth handles delivery via sendSignInLinkToEmail on client
+      console.log('Verification link generated for:', userDoc.data().email);
+    } catch (emailErr) {
+      // Non-fatal — account is still activated
+      console.warn('Email verification link failed:', emailErr.message);
+    }
+
+    return successResponse(res, { uid, role }, 'User approved and activated successfully');
+  } catch (error) {
+    console.error('Approve user error:', error);
+    return errorResponse(res, 'Failed to approve user', 500);
+  }
+});
+
+// ─── POST /reject-user — Admin rejects a signup request ──────────────────────
+// Body: { uid, reason }
+router.post('/reject-user', verifyToken, verifyRole([ROLES.ADMIN_INCHARGE]), async (req, res) => {
+  try {
+    const db = admin.firestore();
+    const { uid, reason } = req.body;
+
+    if (!uid) {
+      return errorResponse(res, 'uid is required', 400);
+    }
+
+    const userDoc = await db.collection('users').doc(uid).get();
+    if (!userDoc.exists) {
+      return errorResponse(res, 'User not found', 404);
+    }
+    if (userDoc.data().isActive) {
+      return errorResponse(res, 'Cannot reject an already active user', 409);
+    }
+
+    // Delete Firebase Auth account
+    await admin.auth().deleteUser(uid);
+
+    // Delete Firestore user document
+    await db.collection('users').doc(uid).delete();
+
+    // Delete employee document
+    const empSnap = await db.collection('employees')
+      .where('userId', '==', uid)
+      .limit(1)
+      .get();
+    if (!empSnap.empty) {
+      await empSnap.docs[0].ref.delete();
+    }
+
+    return successResponse(res, { uid }, 'User rejected and removed successfully');
+  } catch (error) {
+    console.error('Reject user error:', error);
+    return errorResponse(res, 'Failed to reject user', 500);
+  }
+});
+
 // ─── Export verifyToken & verifyRole for use in other routes
 module.exports = router;
 module.exports.verifyToken = verifyToken;

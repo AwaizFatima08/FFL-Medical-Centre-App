@@ -57,7 +57,7 @@ export default function FitnessAdminScreen({ navigation }) {
   const [actionLoading, setActionLoading] = useState(false);
 
   // ── Schedule new form ──
-  const [empUidInput, setEmpUidInput]     = useState('');
+  const [empNumInput, setEmpUidInput]     = useState('');
   const [schedDate, setSchedDate]         = useState('');
   const [schedTime, setSchedTime]         = useState('');
   const [cycleYear, setCycleYear]         = useState(String(new Date().getFullYear()));
@@ -114,7 +114,7 @@ export default function FitnessAdminScreen({ navigation }) {
   // ── Actions ──────────────────────────────────────────────────────────────────
 
   const handleSchedule = async () => {
-    if (!empUidInput.trim()) { alert('Employee UID is required.'); return; }
+    if (!empNumInput.trim()) { alert('Employee Number is required.'); return; }
     if (!schedDate.trim())   { alert('Date is required (YYYY-MM-DD).'); return; }
     if (!schedTime.trim())   { alert('Time is required (HH:MM).'); return; }
     if (!cycleYear.trim())   { alert('Cycle year is required.'); return; }
@@ -135,7 +135,7 @@ export default function FitnessAdminScreen({ navigation }) {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
         body: JSON.stringify({
-          employeeUid:   empUidInput.trim(),
+          officialEmployeeNumber: empNumInput.trim(),
           scheduledDate: schedDate.trim(),
           scheduledTime: schedTime.trim(),
           cycleYear:     parseInt(cycleYear),
@@ -412,15 +412,15 @@ export default function FitnessAdminScreen({ navigation }) {
   const renderScheduleTab = () => (
     <View style={styles.scheduleForm}>
       <Text style={styles.formNote}>
-        Enter the employee's Firebase UID. You can find this in the Users list in Firebase Console, or from the employee's profile.
+        Enter the employee's official FFL employee number (e.g. FFL-00567). This can be found on their employee card or profile.
       </Text>
 
-      <Text style={styles.inputLabel}>Employee UID *</Text>
+      <Text style={styles.inputLabel}>Employee Number *</Text>
       <TextInput
         style={styles.input}
-        placeholder="Firebase UID of employee"
+        placeholder="e.g. FFL-00567"
         placeholderTextColor="#a0aec0"
-        value={empUidInput}
+        value={empNumInput}
         onChangeText={setEmpUidInput}
         autoCapitalize="none"
       />

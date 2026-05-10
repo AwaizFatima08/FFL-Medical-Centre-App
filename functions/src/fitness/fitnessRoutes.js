@@ -65,14 +65,27 @@ router.post('/schedule', authenticate, async (req, res) => {
       return res.status(403).json({ success: false, message: 'Only Admin Incharge can schedule fitness appointments' });
     }
 
-    const { employeeUid, scheduledDate, scheduledTime, cycleYear, notes } = req.body;
-
-    if (!employeeUid || !scheduledDate || !scheduledTime || !cycleYear) {
+    const { officialEmployeeNumber, scheduledDate, scheduledTime, cycleYear, notes } = req.body;
+    
+    if (!officialEmployeeNumber || !scheduledDate || !scheduledTime || !cycleYear) {
       return res.status(400).json({
         success: false,
-        message: 'employeeUid, scheduledDate, scheduledTime and cycleYear are required',
+        message: 'officialEmployeeNumber, scheduledDate, scheduledTime and cycleYear are required',
       });
     }
+
+    // Look up employee by officialEmployeeNumber
+    const empLookup = await db.collection('employees')
+      .where('officialEmployeeNumber', '==', officialEmployeeNumber.trim())
+      .limit(1)
+      .get();
+
+    if (empLookup.empty) {
+      return res.status(404).json({ success: false, message: 'No employee found with that Employee Number.' });
+    }
+
+    const empRecord = { id: empLookup.docs[0].id, ...empLookup.docs[0].data() };
+    const employeeUid = empRecord.userId;
 
     // Validate date format YYYY-MM-DD
     if (!/^\d{4}-\d{2}-\d{2}$/.test(scheduledDate)) {
@@ -82,18 +95,6 @@ router.post('/schedule', authenticate, async (req, res) => {
     // Validate time format HH:MM
     if (!/^\d{2}:\d{2}$/.test(scheduledTime)) {
       return res.status(400).json({ success: false, message: 'scheduledTime must be in HH:MM format' });
-    }
-
-    // Verify employee exists in users collection
-    const employeeUserDoc = await db.collection('users').doc(employeeUid).get();
-    if (!employeeUserDoc.exists || employeeUserDoc.data().role !== ROLES.EMPLOYEE) {
-      return res.status(404).json({ success: false, message: 'Employee not found' });
-    }
-
-    // Get employee record for name/department
-    const empRecord = await getEmployeeByUid(employeeUid);
-    if (!empRecord) {
-      return res.status(404).json({ success: false, message: 'Employee profile not found' });
     }
 
     // Check slot not already taken

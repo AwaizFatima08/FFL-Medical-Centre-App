@@ -1,4 +1,15 @@
 {
-  "indexes": [],
+  "indexes": [
+    {
+      "collectionGroup": "familyMembers",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "relation",    "order": "ASCENDING" },
+        { "fieldPath": "status",      "order": "ASCENDING" },
+        { "fieldPath": "isActive",    "order": "ASCENDING" },
+        { "fieldPath": "dateOfBirth", "order": "ASCENDING" }
+      ]
+    }
+  ],
   "fieldOverrides": []
 }

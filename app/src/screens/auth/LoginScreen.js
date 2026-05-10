@@ -33,12 +33,12 @@ export default function LoginScreen({ navigation }) {
       const idToken = await userCredential.user.getIdToken();
 
       // 2. Update last login on backend
-      await axios.post(`${API.AUTH}/update-last-login`, {}, {
+      await axios.post(`${API.auth}/update-last-login`, {}, {
         headers: { Authorization: `Bearer ${idToken}` },
       });
 
       // 3. Fetch user profile (includes role & isActive)
-      const profileRes = await axios.get(`${API.AUTH}/me`, {
+      const profileRes = await axios.get(`${API.auth}/me`, {
         headers: { Authorization: `Bearer ${idToken}` },
       });
       const { user, employee } = profileRes.data.data;
@@ -85,12 +85,14 @@ export default function LoginScreen({ navigation }) {
         keyboardShouldPersistTaps="handled"
       >
         {/* ── Header ── */}
-        <View style={styles.header}>
-          <View style={styles.logoBox}>
-            <Text style={styles.logoText}>FFL</Text>
-            <Text style={styles.logoSub}>MEDICAL CENTRE</Text>
-          </View>
-          <Text style={styles.tagline}>Fatima Fertilizer Company</Text>
+        <View style={styles.creditBlock}>
+          <Image
+            source={require('../../../assets/FFCL_Logo.png')}
+            style={styles.creditLogo}
+            resizeMode="contain"
+          />
+          
+          
         </View>
 
         {/* ── Card ── */}
@@ -169,6 +171,8 @@ export default function LoginScreen({ navigation }) {
             resizeMode="contain"
           />
           <Text style={styles.creditSub}>homilabs.pk</Text>
+          <Text style={styles.creditSub}>Managed By: Awaiz Fatima, Muhammad Abdulhadi, Parishay Zainab</Text>
+          <Text style={styles.creditSub}>CODE WITH PURPOSE; BUILD WITH HEART</Text>
         </View>
 
       </ScrollView>
@@ -180,24 +184,9 @@ const styles = StyleSheet.create({
   container:   { flex: 1, backgroundColor: '#003049' },
   scroll:      { flexGrow: 1, justifyContent: 'center', padding: 24 },
 
-  // Header
-  header:      { alignItems: 'center', marginBottom: 32 },
-  logoBox:     {
-    width: 80, height: 80, borderRadius: 20,
-    backgroundColor: '#c1121f',
-    alignItems: 'center', justifyContent: 'center',
-    marginBottom: 12,
-    elevation: 8,
-    shadowColor: '#c1121f', shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.5, shadowRadius: 8,
-  },
-  logoText:    { color: '#fff', fontSize: 22, fontWeight: '900', letterSpacing: 2 },
-  logoSub:     { color: '#fff', fontSize: 7,  fontWeight: '700', letterSpacing: 1.5 },
-  tagline:     { color: '#fdf0d5', fontSize: 13, letterSpacing: 1 },
-
   // Card
   card: {
-    backgroundColor: '#fff',
+    backgroundColor: '#ccfbfd',
     borderRadius: 20,
     padding: 28,
     elevation: 12,
@@ -207,13 +196,13 @@ const styles = StyleSheet.create({
     shadowRadius: 12,
   },
   cardTitle:   { fontSize: 24, fontWeight: '800', color: '#003049', marginBottom: 4 },
-  cardSub:     { fontSize: 13, color: '#64748b', marginBottom: 24 },
+  cardSub:     { fontSize: 18, color: '#5e718b', marginBottom: 24 },
 
-  label:       { fontSize: 13, fontWeight: '600', color: '#334155', marginBottom: 6 },
+  label:       { fontSize: 18, fontWeight: '1200', color: '#334155', marginBottom: 6 },
   input: {
-    borderWidth: 1.5, borderColor: '#e2e8f0',
+    borderWidth: 1.5, borderColor: '#abb2bc',
     borderRadius: 10, paddingHorizontal: 14, paddingVertical: 12,
-    fontSize: 14, color: '#1e293b', backgroundColor: '#f8fafc',
+    fontSize: 18, color: '#1e293b', backgroundColor: '#f8fafc',
     marginBottom: 16,
   },
   passRow:     { position: 'relative' },
@@ -222,10 +211,10 @@ const styles = StyleSheet.create({
   eyeText:     { fontSize: 18 },
 
   forgotBtn:   { alignSelf: 'flex-end', marginBottom: 20, marginTop: -8 },
-  forgotText:  { color: '#c1121f', fontSize: 13, fontWeight: '600' },
+  forgotText:  { color: '#0c0039', fontSize: 18, fontWeight: '600' },
 
   loginBtn: {
-    backgroundColor: '#c1121f',
+    backgroundColor: '#096a00',
     borderRadius: 12, paddingVertical: 14,
     alignItems: 'center', marginBottom: 20,
     elevation: 4,
@@ -233,18 +222,18 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.3, shadowRadius: 6,
   },
   loginBtnDisabled: { opacity: 0.6 },
-  loginBtnText:     { color: '#fff', fontSize: 15, fontWeight: '700', letterSpacing: 0.5 },
+  loginBtnText:     { color: '#fff', fontSize: 18, fontWeight: '700', letterSpacing: 0.5 },
 
   dividerRow:   { flexDirection: 'row', alignItems: 'center', marginBottom: 16 },
   divider:      { flex: 1, height: 1, backgroundColor: '#e2e8f0' },
-  dividerText:  { color: '#94a3b8', fontSize: 12, marginHorizontal: 10 },
+  dividerText:  { color: '#586476', fontSize: 16, marginHorizontal: 10 },
 
   signupBtn: {
     borderWidth: 1.5, borderColor: '#003049',
     borderRadius: 12, paddingVertical: 13,
     alignItems: 'center',
   },
-  signupBtnText: { color: '#003049', fontSize: 15, fontWeight: '700' },
+  signupBtnText: { color: '#003049', fontSize: 18, fontWeight: '700' },
 
   // HomiLabs credit
   creditBlock: {
@@ -261,13 +250,13 @@ const styles = StyleSheet.create({
     marginBottom: 6,
   },
   creditLogo: {
-    width: 240,
-    height: 56,
+    width: 1000,
+    height: 100,
     marginBottom: 4,
   },
   creditSub: {
     color: '#7fb3c8',
-    fontSize: 10,
+    fontSize: 14,
     letterSpacing: 0.5,
   },
 });

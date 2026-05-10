@@ -8,7 +8,9 @@ service cloud.firestore {
     }
 
     function getRole() {
-      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role;
+      return exists(/databases/$(database)/documents/users/$(request.auth.uid))
+        ? get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role
+        : '';
     }
 
     function isRole(role) {
@@ -45,10 +47,10 @@ service cloud.firestore {
 
     // ─── USERS ───────────────────────────────────────────
     match /users/{userId} {
-      allow read: if isAuthenticated() && 
+      allow read: if isAuthenticated() &&
                     (request.auth.uid == userId || isMedicalStaff() || isAdminIncharge());
       allow create: if isAuthenticated() && request.auth.uid == userId;
-      allow update: if isAuthenticated() && 
+      allow update: if isAuthenticated() &&
                     (request.auth.uid == userId || isAdminIncharge());
       allow delete: if isAdminIncharge();
     }
@@ -57,18 +59,28 @@ service cloud.firestore {
     match /employees/{employeeId} {
       allow read: if isAuthenticated();
       allow create: if isAuthenticated();
-      allow update: if isAuthenticated() && 
-                    (isAdminIncharge() || 
+      allow update: if isAuthenticated() &&
+                    (isAdminIncharge() ||
                      get(/databases/$(database)/documents/employees/$(employeeId)).data.userId == request.auth.uid);
       allow delete: if isAdminIncharge();
 
-      // Family members subcollection
+      // Family members subcollection (kept for backward compatibility)
       match /familyMembers/{memberId} {
         allow read: if isAuthenticated();
-        allow write: if isAuthenticated() && 
-                     (isAdminIncharge() || 
+        allow write: if isAuthenticated() &&
+                     (isAdminIncharge() ||
                       get(/databases/$(database)/documents/employees/$(employeeId)).data.userId == request.auth.uid);
       }
+    }
+
+    // ─── FAMILY MEMBERS (top-level collection) ───────────
+    match /familyMembers/{memberId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated();
+      allow update: if isAuthenticated() &&
+                    (isAdminIncharge() ||
+                     resource.data.employeeId == request.auth.uid);
+      allow delete: if isAdminIncharge();
     }
 
     // ─── AMBULANCE REQUESTS ──────────────────────────────
@@ -105,6 +117,20 @@ service cloud.firestore {
         allow read: if isAuthenticated();
         allow write: if isAnyRole(['nurse', 'doctor', 'cmo', 'reception']);
       }
+    }
+
+    // ─── VACCINATION RECORDS (top-level collection) ──────
+    match /vaccinationRecords/{recordId} {
+      allow read: if isAuthenticated();
+      allow create: if isAnyRole(['nurse', 'doctor', 'cmo', 'reception']);
+      allow update: if isAnyRole(['nurse', 'doctor', 'cmo', 'reception']);
+      allow delete: if isAnyRole(['nurse', 'cmo']);
+    }
+
+    // ─── VACCINE SCHEDULE ────────────────────────────────
+    match /vaccineSchedule/{docId} {
+      allow read: if isAuthenticated();
+      allow write: if isAnyRole(['nurse', 'cmo', 'admin_incharge']);
     }
 
     // ─── NOTIFICATIONS ───────────────────────────────────
@@ -159,7 +185,7 @@ service cloud.firestore {
     // ─── BLOOD DONOR REGISTRY ────────────────────────────
     match /bloodDonorRegistry/{employeeId} {
       allow read: if isAnyRole(['doctor', 'cmo', 'reception', 'nurse']);
-      allow write: if isAuthenticated() && 
+      allow write: if isAuthenticated() &&
                    (request.auth.uid == employeeId || isAdminIncharge());
     }
 

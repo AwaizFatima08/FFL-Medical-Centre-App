@@ -100,3 +100,4 @@ app/node_modules/
 service-account.json
 skills/
 .agents/
+*~

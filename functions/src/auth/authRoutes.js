@@ -73,29 +73,63 @@ router.post('/register', verifyToken, async (req, res) => {
     // Create user document
     const userRef = db.collection('users').doc(req.user.uid);
     batch.set(userRef, {
-      email: req.user.email || null,
-      phone: phoneNumber,
-      role: ROLES.EMPLOYEE, // default role, admin will validate
-      isActive: false,       // inactive until admin validates
-      createdAt: nowISO(),
+      email:       req.user.email || null,
+      phone:       phoneNumber,
+      role:        ROLES.EMPLOYEE, // default role, admin will validate
+      isActive:    false,          // inactive until admin validates
+      createdAt:   nowISO(),
       lastLoginAt: nowISO(),
     });
 
     // Create employee document
     const employeeRef = db.collection('employees').doc();
     batch.set(employeeRef, {
-      userId: req.user.uid,
+      userId:                 req.user.uid,
       fullName,
       officialEmployeeNumber: employeeNumber,
       phoneNumber,
-      isValidated: false,
-      createdAt: nowISO(),
+      isValidated:            false,
+      createdAt:              nowISO(),
     });
 
     await batch.commit();
 
+    // ── Notify admin by email ─────────────────────────────
+    // Writes to the 'mail' collection — Firebase Trigger Email
+    // extension picks it up and sends automatically.
+    // Non-fatal: registration succeeds even if this fails.
+    try {
+      await db.collection('mail').add({
+        to:      'admin@ffl.com',
+        message: {
+          subject: '🔔 New Signup Request — FFL Medical Centre',
+          html: `
+            <p>A new employee has registered and is awaiting your approval.</p>
+            <table style="border-collapse:collapse;font-family:sans-serif;font-size:14px;">
+              <tr><td style="padding:6px 12px;color:#555;">Name</td>
+                  <td style="padding:6px 12px;font-weight:bold;">${fullName}</td></tr>
+              <tr><td style="padding:6px 12px;color:#555;">Employee No.</td>
+                  <td style="padding:6px 12px;font-weight:bold;">${employeeNumber}</td></tr>
+              <tr><td style="padding:6px 12px;color:#555;">Phone</td>
+                  <td style="padding:6px 12px;">${phoneNumber}</td></tr>
+              <tr><td style="padding:6px 12px;color:#555;">Email</td>
+                  <td style="padding:6px 12px;">${req.user.email || '—'}</td></tr>
+              <tr><td style="padding:6px 12px;color:#555;">Submitted</td>
+                  <td style="padding:6px 12px;">${nowISO()}</td></tr>
+            </table>
+            <br/>
+            <p>Please open the <strong>FFL Medical Centre Admin Dashboard</strong>
+               and go to <strong>User Approvals</strong> to review this request.</p>
+          `,
+        },
+      });
+    } catch (mailErr) {
+      console.warn('Admin email notification failed:', mailErr.message);
+    }
+    // ─────────────────────────────────────────────────────
+
     return successResponse(res, {
-      uid: req.user.uid,
+      uid:        req.user.uid,
       employeeId: employeeRef.id,
     }, 'Registration successful. Awaiting admin validation.', 201);
 
@@ -134,16 +168,16 @@ router.post('/complete-profile', verifyToken, async (req, res) => {
     const empDoc = empQuery.docs[0];
 
     await empDoc.ref.update({
-      cnic:                  cnic || null,
-      designation:           designation || null,
-      department:            department || null,
-      houseNumber:           houseNumber || null,
-      emergencyPhoneNumber:  emergencyPhoneNumber || null,
-      landlineExtension:     landlineExtension || null,
-      bloodGroup:            bloodGroup || null,
-      bloodDonorConsent:     bloodDonorConsent || false,
-      maritalStatus:         maritalStatus || null,
-      profileCompletedAt:    nowISO(),
+      cnic:                 cnic || null,
+      designation:          designation || null,
+      department:           department || null,
+      houseNumber:          houseNumber || null,
+      emergencyPhoneNumber: emergencyPhoneNumber || null,
+      landlineExtension:    landlineExtension || null,
+      bloodGroup:           bloodGroup || null,
+      bloodDonorConsent:    bloodDonorConsent || false,
+      maritalStatus:        maritalStatus || null,
+      profileCompletedAt:   nowISO(),
     });
 
     // If blood donor consent given, add to donor registry
@@ -193,7 +227,7 @@ router.get('/me', verifyToken, async (req, res) => {
     }
 
     return successResponse(res, {
-      user: { id: userDoc.id, ...userDoc.data() },
+      user:     { id: userDoc.id, ...userDoc.data() },
       employee: employeeData,
     });
 
@@ -216,7 +250,7 @@ router.post('/update-last-login', verifyToken, async (req, res) => {
   }
 });
 
-// ─── GET /pending-users — Admin lists all pending approval requests ────────────
+// ─── GET /pending-users — Admin lists all pending approval requests ──────────
 router.get('/pending-users', verifyToken, verifyRole([ROLES.ADMIN_INCHARGE, ROLES.CMO]), async (req, res) => {
   try {
     const db = admin.firestore();
@@ -301,9 +335,9 @@ router.post('/approve-user', verifyToken, verifyRole([ROLES.ADMIN_INCHARGE]), as
       .get();
     if (!empSnap.empty) {
       await empSnap.docs[0].ref.update({
-        isValidated:  true,
-        validatedAt:  nowISO(),
-        validatedBy:  req.user.uid,
+        isValidated: true,
+        validatedAt: nowISO(),
+        validatedBy: req.user.uid,
       });
     }
 
@@ -313,8 +347,6 @@ router.post('/approve-user', verifyToken, verifyRole([ROLES.ADMIN_INCHARGE]), as
         userDoc.data().email,
         { url: 'https://ffl-medical-centre-app.firebaseapp.com' }
       );
-      // Note: In production, send this via email service
-      // For now Firebase Auth handles delivery via sendSignInLinkToEmail on client
       console.log('Verification link generated for:', userDoc.data().email);
     } catch (emailErr) {
       // Non-fatal — account is still activated
@@ -372,4 +404,4 @@ router.post('/reject-user', verifyToken, verifyRole([ROLES.ADMIN_INCHARGE]), asy
 // ─── Export verifyToken & verifyRole for use in other routes
 module.exports = router;
 module.exports.verifyToken = verifyToken;
-module.exports.verifyRole = verifyRole;
+module.exports.verifyRole  = verifyRole;

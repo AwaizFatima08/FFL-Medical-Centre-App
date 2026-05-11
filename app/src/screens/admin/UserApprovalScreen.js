@@ -1,11 +1,9 @@
 // app/src/screens/admin/UserApprovalScreen.js
-// Admin reviews pending signup requests, assigns role, approves or rejects.
-
 import React, { useState, useCallback } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity,
   ScrollView, ActivityIndicator, Alert,
-  RefreshControl,
+  RefreshControl, Platform,
 } from 'react-native';
 import { getAuth } from 'firebase/auth';
 import { useFocusEffect } from '@react-navigation/native';
@@ -24,31 +22,40 @@ const ROLE_OPTIONS = [
   { label: 'CMO',               value: 'cmo' },
 ];
 
-function RolePicker({ selected, onSelect }) {
-  return (
-    <View style={styles.roleGrid}>
-      {ROLE_OPTIONS.map(opt => (
-        <TouchableOpacity
-          key={opt.value}
-          style={[styles.roleChip, selected === opt.value && styles.roleChipSelected]}
-          onPress={() => onSelect(opt.value)}
-        >
-          <Text style={[styles.roleChipText, selected === opt.value && styles.roleChipTextSelected]}>
-            {opt.label}
-          </Text>
-        </TouchableOpacity>
-      ))}
-    </View>
-  );
-}
+// Alert.alert is silent on Expo web — use window.confirm instead.
+// On native (Android/iOS) Alert.alert works normally.
+const webAlert = (title, message) => {
+  if (Platform.OS === 'web') {
+    window.alert(`${title}\n\n${message}`);
+  } else {
+    Alert.alert(title, message);
+  }
+};
+
+const webConfirm = (title, message, onConfirm, destructive = false) => {
+  if (Platform.OS === 'web') {
+    if (window.confirm(`${title}\n\n${message}`)) {
+      onConfirm();
+    }
+  } else {
+    Alert.alert(title, message, [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: destructive ? 'Reject' : 'Approve',
+        style: destructive ? 'destructive' : 'default',
+        onPress: onConfirm,
+      },
+    ]);
+  }
+};
 
 export default function UserApprovalScreen({ navigation }) {
   const [users,      setUsers]      = useState([]);
   const [loading,    setLoading]    = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [expanded,   setExpanded]   = useState(null);   // uid of expanded card
-  const [roles,      setRoles]      = useState({});     // { uid: selectedRole }
-  const [actioning,  setActioning]  = useState(null);   // uid being actioned
+  const [expanded,   setExpanded]   = useState(null);
+  const [roles,      setRoles]      = useState({});
+  const [actioning,  setActioning]  = useState(null);
 
   const getToken = async () => {
     const auth = getAuth();
@@ -64,13 +71,12 @@ export default function UserApprovalScreen({ navigation }) {
       const data = await res.json();
       if (res.ok) {
         setUsers(data.data || []);
-        // Pre-select 'employee' as default role for each
         const defaultRoles = {};
         (data.data || []).forEach(u => { defaultRoles[u.uid] = 'employee'; });
         setRoles(prev => ({ ...defaultRoles, ...prev }));
       }
-    } catch (err) {
-      Alert.alert('Error', 'Could not load pending users.');
+    } catch {
+      webAlert('Error', 'Could not load pending users.');
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -84,79 +90,70 @@ export default function UserApprovalScreen({ navigation }) {
 
   const onRefresh = () => { setRefreshing(true); fetchPending(); };
 
-  const handleApprove = async (uid) => {
+  const handleApprove = (uid) => {
     const role = roles[uid];
-    if (!role) { Alert.alert('Select Role', 'Please select a role before approving.'); return; }
+    if (!role) { webAlert('Select Role', 'Please select a role before approving.'); return; }
+    const roleLabel = ROLE_OPTIONS.find(r => r.value === role)?.label;
 
-    Alert.alert(
+    webConfirm(
       'Confirm Approval',
-      `Approve this user as ${ROLE_OPTIONS.find(r => r.value === role)?.label}?\n\nThey will receive an email to verify their address and can then log in.`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Approve',
-          onPress: async () => {
-            setActioning(uid);
-            try {
-              const token = await getToken();
-              const res = await fetch(`${API.auth}/approve-user`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-                body: JSON.stringify({ uid, role }),
-              });
-              const data = await res.json();
-              if (res.ok) {
-                Alert.alert('✅ Approved', 'User has been activated and notified.');
-                setUsers(prev => prev.filter(u => u.uid !== uid));
-                setExpanded(null);
-              } else {
-                Alert.alert('Failed', data.message || 'Could not approve user.');
-              }
-            } catch {
-              Alert.alert('Error', 'Network error.');
-            } finally {
-              setActioning(null);
-            }
-          },
-        },
-      ]
+      `Approve this user as ${roleLabel}?\n\nThey will be able to log in immediately.`,
+      async () => {
+        setActioning(uid);
+        try {
+          const token = await getToken();
+          const res = await fetch(`${API.auth}/approve-user`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+            body: JSON.stringify({ uid, role }),
+          });
+          const data = await res.json();
+          if (res.ok) {
+            webAlert('Approved', 'User has been activated successfully.');
+            setUsers(prev => prev.filter(u => u.uid !== uid));
+            setExpanded(null);
+          } else {
+            webAlert('Failed', data.message || 'Could not approve user.');
+          }
+        } catch (err) {
+          console.error('Approve error:', err);
+          webAlert('Error', 'Network error. Please try again.');
+        } finally {
+          setActioning(null);
+        }
+      }
     );
   };
 
-  const handleReject = async (uid, fullName) => {
-    Alert.alert(
+  const handleReject = (uid, fullName) => {
+    webConfirm(
       'Reject Request',
-      `Reject signup request from ${fullName}?\n\nThis will permanently delete their account and they will need to sign up again.`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Reject',
-          style: 'destructive',
-          onPress: async () => {
-            setActioning(uid);
-            try {
-              const token = await getToken();
-              const res = await fetch(`${API.auth}/reject-user`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-                body: JSON.stringify({ uid }),
-              });
-              const data = await res.json();
-              if (res.ok) {
-                Alert.alert('Rejected', 'Signup request has been removed.');
-                setUsers(prev => prev.filter(u => u.uid !== uid));
-                setExpanded(null);
-              } else {
-                Alert.alert('Failed', data.message || 'Could not reject user.');
-              }
-            } catch {
-              Alert.alert('Error', 'Network error.');
-            } finally {
-              setActioning(null);
-            }
-          },
-        },
-      ]
+      `Permanently delete signup request from ${fullName}?\n\nThis cannot be undone.`,
+      async () => {
+        setActioning(uid);
+        try {
+          const token = await getToken();
+          const res = await fetch(`${API.auth}/reject-user`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+            body: JSON.stringify({ uid }),
+          });
+          const data = await res.json();
+          if (res.ok) {
+            webAlert('Rejected', 'Signup request has been removed.');
+            setUsers(prev => prev.filter(u => u.uid !== uid));
+            setExpanded(null);
+          } else {
+            webAlert('Failed', data.message || 'Could not reject user.');
+          }
+        } catch (err) {
+          console.error('Reject error:', err);
+          webAlert('Error', 'Network error. Please try again.');
+        } finally {
+          setActioning(null);
+        }
+      },
+      true // destructive
     );
   };
 
@@ -178,7 +175,6 @@ export default function UserApprovalScreen({ navigation }) {
 
   return (
     <View style={styles.wrapper}>
-      {/* Header */}
       <View style={styles.header}>
         <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
           <Text style={styles.backText}>← Back</Text>
@@ -191,7 +187,6 @@ export default function UserApprovalScreen({ navigation }) {
         contentContainerStyle={styles.container}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
       >
-        {/* Summary */}
         <View style={styles.summaryBar}>
           <Text style={styles.summaryText}>
             {users.length === 0
@@ -203,92 +198,102 @@ export default function UserApprovalScreen({ navigation }) {
           </Text>
         </View>
 
-        {/* Empty state */}
         {users.length === 0 && (
           <View style={styles.emptyBox}>
-            <Text style={styles.emptyIcon}>✅</Text>
+            <Text style={styles.emptyIcon}>✓</Text>
             <Text style={styles.emptyTitle}>All clear</Text>
             <Text style={styles.emptySubtitle}>No pending signup requests at this time.</Text>
           </View>
         )}
 
-        {/* User cards */}
         {users.map(user => {
           const isExpanded = expanded === user.uid;
           const isActioning = actioning === user.uid;
 
           return (
-            <TouchableOpacity
-              key={user.uid}
-              style={styles.card}
-              onPress={() => setExpanded(isExpanded ? null : user.uid)}
-              activeOpacity={0.85}
-            >
-              {/* Card header */}
-              <View style={styles.cardHeader}>
-                <View style={styles.cardHeaderLeft}>
-                  <Text style={styles.userName}>{user.fullName}</Text>
-                  <Text style={styles.userMeta}>
-                    {user.officialEmployeeNumber}  ·  {user.phoneNumber}
-                  </Text>
-                  <Text style={styles.userEmail}>{user.email || 'No email'}</Text>
-                </View>
-                <View style={styles.cardHeaderRight}>
-                  <View style={styles.pendingBadge}>
-                    <Text style={styles.pendingBadgeText}>Pending</Text>
+            <View key={user.uid} style={styles.card}>
+
+              {/* Only the header row collapses/expands the card */}
+              <TouchableOpacity
+                onPress={() => setExpanded(isExpanded ? null : user.uid)}
+                activeOpacity={0.7}
+              >
+                <View style={styles.cardHeader}>
+                  <View style={styles.cardHeaderLeft}>
+                    <Text style={styles.userName}>{user.fullName}</Text>
+                    <Text style={styles.userMeta}>
+                      {user.officialEmployeeNumber}  ·  {user.phoneNumber}
+                    </Text>
+                    <Text style={styles.userEmail}>{user.email || 'No email'}</Text>
+                    <Text style={styles.submittedAt}>Submitted: {formatDate(user.createdAt)}</Text>
                   </View>
-                  <Text style={styles.chevron}>{isExpanded ? '▲' : '▼'}</Text>
+                  <View style={styles.cardHeaderRight}>
+                    <View style={styles.pendingBadge}>
+                      <Text style={styles.pendingBadgeText}>Pending</Text>
+                    </View>
+                    <Text style={styles.chevron}>{isExpanded ? '▲' : '▼'}</Text>
+                  </View>
                 </View>
-              </View>
+              </TouchableOpacity>
 
-              <Text style={styles.submittedAt}>Submitted: {formatDate(user.createdAt)}</Text>
-
-              {/* Expanded panel */}
+              {/* Expanded panel — plain View, no parent touch handler */}
               {isExpanded && (
                 <View style={styles.expandedPanel}>
                   <View style={styles.divider} />
 
-                  {/* Verification reminder */}
                   <View style={styles.verifyBox}>
                     <Text style={styles.verifyIcon}>📞</Text>
                     <Text style={styles.verifyText}>
-                      Call <Text style={styles.verifyBold}>{user.phoneNumber}</Text> to verify this person's identity before approving.
+                      Call <Text style={styles.verifyBold}>{user.phoneNumber}</Text> to verify identity before approving.
                     </Text>
                   </View>
 
-                  {/* Role assignment */}
                   <Text style={styles.roleLabel}>Assign Role</Text>
-                  <RolePicker
-                    selected={roles[user.uid] || 'employee'}
-                    onSelect={(role) => setRoles(prev => ({ ...prev, [user.uid]: role }))}
-                  />
+                  <View style={styles.roleGrid}>
+                    {ROLE_OPTIONS.map(opt => (
+                      <TouchableOpacity
+                        key={opt.value}
+                        style={[
+                          styles.roleChip,
+                          (roles[user.uid] || 'employee') === opt.value && styles.roleChipSelected,
+                        ]}
+                        onPress={() => setRoles(prev => ({ ...prev, [user.uid]: opt.value }))}
+                      >
+                        <Text style={[
+                          styles.roleChipText,
+                          (roles[user.uid] || 'employee') === opt.value && styles.roleChipTextSelected,
+                        ]}>
+                          {opt.label}
+                        </Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
 
-                  {/* Action buttons */}
                   <View style={styles.actionRow}>
                     <TouchableOpacity
                       style={[styles.btnReject, isActioning && styles.btnDisabled]}
-                      onPress={() => handleReject(user.uid, user.fullName)}
                       disabled={isActioning}
+                      onPress={() => handleReject(user.uid, user.fullName)}
                     >
                       {isActioning
                         ? <ActivityIndicator color="#e53e3e" size="small" />
-                        : <Text style={styles.btnRejectText}>❌ Reject</Text>
+                        : <Text style={styles.btnRejectText}>Reject</Text>
                       }
                     </TouchableOpacity>
                     <TouchableOpacity
                       style={[styles.btnApprove, isActioning && styles.btnDisabled]}
-                      onPress={() => handleApprove(user.uid)}
                       disabled={isActioning}
+                      onPress={() => handleApprove(user.uid)}
                     >
                       {isActioning
                         ? <ActivityIndicator color="#fff" size="small" />
-                        : <Text style={styles.btnApproveText}>✅ Approve</Text>
+                        : <Text style={styles.btnApproveText}>Approve</Text>
                       }
                     </TouchableOpacity>
                   </View>
                 </View>
               )}
-            </TouchableOpacity>
+            </View>
           );
         })}
 
@@ -323,10 +328,10 @@ const styles = StyleSheet.create({
   summaryText: { fontSize: 14, fontWeight: '700', color: '#92400e', marginBottom: 4 },
   summaryHint: { fontSize: 12, color: '#b45309' },
 
-  emptyBox:     { alignItems: 'center', marginTop: 60 },
-  emptyIcon:    { fontSize: 56, marginBottom: 16 },
-  emptyTitle:   { fontSize: 18, fontWeight: '600', color: '#2d3748', marginBottom: 8 },
-  emptySubtitle:{ fontSize: 13, color: '#718096' },
+  emptyBox:      { alignItems: 'center', marginTop: 60 },
+  emptyIcon:     { fontSize: 56, marginBottom: 16 },
+  emptyTitle:    { fontSize: 18, fontWeight: '600', color: '#2d3748', marginBottom: 8 },
+  emptySubtitle: { fontSize: 13, color: '#718096' },
 
   card: {
     backgroundColor: '#ffffff', borderRadius: 12,
@@ -342,14 +347,14 @@ const styles = StyleSheet.create({
   userName:    { fontSize: 15, fontWeight: '700', color: '#2d3748', marginBottom: 3 },
   userMeta:    { fontSize: 12, color: '#718096', marginBottom: 2 },
   userEmail:   { fontSize: 12, color: '#4a5568' },
-  submittedAt: { fontSize: 11, color: '#a0aec0', marginTop: 6 },
+  submittedAt: { fontSize: 11, color: '#a0aec0', marginTop: 4 },
 
   pendingBadge: {
     backgroundColor: '#fef3c7', paddingHorizontal: 8,
     paddingVertical: 3, borderRadius: 10,
   },
   pendingBadgeText: { fontSize: 11, color: '#92400e', fontWeight: '700' },
-  chevron:          { fontSize: 12, color: '#a0aec0' },
+  chevron:          { fontSize: 12, color: '#a0aec0', marginTop: 4 },
 
   expandedPanel: { marginTop: 12 },
   divider:       { height: 1, backgroundColor: '#e2e8f0', marginBottom: 14 },
@@ -378,8 +383,8 @@ const styles = StyleSheet.create({
   actionRow: { flexDirection: 'row', gap: 10 },
   btnReject: {
     flex: 1, borderRadius: 8, paddingVertical: 12,
-    alignItems: 'center', borderWidth: 1.5, borderColor: '#fc8181',
-    backgroundColor: '#fff5f5',
+    alignItems: 'center', borderWidth: 1.5,
+    borderColor: '#fc8181', backgroundColor: '#fff5f5',
   },
   btnRejectText:  { color: '#c53030', fontSize: 14, fontWeight: '700' },
   btnApprove: {

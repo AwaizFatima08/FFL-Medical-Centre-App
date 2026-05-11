@@ -9,7 +9,7 @@
 //  4. User sees "Pending Approval" message
 //  5. Admin activates & assigns correct role → user can log in
 // ─────────────────────────────────────────────────────────────
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, StyleSheet,
   StatusBar, KeyboardAvoidingView, Platform, ActivityIndicator,
@@ -20,8 +20,8 @@ import { auth } from '../../config/firebase';
 import axios from 'axios';
 import { API } from '../../config/api';
 
-const STEP_ACCOUNT  = 1; // email + password
-const STEP_IDENTITY = 2; // name + employee no. + phone
+const STEP_ACCOUNT  = 1;
+const STEP_IDENTITY = 2;
 
 export default function SignupScreen({ navigation }) {
   const [step,           setStep]           = useState(STEP_ACCOUNT);
@@ -33,6 +33,10 @@ export default function SignupScreen({ navigation }) {
   const [phone,          setPhone]          = useState('');
   const [showPass,       setShowPass]       = useState(false);
   const [loading,        setLoading]        = useState(false);
+
+  // Guard against double-submission caused by onAuthStateChanged
+  // re-rendering the component mid-signup
+  const isSubmitting = useRef(false);
 
   // ── Step 1 validation
   const goToStep2 = () => {
@@ -53,6 +57,8 @@ export default function SignupScreen({ navigation }) {
 
   // ── Final submit
   const handleSignup = async () => {
+    if (isSubmitting.current) return;
+
     if (!fullName.trim()) {
       Alert.alert('Required', 'Please enter your full name.'); return;
     }
@@ -63,6 +69,7 @@ export default function SignupScreen({ navigation }) {
       Alert.alert('Invalid', 'Please enter a valid phone number.'); return;
     }
 
+    isSubmitting.current = true;
     setLoading(true);
     let firebaseUser = null;
 
@@ -73,7 +80,7 @@ export default function SignupScreen({ navigation }) {
       const idToken = await firebaseUser.getIdToken();
 
       // 2. Register on backend — sets isActive: false, role: employee
-      await axios.post(`${API.AUTH}/register`, {
+      await axios.post(`${API.auth}/register`, {
         fullName:       fullName.trim(),
         phoneNumber:    phone.trim(),
         employeeNumber: employeeNumber.trim().toUpperCase(),
@@ -81,17 +88,22 @@ export default function SignupScreen({ navigation }) {
         headers: { Authorization: `Bearer ${idToken}` },
       });
 
-      // 3. Sign out — user cannot use the app until admin activates
-      await auth.signOut();
-
+      // 3. Show success alert first, then sign out when user taps the button.
+      //    signOut() was previously called before Alert, which caused
+      //    onAuthStateChanged to navigate away before the alert could render.
       Alert.alert(
         '✅ Registration Submitted',
         'Your account has been created and is awaiting admin approval.\n\nYou will be notified once your account is activated.',
-        [{ text: 'Back to Login', onPress: () => navigation.navigate('Login') }],
+        [{
+          text: 'Back to Login',
+          onPress: async () => {
+            await auth.signOut();
+            navigation.navigate('Login');
+          },
+        }],
       );
 
     } catch (error) {
-      // If backend failed, delete the Firebase Auth account to keep things consistent
       if (firebaseUser) {
         try { await firebaseUser.delete(); } catch (_) {}
       }
@@ -106,6 +118,7 @@ export default function SignupScreen({ navigation }) {
       }
       Alert.alert('Registration Failed', message);
     } finally {
+      isSubmitting.current = false;
       setLoading(false);
     }
   };
@@ -275,7 +288,6 @@ const styles = StyleSheet.create({
   logoText:  { color: '#fff', fontSize: 13, fontWeight: '900', letterSpacing: 1.5 },
   logoSub:   { color: '#fff', fontSize: 4.5, fontWeight: '700', letterSpacing: 1 },
 
-  // Step indicator
   stepRow:       { flexDirection: 'row', alignItems: 'center', marginBottom: 4, paddingHorizontal: 60 },
   stepDot:       { width: 14, height: 14, borderRadius: 7, backgroundColor: '#334155' },
   stepDotActive: { backgroundColor: '#c1121f' },

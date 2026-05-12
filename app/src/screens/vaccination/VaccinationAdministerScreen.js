@@ -1,9 +1,10 @@
 // app/src/screens/vaccination/VaccinationAdministerScreen.js
+import { webAlert, webConfirm } from '../../utils/webAlert';
 
 import React, { useEffect, useState } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, ScrollView,
-  TextInput, ActivityIndicator, Alert, Switch,
+  TextInput, ActivityIndicator, Switch,
 } from 'react-native';
 import {
   getFirestore, doc, getDoc, updateDoc,
@@ -103,7 +104,7 @@ export default function VaccinationAdministerScreen({ route, navigation }) {
 
       } catch (err) {
         console.error('VaccinationAdminister load error:', err);
-        Alert.alert('Error', 'Could not load vaccination record.');
+        webAlert('Error', 'Could not load vaccination record.');
         navigation.goBack();
       } finally {
         setLoading(false);
@@ -133,11 +134,11 @@ export default function VaccinationAdministerScreen({ route, navigation }) {
     // Validate administered date
     const adminDate = parseDate(administeredDate);
     if (!adminDate) {
-      Alert.alert('Invalid Date', 'Please enter administration date as DD/MM/YYYY.');
+      webAlert('Invalid Date', 'Please enter administration date as DD/MM/YYYY.');
       return;
     }
     if (adminDate > new Date()) {
-      Alert.alert('Invalid Date', 'Administration date cannot be in the future.');
+      webAlert('Invalid Date', 'Administration date cannot be in the future.');
       return;
     }
 
@@ -145,23 +146,23 @@ export default function VaccinationAdministerScreen({ route, navigation }) {
     let nextDateTimestamp = null;
     if (showNextOverride && nextRecord) {
       if (!overrideNextDate) {
-        Alert.alert('Required', 'Please enter the revised date for the next dose.');
+        webAlert('Required', 'Please enter the revised date for the next dose.');
         return;
       }
       const nextDate = parseDate(overrideNextDate);
       if (!nextDate) {
-        Alert.alert('Invalid Date', 'Please enter next dose date as DD/MM/YYYY.');
+        webAlert('Invalid Date', 'Please enter next dose date as DD/MM/YYYY.');
         return;
       }
       if (nextDate <= adminDate) {
-        Alert.alert('Invalid Date', 'Next dose date must be after the administration date.');
+        webAlert('Invalid Date', 'Next dose date must be after the administration date.');
         return;
       }
       // Minimum interval check
       if (scheduleEntry?.minimumIntervalDays) {
         const minDate = addDays(adminDate, scheduleEntry.minimumIntervalDays);
         if (nextDate < minDate) {
-          Alert.alert(
+          webAlert(
             'Interval Warning',
             `Minimum interval for ${vaccineName} is ${scheduleEntry.minimumIntervalDays} days. ` +
             `Earliest next dose date is ${formatDate({ toDate: () => minDate })}. ` +
@@ -218,14 +219,14 @@ export default function VaccinationAdministerScreen({ route, navigation }) {
         }
       }
 
-      Alert.alert(
+      webAlert(
         'Recorded',
-        `${vaccineName} (${doseNumber}) recorded as administered on ${administeredDate}.`,
-        [{ text: 'OK', onPress: () => navigation.goBack() }],
+        `${vaccineName} (${doseNumber}) recorded as administered on ${administeredDate}.`
       );
+      navigation.goBack();
     } catch (err) {
       console.error('VaccinationAdminister save error:', err);
-      Alert.alert('Error', 'Could not save. Please try again.');
+      webAlert('Error', 'Could not save. Please try again.');
     } finally {
       setSaving(false);
     }

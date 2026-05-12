@@ -1,40 +1,24 @@
 // app/src/components/LogoutButton.js
+import { webAlert, webConfirm } from '../utils/webAlert';
 import React from 'react';
-import { TouchableOpacity, Text, StyleSheet, Alert, Platform } from 'react-native';
+import { TouchableOpacity, Text, StyleSheet } from 'react-native';
 import { signOut } from 'firebase/auth';
 import { auth } from '../config/firebase';
 
 export default function LogoutButton() {
-  const handleLogout = async () => {
-    if (Platform.OS === 'web') {
-      // Alert.alert does not work on web — use browser confirm instead
-      const confirmed = window.confirm('Are you sure you want to logout?');
-      if (!confirmed) return;
-      try {
-        await signOut(auth);
-      } catch (error) {
-        window.alert('Failed to logout. Please try again.');
-      }
-    } else {
-      Alert.alert(
-        'Logout',
-        'Are you sure you want to logout?',
-        [
-          { text: 'Cancel', style: 'cancel' },
-          {
-            text: 'Logout',
-            style: 'destructive',
-            onPress: async () => {
-              try {
-                await signOut(auth);
-              } catch (error) {
-                Alert.alert('Error', 'Failed to logout. Please try again.');
-              }
-            },
-          },
-        ]
-      );
-    }
+  const handleLogout = () => {
+    webConfirm(
+      'Logout',
+      'Are you sure you want to logout?',
+      async () => {
+        try {
+          await signOut(auth);
+        } catch (error) {
+          webAlert('Error', 'Failed to logout. Please try again.');
+        }
+      },
+      true, 'Logout'
+    );
   };
 
   return (

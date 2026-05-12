@@ -1,4 +1,5 @@
 // ─────────────────────────────────────────────────────────────
+import { webAlert, webConfirm } from '../../utils/webAlert';
 //  FFL Medical Centre — SignupScreen.js
 //  Path: ffl-medical-centre-app/src/screens/auth/SignupScreen.js
 //
@@ -13,7 +14,7 @@ import React, { useState, useRef } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, StyleSheet,
   StatusBar, KeyboardAvoidingView, Platform, ActivityIndicator,
-  ScrollView, Alert,
+  ScrollView,
 } from 'react-native';
 import { createUserWithEmailAndPassword } from 'firebase/auth';
 import { auth } from '../../config/firebase';
@@ -41,16 +42,16 @@ export default function SignupScreen({ navigation }) {
   // ── Step 1 validation
   const goToStep2 = () => {
     if (!email.trim()) {
-      Alert.alert('Required', 'Please enter your email address.'); return;
+      webAlert('Required', 'Please enter your email address.'); return;
     }
     if (!/\S+@\S+\.\S+/.test(email)) {
-      Alert.alert('Invalid Email', 'Please enter a valid email address.'); return;
+      webAlert('Invalid Email', 'Please enter a valid email address.'); return;
     }
     if (password.length < 8) {
-      Alert.alert('Weak Password', 'Password must be at least 8 characters.'); return;
+      webAlert('Weak Password', 'Password must be at least 8 characters.'); return;
     }
     if (password !== confirmPass) {
-      Alert.alert('Mismatch', 'Passwords do not match.'); return;
+      webAlert('Mismatch', 'Passwords do not match.'); return;
     }
     setStep(STEP_IDENTITY);
   };
@@ -60,13 +61,13 @@ export default function SignupScreen({ navigation }) {
     if (isSubmitting.current) return;
 
     if (!fullName.trim()) {
-      Alert.alert('Required', 'Please enter your full name.'); return;
+      webAlert('Required', 'Please enter your full name.'); return;
     }
     if (!employeeNumber.trim()) {
-      Alert.alert('Required', 'Please enter your employee number.'); return;
+      webAlert('Required', 'Please enter your employee number.'); return;
     }
     if (!phone.trim() || phone.length < 10) {
-      Alert.alert('Invalid', 'Please enter a valid phone number.'); return;
+      webAlert('Invalid', 'Please enter a valid phone number.'); return;
     }
 
     isSubmitting.current = true;
@@ -88,20 +89,15 @@ export default function SignupScreen({ navigation }) {
         headers: { Authorization: `Bearer ${idToken}` },
       });
 
-      // 3. Show success alert first, then sign out when user taps the button.
-      //    signOut() was previously called before Alert, which caused
-      //    onAuthStateChanged to navigate away before the alert could render.
-      Alert.alert(
+      // 3. Show success message then sign out and navigate.
+      //    On web, webAlert uses window.alert which blocks until dismissed,
+      //    so signOut + navigate happen after the user clicks OK.
+      webAlert(
         '✅ Registration Submitted',
-        'Your account has been created and is awaiting admin approval.\n\nYou will be notified once your account is activated.',
-        [{
-          text: 'Back to Login',
-          onPress: async () => {
-            await auth.signOut();
-            navigation.navigate('Login');
-          },
-        }],
+        'Your account has been created and is awaiting admin approval. You will be notified once activated.'
       );
+      await auth.signOut();
+      navigation.navigate('Login');
 
     } catch (error) {
       if (firebaseUser) {
@@ -116,7 +112,7 @@ export default function SignupScreen({ navigation }) {
       } else if (error.response?.status === 409) {
         message = error.response.data.message || 'Employee number already registered.';
       }
-      Alert.alert('Registration Failed', message);
+      webAlert('Registration Failed', message);
     } finally {
       isSubmitting.current = false;
       setLoading(false);

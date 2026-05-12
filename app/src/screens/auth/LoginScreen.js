@@ -1,4 +1,5 @@
 // ─────────────────────────────────────────────────────────────
+import { webAlert, webConfirm } from '../../utils/webAlert';
 //  FFL Medical Centre — LoginScreen.js
 //  Path: ffl-medical-centre-app/src/screens/auth/LoginScreen.js
 // ─────────────────────────────────────────────────────────────
@@ -6,7 +7,7 @@ import React, { useState } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, StyleSheet,
   StatusBar, KeyboardAvoidingView, Platform, ActivityIndicator,
-  ScrollView, Alert, Image,
+  ScrollView, Image,
 } from 'react-native';
 import { signInWithEmailAndPassword } from 'firebase/auth';
 import { auth } from '../../config/firebase';
@@ -22,7 +23,7 @@ export default function LoginScreen({ navigation }) {
 
   const handleLogin = async () => {
     if (!email.trim() || !password.trim()) {
-      Alert.alert('Missing Fields', 'Please enter your email and password.');
+      webAlert('Missing Fields', 'Please enter your email and password.');
       return;
     }
 
@@ -45,7 +46,7 @@ export default function LoginScreen({ navigation }) {
 
       // 4. Check if admin has activated the account
       if (!user.isActive) {
-        Alert.alert(
+        webAlert(
           'Account Pending',
           'Your account is awaiting admin approval. You will be notified once activated.',
         );
@@ -68,7 +69,7 @@ export default function LoginScreen({ navigation }) {
       } else if (error.code === 'auth/network-request-failed') {
         message = 'No internet connection.';
       }
-      Alert.alert('Login Failed', message);
+      webAlert('Login Failed', message);
     } finally {
       setLoading(false);
     }

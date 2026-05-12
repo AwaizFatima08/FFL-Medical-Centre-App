@@ -1,4 +1,5 @@
 // app/src/screens/circulars/CircularsScreen.js
+import { webAlert, webConfirm } from '../../utils/webAlert';
 // Flow 3 — Health Awareness Circulars & Administrative Notices
 // Two tabs: Medical | Administrative
 // Upload by: admin_incharge, cmo
@@ -8,7 +9,7 @@ import React, { useState, useCallback } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity,
   ScrollView, ActivityIndicator, RefreshControl,
-  Linking, Alert, Platform,
+  Linking,
 } from 'react-native';
 import { getAuth } from 'firebase/auth';
 import { useFocusEffect } from '@react-navigation/native';
@@ -21,16 +22,6 @@ const TABS = [
 
 const UPLOAD_ROLES = ['admin_incharge', 'cmo'];
 
-const confirmAction = (title, message, onConfirm) => {
-  if (Platform.OS === 'web') {
-    if (window.confirm(`${title}\n\n${message}`)) onConfirm();
-  } else {
-    Alert.alert(title, message, [
-      { text: 'Cancel', style: 'cancel' },
-      { text: 'Delete', style: 'destructive', onPress: onConfirm },
-    ]);
-  }
-};
 
 export default function CircularsScreen({ navigation, route }) {
   const { userRole } = route.params || {};
@@ -64,7 +55,7 @@ export default function CircularsScreen({ navigation, route }) {
         administrative: adminRes.ok ? (adminData.data || []) : [],
       });
     } catch {
-      alert('Network error. Please check your connection.');
+      webAlert('Error', 'Network error. Please check your connection.');
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -84,12 +75,12 @@ export default function CircularsScreen({ navigation, route }) {
   const handleOpen = (item) => {
     if (!item.fileUrl) return;
     Linking.openURL(item.fileUrl).catch(() => {
-      alert('Could not open file. Please try again.');
+      webAlert('Error', 'Could not open file. Please try again.');
     });
   };
 
   const handleDelete = (item) => {
-    confirmAction(
+    webConfirm(
       'Delete Circular',
       `Delete "${item.title}"? This cannot be undone.`,
       async () => {
@@ -104,10 +95,10 @@ export default function CircularsScreen({ navigation, route }) {
           if (response.ok) {
             fetchCirculars();
           } else {
-            alert(data.message || 'Delete failed.');
+            webAlert('Error', data.message || 'Delete failed.');
           }
         } catch {
-          alert('Network error. Please try again.');
+          webAlert('Error', 'Network error. Please try again.');
         } finally {
           setDeletingId(null);
         }

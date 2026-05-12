@@ -1,4 +1,5 @@
 // app/src/screens/trip/TripReceptionHubScreen.js
+import { webAlert, webConfirm } from '../../utils/webAlert';
 // Flow 4 — Medical Trip
 // Reception views all bookings, filters by date, confirms seats, generates report
 // Seat cap: 24 per trip date
@@ -6,7 +7,7 @@
 import React, { useState, useEffect } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity,
-  ScrollView, ActivityIndicator, RefreshControl, Alert,
+  ScrollView, ActivityIndicator, RefreshControl,
 } from 'react-native';
 import { getAuth } from 'firebase/auth';
 import { API } from '../../config/api';
@@ -70,10 +71,10 @@ export default function TripReceptionHubScreen({ navigation, route }) {
       if (response.ok) {
         setBookings(data.data || []);
       } else {
-        alert(data.message || 'Failed to load bookings.');
+        webAlert('Error', data.message || 'Failed to load bookings.');
       }
     } catch {
-      alert('Network error. Please check your connection.');
+      webAlert('Error', 'Network error. Please check your connection.');
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -107,7 +108,7 @@ export default function TripReceptionHubScreen({ navigation, route }) {
 
   const handleGenerateReport = () => {
     if (!canGenerateReport()) {
-      Alert.alert('Too Early', 'The trip report is available after 16:00.', [{ text: 'OK' }]);
+      webAlert('Too Early', 'The trip report is available after 16:00.');
       return;
     }
     navigation.navigate('TripReport', { tripDate: selectedDate, userRole });

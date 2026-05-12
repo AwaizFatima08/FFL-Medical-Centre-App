@@ -1,4 +1,5 @@
 // app/src/screens/directory/DirectoryDetailScreen.js
+import { webAlert, webConfirm } from '../../utils/webAlert';
 // Flow 5 — Doctor Directory
 // View full details of a single doctor entry
 // Visible to: employee, reception, doctor, cmo
@@ -7,7 +8,7 @@
 import React, { useState, useCallback } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity,
-  ScrollView, ActivityIndicator, Alert,
+  ScrollView, ActivityIndicator,
 } from 'react-native';
 import { getAuth } from 'firebase/auth';
 import { useFocusEffect } from '@react-navigation/native';
@@ -35,11 +36,11 @@ export default function DirectoryDetailScreen({ navigation, route }) {
       if (response.ok) {
         setEntry(data.data);
       } else {
-        alert(data.message || 'Failed to load doctor details.');
+        webAlert('Error', data.message || 'Failed to load doctor details.');
         navigation.goBack();
       }
     } catch (error) {
-      alert('Network error. Please check your connection.');
+      webAlert('Error', 'Network error. Please check your connection.');
       navigation.goBack();
     } finally {
       setLoading(false);
@@ -52,35 +53,30 @@ export default function DirectoryDetailScreen({ navigation, route }) {
   }, [entryId]));
 
   const handleDelete = () => {
-    Alert.alert(
+    webConfirm(
       'Delete Doctor',
       `Are you sure you want to remove ${entry?.name} from the directory?`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Delete', style: 'destructive',
-          onPress: async () => {
-            setDeleting(true);
-            try {
-              const token = await getToken();
-              const response = await fetch(`${API.directory}/${entryId}`, {
-                method: 'DELETE',
-                headers: { 'Authorization': `Bearer ${token}` },
-              });
-              const data = await response.json();
-              if (response.ok) {
-                navigation.goBack();
-              } else {
-                alert(data.message || 'Failed to delete entry.');
-              }
-            } catch (error) {
-              alert('Network error. Please try again.');
-            } finally {
-              setDeleting(false);
-            }
-          },
-        },
-      ]
+      async () => {
+        setDeleting(true);
+        try {
+          const token = await getToken();
+          const response = await fetch(`${API.directory}/${entryId}`, {
+            method: 'DELETE',
+            headers: { 'Authorization': `Bearer ${token}` },
+          });
+          const data = await response.json();
+          if (response.ok) {
+            navigation.goBack();
+          } else {
+            webAlert('Error', data.message || 'Failed to delete entry.');
+          }
+        } catch (error) {
+          webAlert('Error', 'Network error. Please try again.');
+        } finally {
+          setDeleting(false);
+        }
+      },
+      true, 'Delete'
     );
   };
 

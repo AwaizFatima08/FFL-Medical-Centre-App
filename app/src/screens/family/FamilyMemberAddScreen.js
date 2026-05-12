@@ -1,9 +1,10 @@
 // app/src/screens/family/FamilyMemberAddScreen.js
+import { webAlert, webConfirm } from '../../utils/webAlert';
 
 import React, { useEffect, useState } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, ScrollView,
-  TextInput, ActivityIndicator, Alert, Switch,
+  TextInput, ActivityIndicator, Switch,
 } from 'react-native';
 import { getAuth } from 'firebase/auth';
 import {
@@ -149,24 +150,24 @@ export default function FamilyMemberAddScreen({ navigation }) {
 
   // ─── Validation ─────────────────────────────────────────────────────────────
   const validate = () => {
-    if (!relation)    { Alert.alert('Required', 'Please select a relation.'); return false; }
-    if (!name.trim()) { Alert.alert('Required', 'Please enter the full name.'); return false; }
-    if (!dob)         { Alert.alert('Required', 'Please enter date of birth.'); return false; }
-    if (!dobDate)     { Alert.alert('Invalid Date', 'Please enter date as DD/MM/YYYY.'); return false; }
+    if (!relation)    { webAlert('Required', 'Please select a relation.'); return false; }
+    if (!name.trim()) { webAlert('Required', 'Please enter the full name.'); return false; }
+    if (!dob)         { webAlert('Required', 'Please enter date of birth.'); return false; }
+    if (!dobDate)     { webAlert('Invalid Date', 'Please enter date as DD/MM/YYYY.'); return false; }
     if (dobDate > new Date()) {
-      Alert.alert('Invalid Date', 'Date of birth cannot be in the future.');
+      webAlert('Invalid Date', 'Date of birth cannot be in the future.');
       return false;
     }
     if (needsCnic && !cnic.trim()) {
-      Alert.alert('Required', 'CNIC is mandatory for family members aged 18 and above.');
+      webAlert('Required', 'CNIC is mandatory for family members aged 18 and above.');
       return false;
     }
     if (isAdult && !maritalStatus) {
-      Alert.alert('Required', 'Marital status is mandatory for members aged 25 and above.');
+      webAlert('Required', 'Marital status is mandatory for members aged 25 and above.');
       return false;
     }
     if (isAdult && !employmentStatus) {
-      Alert.alert('Required', 'Employment status is mandatory for members aged 25 and above.');
+      webAlert('Required', 'Employment status is mandatory for members aged 25 and above.');
       return false;
     }
     return true;
@@ -205,14 +206,12 @@ export default function FamilyMemberAddScreen({ navigation }) {
         updatedAt:        Timestamp.now(),
       });
 
-      Alert.alert(
-        'Submitted',
-        'Family member added successfully. Admin will review and validate the record.',
-        [{ text: 'OK', onPress: () => navigation.goBack() }],
-      );
+      // Show success then navigate — webAlert on web blocks until dismissed
+      webAlert('Submitted', 'Family member added successfully. Admin will review and validate the record.');
+      navigation.goBack();
     } catch (err) {
       console.error('FamilyMemberAdd save error:', err);
-      Alert.alert('Error', 'Could not save. Please try again.');
+      webAlert('Error', 'Could not save. Please try again.');
     } finally {
       setSaving(false);
     }

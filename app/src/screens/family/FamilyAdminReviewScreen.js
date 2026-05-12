@@ -1,9 +1,10 @@
 // app/src/screens/family/FamilyAdminReviewScreen.js
+import { webAlert, webConfirm } from '../../utils/webAlert';
 
 import React, { useEffect, useState, useCallback } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, ScrollView,
-  ActivityIndicator, RefreshControl, Alert, TextInput, Modal,
+  ActivityIndicator, RefreshControl, TextInput, Modal,
 } from 'react-native';
 import {
   getFirestore, collection, query, where,
@@ -153,38 +154,33 @@ export default function FamilyAdminReviewScreen({ navigation }) {
 
   // ─── Approve new member ───────────────────────────────────────────────────
   const handleApproveNew = async (member) => {
-    Alert.alert(
+    webConfirm(
       'Approve Member',
       `Validate ${member.name} as a family member?`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Approve',
-          onPress: async () => {
-            setProcessing(true);
-            try {
-              await updateDoc(doc(db, 'familyMembers', member.id), {
-                status:    'validated',
-                updatedAt: Timestamp.now(),
-              });
-              setSelected(null);
-              fetchPending();
-            } catch (err) {
-              console.error('Approve error:', err);
-              Alert.alert('Error', 'Could not approve. Please try again.');
-            } finally {
-              setProcessing(false);
-            }
-          },
-        },
-      ],
+      async () => {
+        setProcessing(true);
+        try {
+          await updateDoc(doc(db, 'familyMembers', member.id), {
+            status:    'validated',
+            updatedAt: Timestamp.now(),
+          });
+          setSelected(null);
+          fetchPending();
+        } catch (err) {
+          console.error('Approve error:', err);
+          webAlert('Error', 'Could not approve. Please try again.');
+        } finally {
+          setProcessing(false);
+        }
+      },
+      false, 'Approve'
     );
   };
 
   // ─── Reject new member ────────────────────────────────────────────────────
   const handleRejectNew = async () => {
     if (!rejectNote.trim()) {
-      Alert.alert('Required', 'Please enter a reason for rejection.');
+      webAlert('Required', 'Please enter a reason for rejection.');
       return;
     }
     setProcessing(true);
@@ -200,7 +196,7 @@ export default function FamilyAdminReviewScreen({ navigation }) {
       fetchPending();
     } catch (err) {
       console.error('Reject error:', err);
-      Alert.alert('Error', 'Could not reject. Please try again.');
+      webAlert('Error', 'Could not reject. Please try again.');
     } finally {
       setProcessing(false);
     }
@@ -208,48 +204,43 @@ export default function FamilyAdminReviewScreen({ navigation }) {
 
   // ─── Approve edit — merge pendingRevision into live record ───────────────
   const handleApproveEdit = async (member) => {
-    Alert.alert(
+    webConfirm(
       'Approve Edit',
       `Apply the pending changes for ${member.name}?`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Approve',
-          onPress: async () => {
-            setProcessing(true);
-            try {
-              const rev = member.pendingRevision;
-              await updateDoc(doc(db, 'familyMembers', member.id), {
-                name:             rev.name,
-                dateOfBirth:      rev.dateOfBirth,
-                cnic:             rev.cnic,
-                nadraCardNumber:  rev.nadraCardNumber,
-                bloodGroup:       rev.bloodGroup,
-                differentlyAbled: rev.differentlyAbled,
-                maritalStatus:    rev.maritalStatus,
-                employmentStatus: rev.employmentStatus,
-                pendingRevision:  null,
-                rejectionNote:    null,
-                updatedAt:        Timestamp.now(),
-              });
-              setSelected(null);
-              fetchPending();
-            } catch (err) {
-              console.error('Approve edit error:', err);
-              Alert.alert('Error', 'Could not approve edit. Please try again.');
-            } finally {
-              setProcessing(false);
-            }
-          },
-        },
-      ],
+      async () => {
+        setProcessing(true);
+        try {
+          const rev = member.pendingRevision;
+          await updateDoc(doc(db, 'familyMembers', member.id), {
+            name:             rev.name,
+            dateOfBirth:      rev.dateOfBirth,
+            cnic:             rev.cnic,
+            nadraCardNumber:  rev.nadraCardNumber,
+            bloodGroup:       rev.bloodGroup,
+            differentlyAbled: rev.differentlyAbled,
+            maritalStatus:    rev.maritalStatus,
+            employmentStatus: rev.employmentStatus,
+            pendingRevision:  null,
+            rejectionNote:    null,
+            updatedAt:        Timestamp.now(),
+          });
+          setSelected(null);
+          fetchPending();
+        } catch (err) {
+          console.error('Approve edit error:', err);
+          webAlert('Error', 'Could not approve edit. Please try again.');
+        } finally {
+          setProcessing(false);
+        }
+      },
+      false, 'Approve'
     );
   };
 
   // ─── Reject edit — clear pendingRevision ─────────────────────────────────
   const handleRejectEdit = async () => {
     if (!rejectNote.trim()) {
-      Alert.alert('Required', 'Please enter a reason for rejection.');
+      webAlert('Required', 'Please enter a reason for rejection.');
       return;
     }
     setProcessing(true);
@@ -265,7 +256,7 @@ export default function FamilyAdminReviewScreen({ navigation }) {
       fetchPending();
     } catch (err) {
       console.error('Reject edit error:', err);
-      Alert.alert('Error', 'Could not reject edit. Please try again.');
+      webAlert('Error', 'Could not reject edit. Please try again.');
     } finally {
       setProcessing(false);
     }

@@ -1,9 +1,10 @@
 // app/src/screens/vaccination/VaccinationChildDetailScreen.js
+import { webAlert, webConfirm } from '../../utils/webAlert';
 
 import React, { useEffect, useState, useCallback } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, ScrollView,
-  ActivityIndicator, RefreshControl, Alert,
+  ActivityIndicator, RefreshControl,
 } from 'react-native';
 import {
   getFirestore, collection, query, where,
@@ -155,11 +156,11 @@ export default function VaccinationChildDetailScreen({ route, navigation }) {
   // ─── Navigate to administer screen ────────────────────────────────────────
   const handleAdminister = (record) => {
     if (record.status === 'administered') {
-      Alert.alert('Already Given', 'This dose has already been administered.');
+      webAlert('Already Given', 'This dose has already been administered.');
       return;
     }
     if (record.status === 'na') {
-      Alert.alert('Not Applicable', `This dose is marked N/A. Reason: ${record.naReason || '—'}`);
+      webAlert('Not Applicable', `This dose is marked N/A. Reason: ${record.naReason || '—'}`);
       return;
     }
     navigation.navigate('VaccinationAdminister', {

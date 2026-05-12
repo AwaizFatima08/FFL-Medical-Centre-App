@@ -1,4 +1,5 @@
 // app/src/screens/vaccination/VaccinationReportScreen.js
+import { webAlert, webConfirm } from '../../utils/webAlert';
 //
 // Renders a professional vaccination record report.
 // Uses react-native-view-shot to capture the report as an image,
@@ -10,7 +11,7 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, ScrollView,
-  ActivityIndicator, Alert, Image,
+  ActivityIndicator, Image,
 } from 'react-native';
 import {
   getFirestore, doc, getDoc,
@@ -385,7 +386,7 @@ export default function VaccinationReportScreen({ route, navigation }) {
   // ─── Generate and share PDF ────────────────────────────────────────────────
   const handleDownload = async () => {
     if (!child || records.length === 0) {
-      Alert.alert('Not Ready', 'Data is still loading. Please wait.');
+      webAlert('Not Ready', 'Data is still loading. Please wait.');
       return;
     }
     setGenerating(true);
@@ -404,11 +405,11 @@ export default function VaccinationReportScreen({ route, navigation }) {
           UTI: 'com.adobe.pdf',
         });
       } else {
-        Alert.alert('Saved', `Report saved to: ${uri}`);
+        webAlert('Saved', `Report saved to: ${uri}`);
       }
     } catch (err) {
       console.error('VaccinationReport PDF error:', err);
-      Alert.alert('Error', 'Could not generate PDF. Please try again.');
+      webAlert('Error', 'Could not generate PDF. Please try again.');
     } finally {
       setGenerating(false);
     }

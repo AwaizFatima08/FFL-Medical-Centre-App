@@ -1,9 +1,10 @@
 // app/src/screens/family/FamilyMemberEditScreen.js
+import { webAlert, webConfirm } from '../../utils/webAlert';
 
 import React, { useEffect, useState } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, ScrollView,
-  TextInput, ActivityIndicator, Alert, Switch,
+  TextInput, ActivityIndicator, Switch,
 } from 'react-native';
 import { getAuth } from 'firebase/auth';
 import {
@@ -124,7 +125,7 @@ export default function FamilyMemberEditScreen({ route, navigation }) {
         const ref  = doc(db, 'familyMembers', memberId);
         const snap = await getDoc(ref);
         if (!snap.exists()) {
-          Alert.alert('Error', 'Record not found.');
+          webAlert('Error', 'Record not found.');
           navigation.goBack();
           return;
         }
@@ -132,7 +133,7 @@ export default function FamilyMemberEditScreen({ route, navigation }) {
 
         // Security — ensure this record belongs to the logged-in employee
         if (data.employeeId !== auth.currentUser?.uid) {
-          Alert.alert('Error', 'Unauthorised access.');
+          webAlert('Error', 'Unauthorised access.');
           navigation.goBack();
           return;
         }
@@ -153,7 +154,7 @@ export default function FamilyMemberEditScreen({ route, navigation }) {
         setEmploymentStatus(source.employmentStatus || '');
       } catch (err) {
         console.error('FamilyMemberEdit load error:', err);
-        Alert.alert('Error', 'Could not load record.');
+        webAlert('Error', 'Could not load record.');
         navigation.goBack();
       } finally {
         setLoading(false);
@@ -164,23 +165,23 @@ export default function FamilyMemberEditScreen({ route, navigation }) {
 
   // ─── Validation ─────────────────────────────────────────────────────────────
   const validate = () => {
-    if (!name.trim()) { Alert.alert('Required', 'Full name cannot be empty.'); return false; }
-    if (!dob)         { Alert.alert('Required', 'Date of birth is required.'); return false; }
-    if (!dobDate)     { Alert.alert('Invalid Date', 'Use format DD/MM/YYYY.'); return false; }
+    if (!name.trim()) { webAlert('Required', 'Full name cannot be empty.'); return false; }
+    if (!dob)         { webAlert('Required', 'Date of birth is required.'); return false; }
+    if (!dobDate)     { webAlert('Invalid Date', 'Use format DD/MM/YYYY.'); return false; }
     if (dobDate > new Date()) {
-      Alert.alert('Invalid Date', 'Date of birth cannot be in the future.');
+      webAlert('Invalid Date', 'Date of birth cannot be in the future.');
       return false;
     }
     if (needsCnic && !cnic.trim()) {
-      Alert.alert('Required', 'CNIC is mandatory for members aged 18 and above.');
+      webAlert('Required', 'CNIC is mandatory for members aged 18 and above.');
       return false;
     }
     if (isAdult && !maritalStatus) {
-      Alert.alert('Required', 'Marital status is mandatory for members aged 25 and above.');
+      webAlert('Required', 'Marital status is mandatory for members aged 25 and above.');
       return false;
     }
     if (isAdult && !employmentStatus) {
-      Alert.alert('Required', 'Employment status is mandatory for members aged 25 and above.');
+      webAlert('Required', 'Employment status is mandatory for members aged 25 and above.');
       return false;
     }
     return true;
@@ -204,7 +205,7 @@ export default function FamilyMemberEditScreen({ route, navigation }) {
       employmentStatus  === (live.employmentStatus || '');
 
     if (noChange) {
-      Alert.alert('No Changes', 'You have not made any changes to this record.');
+      webAlert('No Changes', 'You have not made any changes to this record.');
       return;
     }
 
@@ -227,14 +228,11 @@ export default function FamilyMemberEditScreen({ route, navigation }) {
         updatedAt:       Timestamp.now(),
       });
 
-      Alert.alert(
-        'Edit Submitted',
-        'Your changes have been submitted for admin review. The current record remains active until approved.',
-        [{ text: 'OK', onPress: () => navigation.goBack() }],
-      );
+      webAlert('Edit Submitted', 'Your changes have been submitted for admin review. The current record remains active until approved.');
+      navigation.goBack();
     } catch (err) {
       console.error('FamilyMemberEdit save error:', err);
-      Alert.alert('Error', 'Could not submit edit. Please try again.');
+      webAlert('Error', 'Could not submit edit. Please try again.');
     } finally {
       setSaving(false);
     }

@@ -1,11 +1,12 @@
 ﻿// app/src/screens/trip/TripMyBookingScreen.js
+import { webAlert, webConfirm } from '../../utils/webAlert';
 // Flow 4 — Medical Trip
 // Employee views their own bookings and can cancel pending ones
 
 import React, { useState, useEffect } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity,
-  ScrollView, ActivityIndicator, Alert, Platform, RefreshControl,
+  ScrollView, ActivityIndicator, RefreshControl,
 } from 'react-native';
 import { getAuth } from 'firebase/auth';
 import { API } from '../../config/api';
@@ -17,17 +18,6 @@ const STATUS_CONFIG = {
   completed: { label: 'Completed', bg: '#f7fafc', text: '#718096', border: '#e2e8f0' },
 };
 
-// Cross-platform confirmation — web uses window.confirm, native uses Alert
-const confirmAction = (title, message, onConfirm) => {
-  if (Platform.OS === 'web') {
-    if (window.confirm(`${title}\n\n${message}`)) onConfirm();
-  } else {
-    Alert.alert(title, message, [
-      { text: 'No', style: 'cancel' },
-      { text: 'Yes, Cancel', style: 'destructive', onPress: onConfirm },
-    ]);
-  }
-};
 
 export default function TripMyBookingScreen({ navigation, route }) {
   const { userRole } = route.params || {};
@@ -52,10 +42,10 @@ export default function TripMyBookingScreen({ navigation, route }) {
       if (response.ok) {
         setBookings(data.data || []);
       } else {
-        alert(data.message || 'Failed to load bookings.');
+        webAlert('Error', data.message || 'Failed to load bookings.');
       }
     } catch {
-      alert('Network error. Please check your connection.');
+      webAlert('Error', 'Network error. Please check your connection.');
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -73,7 +63,7 @@ export default function TripMyBookingScreen({ navigation, route }) {
   };
 
   const handleCancel = (booking) => {
-    confirmAction(
+    webConfirm(
       'Cancel Booking',
       `Cancel your trip on ${formatDate(booking.tripDate)}?`,
       async () => {
@@ -88,10 +78,10 @@ export default function TripMyBookingScreen({ navigation, route }) {
           if (response.ok) {
             fetchBookings();
           } else {
-            alert(data.message || 'Cancellation failed.');
+            webAlert('Error', data.message || 'Cancellation failed.');
           }
         } catch {
-          alert('Network error. Please try again.');
+          webAlert('Error', 'Network error. Please try again.');
         } finally {
           setCancellingId(null);
         }

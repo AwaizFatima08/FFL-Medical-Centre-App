@@ -1,4 +1,5 @@
 // ─────────────────────────────────────────────────────────────
+import { webAlert, webConfirm } from '../../utils/webAlert';
 //  FFL Medical Centre — ForgotPasswordScreen.js
 //  Path: ffl-medical-centre-app/src/screens/auth/ForgotPasswordScreen.js
 // ─────────────────────────────────────────────────────────────
@@ -6,7 +7,6 @@ import React, { useState } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, StyleSheet,
   StatusBar, KeyboardAvoidingView, Platform, ActivityIndicator,
-  Alert,
 } from 'react-native';
 import { sendPasswordResetEmail } from 'firebase/auth';
 import { auth } from '../../config/firebase';
@@ -18,10 +18,10 @@ export default function ForgotPasswordScreen({ navigation }) {
 
   const handleReset = async () => {
     if (!email.trim()) {
-      Alert.alert('Required', 'Please enter your email address.'); return;
+      webAlert('Required', 'Please enter your email address.'); return;
     }
     if (!/\S+@\S+\.\S+/.test(email)) {
-      Alert.alert('Invalid', 'Please enter a valid email address.'); return;
+      webAlert('Invalid', 'Please enter a valid email address.'); return;
     }
 
     setLoading(true);
@@ -37,7 +37,7 @@ export default function ForgotPasswordScreen({ navigation }) {
       } else if (error.code === 'auth/network-request-failed') {
         message = 'No internet connection.';
       }
-      Alert.alert('Error', message);
+      webAlert('Error', message);
     } finally {
       setLoading(false);
     }

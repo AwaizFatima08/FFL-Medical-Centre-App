@@ -1,11 +1,12 @@
 // app/src/screens/trip/TripDetailScreen.js
+import { webAlert, webConfirm } from '../../utils/webAlert';
 // Flow 4 — Medical Trip
 // Reception views and manages a single booking — confirm or cancel
 
 import React, { useState, useEffect } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity,
-  ScrollView, ActivityIndicator, Alert, Platform,
+  ScrollView, ActivityIndicator,
 } from 'react-native';
 import { getAuth } from 'firebase/auth';
 import { API } from '../../config/api';
@@ -19,25 +20,7 @@ const STATUS_CONFIG = {
 
 const SEAT_CAP = 24;
 
-// Cross-platform confirmation dialog — web uses window.confirm, native uses Alert
-const confirmAction = (title, message, onConfirm) => {
-  if (Platform.OS === 'web') {
-    if (window.confirm(`${title}\n\n${message}`)) onConfirm();
-  } else {
-    Alert.alert(title, message, [
-      { text: 'Cancel', style: 'cancel' },
-      { text: 'Confirm', style: 'destructive', onPress: onConfirm },
-    ]);
-  }
-};
 
-const showAlert = (title, message) => {
-  if (Platform.OS === 'web') {
-    window.alert(`${title}\n\n${message}`);
-  } else {
-    Alert.alert(title, message, [{ text: 'OK' }]);
-  }
-};
 
 export default function TripDetailScreen({ navigation, route }) {
   const { bookingId, userRole } = route.params || {};
@@ -74,11 +57,11 @@ export default function TripDetailScreen({ navigation, route }) {
           setSeatsConfirmed(countData.count || 0);
         }
       } else {
-        alert(bookingData.message || 'Failed to load booking.');
+        webAlert('Error', bookingData.message || 'Failed to load booking.');
         navigation.goBack();
       }
     } catch {
-      alert('Network error. Please try again.');
+      webAlert('Error', 'Network error. Please try again.');
       navigation.goBack();
     } finally {
       setLoading(false);
@@ -93,15 +76,15 @@ export default function TripDetailScreen({ navigation, route }) {
   const handleConfirm = () => {
     const seatsLeft = SEAT_CAP - seatsConfirmed;
     if (seatsLeft <= 0) {
-      showAlert('No Seats Available', `All ${SEAT_CAP} seats are confirmed for this trip.`);
+      webAlert('No Seats Available', `All ${SEAT_CAP} seats are confirmed for this trip.`);
       return;
     }
     const requestedSeats = booking?.seats || 1;
     if (seatsLeft < requestedSeats) {
-      showAlert('Not Enough Seats', `Only ${seatsLeft} seat(s) left but this booking needs ${requestedSeats}.`);
+      webAlert('Not Enough Seats', `Only ${seatsLeft} seat(s) left but this booking needs ${requestedSeats}.`);
       return;
     }
-    confirmAction(
+    webConfirm(
       'Confirm Booking',
       `Confirm ${requestedSeats} seat(s) for ${booking?.employeeName}? ${seatsLeft - requestedSeats} seats will remain.`,
       () => performAction('confirm')
@@ -109,7 +92,7 @@ export default function TripDetailScreen({ navigation, route }) {
   };
 
   const handleCancel = () => {
-    confirmAction(
+    webConfirm(
       'Cancel Booking',
       `Cancel ${booking?.employeeName}'s trip booking?`,
       () => performAction('cancel')
@@ -128,10 +111,10 @@ export default function TripDetailScreen({ navigation, route }) {
       if (response.ok) {
         navigation.goBack();
       } else {
-        alert(data.message || `Failed to ${action} booking.`);
+        webAlert('Error', data.message || `Failed to ${action} booking.`);
       }
     } catch {
-      alert('Network error. Please try again.');
+      webAlert('Error', 'Network error. Please try again.');
     } finally {
       setActionLoading(false);
     }

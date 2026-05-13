@@ -44,6 +44,46 @@ router.get('/all', verifyToken, verifyRole([
   }
 });
 
+// ─── GET /lookup ──────────────────────────────────────────
+// Admin, CMO, Doctor look up an employee by officialEmployeeNumber
+// Used by FitnessAdminScreen to confirm employee before scheduling
+router.get('/lookup', verifyToken, verifyRole([
+  ROLES.ADMIN_INCHARGE, ROLES.CMO, ROLES.DOCTOR,
+]), async (req, res) => {
+  try {
+    const db = admin.firestore();
+    const { employeeNumber } = req.query;
+
+    if (!employeeNumber || !employeeNumber.trim()) {
+      return errorResponse(res, 'employeeNumber query parameter is required', 400);
+    }
+
+    const snapshot = await db.collection('employees')
+      .where('officialEmployeeNumber', '==', employeeNumber.trim().toUpperCase())
+      .limit(1)
+      .get();
+
+    if (snapshot.empty) {
+      return errorResponse(res, 'No employee found with this employee number', 404);
+    }
+
+    const doc = snapshot.docs[0];
+    const data = doc.data();
+
+    return successResponse(res, {
+      id:                     doc.id,
+      fullName:               data.fullName               || null,
+      officialEmployeeNumber: data.officialEmployeeNumber || null,
+      department:             data.department             || null,
+      designation:            data.designation            || null,
+    });
+
+  } catch (error) {
+    console.error('Employee lookup error:', error);
+    return errorResponse(res, 'Lookup failed', 500);
+  }
+});
+
 // ─── GET /pending-validation ──────────────────────────────
 // Admin only — employees awaiting validation
 router.get('/pending-validation', verifyToken,
@@ -165,25 +205,42 @@ router.put('/:employeeId', verifyToken, async (req, res) => {
       designation,
       department,
       houseNumber,
+      roomNumber,                  // ← NEW
       phoneNumber,
       emergencyPhoneNumber,
       landlineExtension,
       bloodGroup,
       bloodDonorConsent,
       maritalStatus,
+      // ── Residence fields ──────────────────────────────
+      townshipResidentWithFamily,  // ← NEW
+      townshipResidentBachelor,    // ← NEW
+      residenceType,               // ← NEW
+      cityOfResidence,             // ← NEW
     } = req.body;
 
     const updates = {};
-    if (fullName)              updates.fullName              = fullName;
-    if (cnic)                  updates.cnic                  = cnic;
-    if (designation)           updates.designation           = designation;
-    if (department)            updates.department            = department;
-    if (houseNumber)           updates.houseNumber           = houseNumber;
-    if (phoneNumber)           updates.phoneNumber           = phoneNumber;
-    if (emergencyPhoneNumber)  updates.emergencyPhoneNumber  = emergencyPhoneNumber;
-    if (landlineExtension)     updates.landlineExtension     = landlineExtension;
-    if (bloodGroup)            updates.bloodGroup            = bloodGroup;
-    if (maritalStatus)         updates.maritalStatus         = maritalStatus;
+    if (fullName)             updates.fullName             = fullName;
+    if (cnic)                 updates.cnic                 = cnic;
+    if (designation)          updates.designation          = designation;
+    if (department)           updates.department           = department;
+    if (houseNumber)          updates.houseNumber          = houseNumber;
+    if (roomNumber)           updates.roomNumber           = roomNumber;           // ← NEW
+    if (phoneNumber)          updates.phoneNumber          = phoneNumber;
+    if (emergencyPhoneNumber) updates.emergencyPhoneNumber = emergencyPhoneNumber;
+    if (landlineExtension)    updates.landlineExtension    = landlineExtension;
+    if (bloodGroup)           updates.bloodGroup           = bloodGroup;
+    if (maritalStatus)        updates.maritalStatus        = maritalStatus;
+
+    // Residence fields — use explicit undefined check so false values are saved
+    if (townshipResidentWithFamily !== undefined)
+      updates.townshipResidentWithFamily = townshipResidentWithFamily;            // ← NEW
+    if (townshipResidentBachelor !== undefined)
+      updates.townshipResidentBachelor   = townshipResidentBachelor;              // ← NEW
+    if (residenceType !== undefined)
+      updates.residenceType              = residenceType;                         // ← NEW
+    if (cityOfResidence !== undefined)
+      updates.cityOfResidence            = cityOfResidence;                       // ← NEW
 
     if (bloodDonorConsent !== undefined) {
       updates.bloodDonorConsent = bloodDonorConsent;
@@ -255,12 +312,12 @@ router.post('/:employeeId/family-members', verifyToken, async (req, res) => {
     await memberRef.set({
       fullName,
       relation,
-      dateOfBirth:             dateOfBirth || null,
-      gender:                  gender || null,
-      bloodGroup:              bloodGroup || null,
-      maritalStatus:           maritalStatus || null,
-      employmentStatus:        employmentStatus || null,
-      differentlyAbled:        differentlyAbled || false,
+      dateOfBirth:             dateOfBirth             || null,
+      gender:                  gender                  || null,
+      bloodGroup:              bloodGroup              || null,
+      maritalStatus:           maritalStatus           || null,
+      employmentStatus:        employmentStatus        || null,
+      differentlyAbled:        differentlyAbled        || false,
       differentlyAbledDetails: differentlyAbledDetails || null,
       createdAt:               nowISO(),
     });

@@ -1,3 +1,6 @@
+//  FFL Medical Centre — authRoutes.js
+//  Path: functions/src/auth/authRoutes.js
+// ─────────────────────────────────────────────────────────────
 const express = require('express');
 const router = express.Router();
 const admin = require('firebase-admin');
@@ -48,7 +51,18 @@ const verifyRole = (allowedRoles) => {
 router.post('/register', verifyToken, async (req, res) => {
   try {
     const db = admin.firestore();
-    const { fullName, phoneNumber, employeeNumber } = req.body;
+    const {
+      fullName,
+      phoneNumber,
+      employeeNumber,
+      // ── Residence fields ─────────────────────────────
+      townshipResidentWithFamily,
+      townshipResidentBachelor,
+      residenceType,
+      houseNumber,
+      roomNumber,
+      cityOfResidence,
+    } = req.body;
 
     if (!fullName || !phoneNumber || !employeeNumber) {
       return errorResponse(res, 'fullName, phoneNumber and employeeNumber are required', 400);
@@ -75,29 +89,35 @@ router.post('/register', verifyToken, async (req, res) => {
     batch.set(userRef, {
       email:       req.user.email || null,
       phone:       phoneNumber,
-      role:        ROLES.EMPLOYEE, // default role, admin will validate
-      isActive:    false,          // inactive until admin validates
+      role:        ROLES.EMPLOYEE,
+      isActive:    false,
       createdAt:   nowISO(),
       lastLoginAt: nowISO(),
     });
 
-    // Create employee document
-    const employeeRef = db.collection('employees').doc();
-    batch.set(employeeRef, {
+    // ── Build employee document with residence fields ──
+    const employeeData = {
       userId:                 req.user.uid,
       fullName,
       officialEmployeeNumber: employeeNumber,
       phoneNumber,
       isValidated:            false,
       createdAt:              nowISO(),
-    });
+      // Residence fields
+      townshipResidentWithFamily: townshipResidentWithFamily === true,
+      townshipResidentBachelor:   townshipResidentBachelor   === true,
+      residenceType:              residenceType   || null,
+      houseNumber:                houseNumber     || null,
+      roomNumber:                 roomNumber      || null,
+      cityOfResidence:            cityOfResidence || null,
+    };
+
+    const employeeRef = db.collection('employees').doc();
+    batch.set(employeeRef, employeeData);
 
     await batch.commit();
 
-    // ── Notify admin by email ─────────────────────────────
-    // Writes to the 'mail' collection — Firebase Trigger Email
-    // extension picks it up and sends automatically.
-    // Non-fatal: registration succeeds even if this fails.
+    // ── Notify admin by email ─────────────────────────
     try {
       await db.collection('mail').add({
         to:      'admin@ffl.com',
@@ -126,7 +146,6 @@ router.post('/register', verifyToken, async (req, res) => {
     } catch (mailErr) {
       console.warn('Admin email notification failed:', mailErr.message);
     }
-    // ─────────────────────────────────────────────────────
 
     return successResponse(res, {
       uid:        req.user.uid,
@@ -156,7 +175,6 @@ router.post('/complete-profile', verifyToken, async (req, res) => {
       maritalStatus,
     } = req.body;
 
-    // Find employee document by userId
     const empQuery = await db.collection('employees')
       .where('userId', '==', req.user.uid)
       .get();
@@ -180,7 +198,6 @@ router.post('/complete-profile', verifyToken, async (req, res) => {
       profileCompletedAt:   nowISO(),
     });
 
-    // If blood donor consent given, add to donor registry
     if (bloodDonorConsent && bloodGroup) {
       await db.collection('bloodDonorRegistry').doc(empDoc.id).set({
         employeeId:       empDoc.id,
@@ -202,7 +219,6 @@ router.post('/complete-profile', verifyToken, async (req, res) => {
 });
 
 // ─── GET /me ─────────────────────────────────────────────
-// Returns current user profile
 router.get('/me', verifyToken, async (req, res) => {
   try {
     const db = admin.firestore();
@@ -221,7 +237,6 @@ router.get('/me', verifyToken, async (req, res) => {
       ...empQuery.docs[0].data(),
     };
 
-    // Remove sensitive/admin-only fields from employee data
     if (employeeData) {
       delete employeeData.communityGroup;
     }
@@ -250,12 +265,11 @@ router.post('/update-last-login', verifyToken, async (req, res) => {
   }
 });
 
-// ─── GET /pending-users — Admin lists all pending approval requests ──────────
+// ─── GET /pending-users ───────────────────────────────────
 router.get('/pending-users', verifyToken, verifyRole([ROLES.ADMIN_INCHARGE, ROLES.CMO]), async (req, res) => {
   try {
     const db = admin.firestore();
 
-    // Get all inactive users
     const usersSnap = await db.collection('users')
       .where('isActive', '==', false)
       .get();
@@ -264,7 +278,6 @@ router.get('/pending-users', verifyToken, verifyRole([ROLES.ADMIN_INCHARGE, ROLE
       return successResponse(res, [], 'No pending users');
     }
 
-    // Enrich with employee data
     const pending = await Promise.all(usersSnap.docs.map(async (userDoc) => {
       const userData = userDoc.data();
       const empSnap = await db.collection('employees')
@@ -279,14 +292,13 @@ router.get('/pending-users', verifyToken, verifyRole([ROLES.ADMIN_INCHARGE, ROLE
         phone:                  userData.phone || null,
         role:                   userData.role,
         createdAt:              userData.createdAt,
-        fullName:               empData.fullName || '—',
+        fullName:               empData.fullName               || '—',
         officialEmployeeNumber: empData.officialEmployeeNumber || '—',
         phoneNumber:            empData.phoneNumber || userData.phone || '—',
         employeeId:             empSnap.empty ? null : empSnap.docs[0].id,
       };
     }));
 
-    // Sort newest first
     pending.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
 
     return successResponse(res, pending, 'Pending users fetched');
@@ -296,8 +308,7 @@ router.get('/pending-users', verifyToken, verifyRole([ROLES.ADMIN_INCHARGE, ROLE
   }
 });
 
-// ─── POST /approve-user — Admin approves a signup request ────────────────────
-// Body: { uid, role }
+// ─── POST /approve-user ───────────────────────────────────
 router.post('/approve-user', verifyToken, verifyRole([ROLES.ADMIN_INCHARGE]), async (req, res) => {
   try {
     const db = admin.firestore();
@@ -320,7 +331,6 @@ router.post('/approve-user', verifyToken, verifyRole([ROLES.ADMIN_INCHARGE]), as
       return errorResponse(res, 'User is already active', 409);
     }
 
-    // Activate user and assign role
     await db.collection('users').doc(uid).update({
       isActive:   true,
       role:       role,
@@ -328,7 +338,6 @@ router.post('/approve-user', verifyToken, verifyRole([ROLES.ADMIN_INCHARGE]), as
       approvedAt: nowISO(),
     });
 
-    // Mark employee as validated
     const empSnap = await db.collection('employees')
       .where('userId', '==', uid)
       .limit(1)
@@ -341,7 +350,6 @@ router.post('/approve-user', verifyToken, verifyRole([ROLES.ADMIN_INCHARGE]), as
       });
     }
 
-    // Send email verification via Firebase Auth
     try {
       const verificationLink = await admin.auth().generateEmailVerificationLink(
         userDoc.data().email,
@@ -349,7 +357,6 @@ router.post('/approve-user', verifyToken, verifyRole([ROLES.ADMIN_INCHARGE]), as
       );
       console.log('Verification link generated for:', userDoc.data().email);
     } catch (emailErr) {
-      // Non-fatal — account is still activated
       console.warn('Email verification link failed:', emailErr.message);
     }
 
@@ -360,8 +367,7 @@ router.post('/approve-user', verifyToken, verifyRole([ROLES.ADMIN_INCHARGE]), as
   }
 });
 
-// ─── POST /reject-user — Admin rejects a signup request ──────────────────────
-// Body: { uid, reason }
+// ─── POST /reject-user ────────────────────────────────────
 router.post('/reject-user', verifyToken, verifyRole([ROLES.ADMIN_INCHARGE]), async (req, res) => {
   try {
     const db = admin.firestore();
@@ -379,13 +385,9 @@ router.post('/reject-user', verifyToken, verifyRole([ROLES.ADMIN_INCHARGE]), asy
       return errorResponse(res, 'Cannot reject an already active user', 409);
     }
 
-    // Delete Firebase Auth account
     await admin.auth().deleteUser(uid);
-
-    // Delete Firestore user document
     await db.collection('users').doc(uid).delete();
 
-    // Delete employee document
     const empSnap = await db.collection('employees')
       .where('userId', '==', uid)
       .limit(1)

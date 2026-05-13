@@ -6,12 +6,13 @@ import LogoutButton     from '../../components/LogoutButton';
 import NotificationBell from '../../components/NotificationBell';
 
 const TILES = [
-  { id: 'ambulance',    label: 'Ambulance Dispatch',  icon: '🚑', screen: 'AmbulanceReceptionHub',    active: true },
-  { id: 'trip',         label: 'Medical Trip',        icon: '🚌', screen: 'TripReceptionHub',          active: true },
-  { id: 'directory',    label: 'Doctors Directory',   icon: '🏥', screen: 'DirectoryList',             active: true },
-  { id: 'availability', label: 'Doctor Availability', icon: '🩺', screen: 'DoctorAvailabilityManage',  active: true },
-  { id: 'circulars',    label: 'Circulars & Notices', icon: '📢', screen: 'Circulars',                 active: true },
-  { id: 'donors',       label: 'Blood Donors',        icon: '🩸', screen: 'BloodDonorDirectory',       active: true },
+  { id: 'ambulance',    label: 'Ambulance Dispatch',  icon: '🚑', screen: 'AmbulanceReceptionHub',   active: true },
+  { id: 'trip',         label: 'Medical Trip',        icon: '🚌', screen: 'TripReceptionHub',         active: true },
+  { id: 'directory',    label: 'Doctors Directory',   icon: '🏥', screen: 'DirectoryList',            active: true },
+  { id: 'availability', label: 'Doctor Availability', icon: '🩺', screen: 'DoctorAvailabilityManage', active: true },
+  { id: 'circulars',    label: 'Circulars & Notices', icon: '📢', screen: 'Circulars',                active: true },
+  { id: 'donors',       label: 'Blood Donors',        icon: '🩸', screen: 'BloodDonorDirectory',      active: true },
+  { id: 'reports',      label: 'Reports',             icon: '📊', screen: 'ReportsHub',               active: true },
 ];
 
 export default function ReceptionHome({ navigation }) {

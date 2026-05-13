@@ -71,6 +71,15 @@ import VaccinationReportScreen      from '../screens/vaccination/VaccinationRepo
 // ─── Blood Donor Directory ────────────────────────────────────────────────────
 import BloodDonorDirectoryScreen from '../screens/donors/BloodDonorDirectoryScreen';
 
+// ─── Reports ──────────────────────────────────────────────────────────────────
+import ReportsHubScreen          from '../screens/reports/ReportsHubScreen';
+import TripDayReportScreen       from '../screens/reports/TripDayReportScreen';
+import TripMonthlyReportScreen   from '../screens/reports/TripMonthlyReportScreen';
+import AmbulanceKPIReportScreen  from '../screens/reports/AmbulanceKPIReportScreen';
+import PopulationReportScreen    from '../screens/reports/PopulationReportScreen';
+import EmployeeOnlyReportScreen  from '../screens/reports/EmployeeOnlyReportScreen';
+import BloodGroupReportScreen    from '../screens/reports/BloodGroupReportScreen';
+
 const Stack = createNativeStackNavigator();
 
 export default function AppNavigator({ userRole }) {
@@ -151,6 +160,16 @@ export default function AppNavigator({ userRole }) {
 
       {/* Blood Donor Directory */}
       <Stack.Screen name="BloodDonorDirectory" component={BloodDonorDirectoryScreen} />
+
+      {/* Reports */}
+      <Stack.Screen name="ReportsHub"        component={ReportsHubScreen} />
+      <Stack.Screen name="TripDayReport"     component={TripDayReportScreen} />
+      <Stack.Screen name="TripMonthlyReport" component={TripMonthlyReportScreen} />
+      <Stack.Screen name="AmbulanceKPIReport" component={AmbulanceKPIReportScreen} />
+      <Stack.Screen name="TownshipReport"    component={PopulationReportScreen} />
+      <Stack.Screen name="NonTownshipReport" component={PopulationReportScreen} />
+      <Stack.Screen name="EmployeeOnlyReport" component={EmployeeOnlyReportScreen} />
+      <Stack.Screen name="BloodGroupReport"  component={BloodGroupReportScreen} />
 
     </Stack.Navigator>
   );

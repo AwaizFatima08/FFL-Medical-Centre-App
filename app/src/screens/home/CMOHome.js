@@ -6,13 +6,14 @@ import LogoutButton     from '../../components/LogoutButton';
 import NotificationBell from '../../components/NotificationBell';
 
 const TILES = [
-  { id: 'availability', label: 'Doctor Availability', icon: '🩺', screen: 'DoctorAvailability',     active: true },
-  { id: 'feedback',     label: 'Patient Feedback',    icon: '📋', screen: 'FeedbackList',            active: true },
-  { id: 'trip',         label: 'Medical Trip',        icon: '🚌', screen: 'TripView',                active: true },
-  { id: 'directory',    label: 'Doctors Directory',   icon: '🏥', screen: 'DirectoryList',           active: true },
-  { id: 'circulars',    label: 'Circulars & Notices', icon: '📢', screen: 'Circulars',               active: true },
-  { id: 'fitness',      label: 'Annual Fitness',      icon: '🏃', screen: 'FitnessAdmin',            active: true },
-  { id: 'donors',       label: 'Blood Donors',        icon: '🩸', screen: 'BloodDonorDirectory',     active: true },
+  { id: 'availability', label: 'Doctor Availability', icon: '🩺', screen: 'DoctorAvailability',      active: true },
+  { id: 'feedback',     label: 'Patient Feedback',    icon: '📋', screen: 'FeedbackList',             active: true },
+  { id: 'trip',         label: 'Medical Trip',        icon: '🚌', screen: 'TripView',                 active: true },
+  { id: 'directory',    label: 'Doctors Directory',   icon: '🏥', screen: 'DirectoryList',            active: true },
+  { id: 'circulars',    label: 'Circulars & Notices', icon: '📢', screen: 'Circulars',                active: true },
+  { id: 'fitness',      label: 'Annual Fitness',      icon: '🏃', screen: 'FitnessAdmin',             active: true },
+  { id: 'donors',       label: 'Blood Donors',        icon: '🩸', screen: 'BloodDonorDirectory',      active: true },
+  { id: 'reports',      label: 'Reports',             icon: '📊', screen: 'ReportsHub',               active: true },
 ];
 
 export default function CMOHome({ navigation }) {

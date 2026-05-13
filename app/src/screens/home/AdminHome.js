@@ -9,14 +9,15 @@ import NotificationBell from '../../components/NotificationBell';
 import { API } from '../../config/api';
 
 const TILES = [
-  { id: 'approvals',    label: 'User Approvals',      icon: '👤', screen: 'UserApproval',           active: true, badge: true },
+  { id: 'approvals',    label: 'User Approvals',      icon: '👤', screen: 'UserApproval',            active: true, badge: true },
   { id: 'availability', label: 'Doctor Availability',  icon: '🩺', screen: 'DoctorAvailabilityManage', active: true },
-  { id: 'feedback',     label: 'Patient Feedback',     icon: '📋', screen: 'FeedbackList',            active: true },
-  { id: 'directory',    label: 'Doctors Directory',    icon: '🏥', screen: 'DirectoryList',           active: true },
-  { id: 'circulars',    label: 'Circulars & Notices',  icon: '📢', screen: 'Circulars',               active: true },
-  { id: 'fitness',      label: 'Annual Fitness',       icon: '🏃', screen: 'FitnessAdmin',            active: true },
-  { id: 'family',       label: 'Family Records',       icon: '👨‍👩‍👧‍👦', screen: 'FamilyAdminReview',      active: true },
-  { id: 'donors',       label: 'Blood Donors',         icon: '🩸', screen: 'BloodDonorDirectory',     active: true },
+  { id: 'feedback',     label: 'Patient Feedback',     icon: '📋', screen: 'FeedbackList',             active: true },
+  { id: 'directory',    label: 'Doctors Directory',    icon: '🏥', screen: 'DirectoryList',            active: true },
+  { id: 'circulars',    label: 'Circulars & Notices',  icon: '📢', screen: 'Circulars',                active: true },
+  { id: 'fitness',      label: 'Annual Fitness',       icon: '🏃', screen: 'FitnessAdmin',             active: true },
+  { id: 'family',       label: 'Family Records',       icon: '👨‍👩‍👧‍👦', screen: 'FamilyAdminReview',       active: true },
+  { id: 'donors',       label: 'Blood Donors',         icon: '🩸', screen: 'BloodDonorDirectory',      active: true },
+  { id: 'reports',      label: 'Reports',              icon: '📊', screen: 'ReportsHub',               active: true },
 ];
 
 export default function AdminHome({ navigation }) {
@@ -25,9 +26,9 @@ export default function AdminHome({ navigation }) {
   useFocusEffect(useCallback(() => {
     const fetchPendingCount = async () => {
       try {
-        const auth = getAuth();
+        const auth  = getAuth();
         const token = await auth.currentUser.getIdToken();
-        const res = await fetch(`${API.auth}/pending-users`, {
+        const res   = await fetch(`${API.auth}/pending-users`, {
           headers: { Authorization: `Bearer ${token}` },
         });
         const data = await res.json();

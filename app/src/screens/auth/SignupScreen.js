@@ -59,6 +59,16 @@ const STEP_ACCOUNT   = 1;
 const STEP_IDENTITY  = 2;
 const STEP_RESIDENCE = 3;
 
+// ── Employee number formatter: auto-inserts dash after 3 prefix chars
+const formatEmployeeNumber = (text) => {
+  const clean = text.replace(/[^A-Za-z0-9]/g, '').toUpperCase();
+  if (clean.length <= 3) return clean;
+  return clean.slice(0, 3) + '-' + clean.slice(3, 8);
+};
+
+const VALID_PREFIXES = ['FFL', 'ESB', 'OSL', 'FAS'];
+const EMP_PATTERN = /^(FFL|ESB|OSL|FAS)-\d{5}$/;
+
 export default function SignupScreen({ navigation }) {
   const [step,           setStep]           = useState(STEP_ACCOUNT);
 
@@ -74,7 +84,7 @@ export default function SignupScreen({ navigation }) {
   const [phone,          setPhone]          = useState('');
 
   // Step 3 — residence
-  const [townshipResidentWithFamily,   setTownshipResidentWithFamily]   = useState(null); // null = not yet answered
+  const [townshipResidentWithFamily,   setTownshipResidentWithFamily]   = useState(null);
   const [townshipResidentBachelor,     setTownshipResidentBachelor]     = useState(null);
   const [residenceType,                setResidenceType]                = useState('');
   const [houseNumber,                  setHouseNumber]                  = useState('');
@@ -117,6 +127,12 @@ export default function SignupScreen({ navigation }) {
     }
     if (!employeeNumber.trim()) {
       webAlert('Required', 'Please enter your employee number.'); return;
+    }
+    if (!EMP_PATTERN.test(employeeNumber.trim())) {
+      webAlert(
+        'Invalid Employee Number',
+        `Employee number must be in format PREFIX-00000 where PREFIX is one of: ${VALID_PREFIXES.join(', ')}.\n\nExample: FFL-00100`
+      ); return;
     }
     if (!phone.trim() || phone.length < 10) {
       webAlert('Invalid', 'Please enter a valid phone number.'); return;
@@ -370,8 +386,10 @@ export default function SignupScreen({ navigation }) {
                 placeholderTextColor="#94a3b8"
                 autoCapitalize="characters"
                 value={employeeNumber}
-                onChangeText={setEmployeeNumber}
+                onChangeText={(text) => setEmployeeNumber(formatEmployeeNumber(text))}
+                maxLength={9}
               />
+              <Text style={styles.fieldHint}>Format: FFL-00000 · ESB-00000 · OSL-00000 · FAS-00000</Text>
 
               <Text style={styles.label}>Mobile Number</Text>
               <TextInput
@@ -395,13 +413,11 @@ export default function SignupScreen({ navigation }) {
               <Text style={styles.cardTitle}>Residence Details</Text>
               <Text style={styles.cardSub}>Step 3 of 3 — Where do you live?</Text>
 
-              {/* Q1: Township resident with family? */}
               <YesNoRow
                 label="Are you a township resident with family?"
                 value={townshipResidentWithFamily}
                 onChange={(val) => {
                   setTownshipResidentWithFamily(val);
-                  // Reset downstream fields on change
                   setTownshipResidentBachelor(null);
                   setResidenceType('');
                   setHouseNumber('');
@@ -410,7 +426,6 @@ export default function SignupScreen({ navigation }) {
                 }}
               />
 
-              {/* Q2: Bachelor accommodation? (only if not with family) */}
               {townshipResidentWithFamily === false && (
                 <YesNoRow
                   label="Are you in township bachelor accommodation?"
@@ -425,7 +440,6 @@ export default function SignupScreen({ navigation }) {
                 />
               )}
 
-              {/* Residence type (only for township residents) */}
               {showResidenceType && (
                 <DropdownPicker
                   label="Residence Type"
@@ -439,7 +453,6 @@ export default function SignupScreen({ navigation }) {
                 />
               )}
 
-              {/* House number (family accommodation) */}
               {showHouseNumber && (
                 <>
                   <Text style={styles.label}>House Number</Text>
@@ -454,7 +467,6 @@ export default function SignupScreen({ navigation }) {
                 </>
               )}
 
-              {/* Room number (bachelor accommodation) */}
               {showRoomNumber && (
                 <>
                   <Text style={styles.label}>Room Number</Text>
@@ -469,7 +481,6 @@ export default function SignupScreen({ navigation }) {
                 </>
               )}
 
-              {/* City of residence (non-township only) */}
               {showCity && (
                 <DropdownPicker
                   label="City of Residence"
@@ -502,7 +513,6 @@ export default function SignupScreen({ navigation }) {
                 </TouchableOpacity>
               </View>
 
-              {/* Info box */}
               <View style={styles.infoBox}>
                 <Text style={styles.infoIcon}>ℹ️</Text>
                 <Text style={styles.infoText}>
@@ -575,6 +585,7 @@ const styles = StyleSheet.create({
   cardSub:   { fontSize: 13, color: '#64748b', marginBottom: 24 },
 
   label: { fontSize: 13, fontWeight: '600', color: '#334155', marginBottom: 6 },
+  fieldHint: { fontSize: 11, color: '#94a3b8', marginTop: -10, marginBottom: 14, marginLeft: 2 },
   input: {
     borderWidth: 1.5, borderColor: '#e2e8f0', borderRadius: 10,
     paddingHorizontal: 14, paddingVertical: 12,
@@ -585,7 +596,6 @@ const styles = StyleSheet.create({
   eyeBtn:    { position: 'absolute', right: 14, top: 12 },
   eyeText:   { fontSize: 18 },
 
-  // ── Yes/No buttons
   yesNoGroup: { marginBottom: 16 },
   yesNoRow:   { flexDirection: 'row', gap: 12, marginTop: 4 },
   yesNoBtn: {
@@ -597,7 +607,6 @@ const styles = StyleSheet.create({
   yesNoBtnText:       { fontSize: 14, fontWeight: '600', color: '#64748b' },
   yesNoBtnTextActive: { color: '#fff' },
 
-  // ── Dropdown chips
   dropdownGroup:  { marginBottom: 16 },
   optionScroll:   { marginTop: 4 },
   optionChip: {
@@ -609,7 +618,6 @@ const styles = StyleSheet.create({
   optionChipText:         { fontSize: 13, fontWeight: '600', color: '#64748b' },
   optionChipTextSelected: { color: '#fff' },
 
-  // ── Disclaimer
   disclaimerBox: {
     backgroundColor: '#fef9ec', borderRadius: 10, padding: 14,
     borderLeftWidth: 3, borderLeftColor: '#f59e0b', marginBottom: 16,

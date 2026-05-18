@@ -4,7 +4,8 @@ import { webAlert, webConfirm } from '../../utils/webAlert';
 // Reception views all bookings, filters by date, confirms seats, generates report
 // Seat cap: 24 per trip date
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useCallback } from 'react';
+import { useFocusEffect } from '@react-navigation/native';
 import {
   View, Text, StyleSheet, TouchableOpacity,
   ScrollView, ActivityIndicator, RefreshControl,
@@ -81,10 +82,11 @@ export default function TripReceptionHubScreen({ navigation, route }) {
     }
   };
 
-  useEffect(() => {
-    setLoading(true);
-    fetchBookings(selectedDate);
-  }, [selectedDate]);
+  useFocusEffect(
+    useCallback(() => {
+      fetchBookings(selectedDate);
+    }, [selectedDate])
+  );
 
   const onRefresh = () => {
     setRefreshing(true);

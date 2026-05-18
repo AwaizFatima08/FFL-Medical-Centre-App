@@ -13,6 +13,7 @@ import {
 import {
   BLOOD_GROUPS, MARITAL_STATUSES, EMPLOYMENT_STATUSES,
 } from '../../constants';
+import DatePickerField from '../../components/DatePickerField';
 
 // ─── Reusable dropdown ────────────────────────────────────────────────────────
 function DropdownField({ label, value, options, onSelect, required }) {
@@ -61,25 +62,7 @@ function DropdownField({ label, value, options, onSelect, required }) {
   );
 }
 
-// ─── Format Firestore timestamp to DD/MM/YYYY ────────────────────────────────
-function formatDate(timestamp) {
-  if (!timestamp) return '';
-  const date = timestamp.toDate ? timestamp.toDate() : new Date(timestamp);
-  const d = String(date.getDate()).padStart(2, '0');
-  const m = String(date.getMonth() + 1).padStart(2, '0');
-  const y = date.getFullYear();
-  return `${d}/${m}/${y}`;
-}
-
-// ─── Parse DD/MM/YYYY to Date ────────────────────────────────────────────────
-function parseDate(str) {
-  if (!str || str.length !== 10) return null;
-  const [d, m, y] = str.split('/').map(Number);
-  if (!d || !m || !y) return null;
-  const date = new Date(y, m - 1, d);
-  return isNaN(date.getTime()) ? null : date;
-}
-
+// ─── Helpers ──────────────────────────────────────────────────────────────────
 function ageInYears(date) {
   if (!date) return 0;
   const today = new Date();
@@ -101,7 +84,7 @@ export default function FamilyMemberEditScreen({ route, navigation }) {
 
   // Editable fields
   const [name,             setName]             = useState('');
-  const [dob,              setDob]              = useState('');
+  const [dob,              setDob]              = useState(null);
   const [cnic,             setCnic]             = useState('');
   const [nadraCard,        setNadraCard]        = useState('');
   const [bloodGroup,       setBloodGroup]       = useState('');
@@ -113,9 +96,9 @@ export default function FamilyMemberEditScreen({ route, navigation }) {
   const auth = getAuth();
 
   // ─── Derived ────────────────────────────────────────────────────────────────
-  const dobDate  = parseDate(dob);
-  const age      = ageInYears(dobDate);
-  const isAdult  = dobDate ? age >= 25 : false;
+  const dobDate   = dob instanceof Date ? dob : null;
+  const age       = ageInYears(dobDate);
+  const isAdult   = dobDate ? age >= 25 : false;
   const needsCnic = dobDate ? age >= 18 : false;
 
   // ─── Load existing record ───────────────────────────────────────────────────
@@ -145,7 +128,9 @@ export default function FamilyMemberEditScreen({ route, navigation }) {
         // can see what is currently under review
         const source = data.pendingRevision || data;
         setName(source.name || '');
-        setDob(source.dateOfBirth ? formatDate(source.dateOfBirth) : '');
+        setDob(source.dateOfBirth
+          ? (source.dateOfBirth.toDate ? source.dateOfBirth.toDate() : new Date(source.dateOfBirth))
+          : null);
         setCnic(source.cnic || '');
         setNadraCard(source.nadraCardNumber || '');
         setBloodGroup(source.bloodGroup || '');
@@ -167,7 +152,6 @@ export default function FamilyMemberEditScreen({ route, navigation }) {
   const validate = () => {
     if (!name.trim()) { webAlert('Required', 'Full name cannot be empty.'); return false; }
     if (!dob)         { webAlert('Required', 'Date of birth is required.'); return false; }
-    if (!dobDate)     { webAlert('Invalid Date', 'Use format DD/MM/YYYY.'); return false; }
     if (dobDate > new Date()) {
       webAlert('Invalid Date', 'Date of birth cannot be in the future.');
       return false;
@@ -193,16 +177,18 @@ export default function FamilyMemberEditScreen({ route, navigation }) {
 
     // Check if anything actually changed
     const live = liveRecord;
-    const liveDob = live.dateOfBirth ? formatDate(live.dateOfBirth) : '';
+    const liveDobDate = live.dateOfBirth
+      ? (live.dateOfBirth.toDate ? live.dateOfBirth.toDate() : new Date(live.dateOfBirth))
+      : null;
     const noChange =
-      name.trim()       === (live.name || '') &&
-      dob               === liveDob &&
-      cnic.trim()       === (live.cnic || '') &&
-      nadraCard.trim()  === (live.nadraCardNumber || '') &&
-      bloodGroup        === (live.bloodGroup || '') &&
-      differentlyAbled  === (live.differentlyAbled || false) &&
-      maritalStatus     === (live.maritalStatus || '') &&
-      employmentStatus  === (live.employmentStatus || '');
+      name.trim()        === (live.name || '') &&
+      dob?.getTime()     === liveDobDate?.getTime() &&
+      cnic.trim()        === (live.cnic || '') &&
+      nadraCard.trim()   === (live.nadraCardNumber || '') &&
+      bloodGroup         === (live.bloodGroup || '') &&
+      differentlyAbled   === (live.differentlyAbled || false) &&
+      maritalStatus      === (live.maritalStatus || '') &&
+      employmentStatus   === (live.employmentStatus || '');
 
     if (noChange) {
       webAlert('No Changes', 'You have not made any changes to this record.');
@@ -305,18 +291,12 @@ export default function FamilyMemberEditScreen({ route, navigation }) {
         </View>
 
         {/* Date of Birth */}
-        <View style={styles.fieldGroup}>
-          <Text style={styles.label}>Date of Birth <Text style={styles.required}>*</Text></Text>
-          <TextInput
-            style={styles.input}
-            placeholder="DD/MM/YYYY"
-            placeholderTextColor="#a0aec0"
-            value={dob}
-            onChangeText={setDob}
-            keyboardType="numeric"
-            maxLength={10}
-          />
-        </View>
+        <DatePickerField
+          label="Date of Birth *"
+          value={dob}
+          onChange={setDob}
+          maximumDate={new Date()}
+        />
 
         {/* Age indicator */}
         {dobDate && (

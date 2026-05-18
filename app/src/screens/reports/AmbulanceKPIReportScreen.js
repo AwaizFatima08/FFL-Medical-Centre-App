@@ -8,6 +8,7 @@ import {
 } from 'react-native';
 import { getAuth } from 'firebase/auth';
 import { API } from '../../config/api';
+import DatePickerField from '../../components/DatePickerField';
 
 const MONTHS = [
   'January','February','March','April','May','June',
@@ -15,11 +16,10 @@ const MONTHS = [
 ];
 
 export default function AmbulanceKPIReportScreen({ navigation }) {
-  const now  = new Date();
-  const todayStr = now.toISOString().split('T')[0];
+  const now = new Date();
 
   const [mode,    setMode]    = useState('daily');   // 'daily' | 'monthly'
-  const [date,    setDate]    = useState(todayStr);
+  const [date,    setDate]    = useState(new Date());
   const [month,   setMonth]   = useState(now.getMonth() + 1);
   const [year,    setYear]    = useState(now.getFullYear());
   const [data,    setData]    = useState(null);
@@ -36,9 +36,10 @@ export default function AmbulanceKPIReportScreen({ navigation }) {
     setError('');
     setData(null);
     try {
-      const token = await getToken();
-      const query = mode === 'daily'
-        ? `date=${date}`
+      const token   = await getToken();
+      const dateStr = date instanceof Date ? date.toISOString().split('T')[0] : date;
+      const query   = mode === 'daily'
+        ? `date=${dateStr}`
         : `month=${month}&year=${year}`;
       const response = await fetch(
         `${API.reports}/ambulance/kpis?${query}`,
@@ -87,19 +88,21 @@ export default function AmbulanceKPIReportScreen({ navigation }) {
           ))}
         </View>
 
-        {/* Date input for daily */}
+        {/* Date picker for daily */}
         {mode === 'daily' && (
           <>
-            <Text style={styles.sectionLabel}>Date (YYYY-MM-DD)</Text>
-            <View style={styles.dateInputRow}>
-              <TouchableOpacity
-                style={styles.todayBtn}
-                onPress={() => setDate(todayStr)}
-              >
-                <Text style={styles.todayBtnText}>Today</Text>
-              </TouchableOpacity>
-            </View>
-            <Text style={styles.selectedDate}>{date}</Text>
+            <DatePickerField
+              label="Select Date"
+              value={date}
+              onChange={setDate}
+              maximumDate={new Date()}
+            />
+            <TouchableOpacity
+              style={styles.todayBtn}
+              onPress={() => setDate(new Date())}
+            >
+              <Text style={styles.todayBtnText}>Reset to Today</Text>
+            </TouchableOpacity>
           </>
         )}
 
@@ -154,16 +157,40 @@ export default function AmbulanceKPIReportScreen({ navigation }) {
         {data && (
           <>
             {/* KPI Summary */}
-            <Text style={styles.sectionLabel}>Average KPIs ({data.completed} completed trips)</Text>
+            <Text style={styles.sectionLabel}>
+              Average KPIs ({data.summary?.completed || 0} completed trips)
+            </Text>
             <View style={styles.kpiGrid}>
-              <KPICard label="Response Time"    subtitle="Request → Dispatch" value={formatMins(data.summary?.avgResponseTime)} color="#3182ce" />
-              <KPICard label="Arrival Time"     subtitle="Dispatch → Pickup"  value={formatMins(data.summary?.avgArrivalTime)}  color="#276749" />
-              <KPICard label="Return Time"      subtitle="Pickup → Complete"  value={formatMins(data.summary?.avgReturnTime)}   color="#6b46c1" />
-              <KPICard label="Total Trip Time"  subtitle="Request → Complete" value={formatMins(data.summary?.avgTotalTripTime)} color="#c05621" />
+              <KPICard
+                label="Response Time"
+                subtitle="Request → Dispatch"
+                value={formatMins(data.summary?.avgResponseTime)}
+                color="#3182ce"
+              />
+              <KPICard
+                label="Arrival Time"
+                subtitle="Dispatch → Pickup"
+                value={formatMins(data.summary?.avgArrivalTime)}
+                color="#276749"
+              />
+              <KPICard
+                label="Return Time"
+                subtitle="Pickup → Complete"
+                value={formatMins(data.summary?.avgReturnTime)}
+                color="#6b46c1"
+              />
+              <KPICard
+                label="Total Trip Time"
+                subtitle="Request → Complete"
+                value={formatMins(data.summary?.avgTotalTripTime)}
+                color="#c05621"
+              />
             </View>
 
             <View style={styles.totalBox}>
-              <Text style={styles.totalText}>Total Requests: {data.summary?.totalRequests || 0}</Text>
+              <Text style={styles.totalText}>
+                Total Requests: {data.summary?.totalRequests || 0}
+              </Text>
             </View>
 
             {/* Per-trip rows */}
@@ -238,13 +265,13 @@ const styles = StyleSheet.create({
   modeBtnActive:     { backgroundColor: '#3182ce', borderColor: '#3182ce' },
   modeBtnText:       { fontSize: 14, fontWeight: '600', color: '#4a5568' },
   modeBtnTextActive: { color: '#ffffff' },
-  dateInputRow:  { flexDirection: 'row', gap: 10, marginBottom: 4 },
   todayBtn: {
+    alignSelf: 'flex-start',
     paddingHorizontal: 16, paddingVertical: 8, borderRadius: 8,
     backgroundColor: '#ebf8ff', borderWidth: 1, borderColor: '#90cdf4',
+    marginBottom: 4,
   },
   todayBtnText:  { fontSize: 13, color: '#2b6cb0', fontWeight: '600' },
-  selectedDate:  { fontSize: 14, color: '#2d3748', fontWeight: '600', marginBottom: 4 },
   monthScroll:   { marginBottom: 8 },
   chip: {
     paddingHorizontal: 14, paddingVertical: 8, borderRadius: 20,

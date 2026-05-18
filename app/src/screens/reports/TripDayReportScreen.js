@@ -6,11 +6,12 @@
 import React, { useState, useCallback } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity,
-  ScrollView, ActivityIndicator, RefreshControl, Linking,
+  ScrollView, ActivityIndicator, RefreshControl,
 } from 'react-native';
 import { getAuth } from 'firebase/auth';
 import { useFocusEffect } from '@react-navigation/native';
 import { API } from '../../config/api';
+import { downloadFile } from '../../utils/downloadFile';
 
 export default function TripDayReportScreen({ navigation, route }) {
   const userRole = route.params?.userRole || '';
@@ -55,20 +56,15 @@ export default function TripDayReportScreen({ navigation, route }) {
   const handleDownloadPDF = async () => {
     setPdfLoading(true);
     try {
-      const token = await getToken();
-      const url   = `${API.reports}/trip-day?date=${today}&format=pdf`;
-      // Open PDF URL in browser — browser handles download
-      await Linking.openURL(url + `&token=${token}`);
+      await downloadFile(
+        `${API.reports}/trip-day?date=${today}&format=pdf`,
+        `trip-report-${today}.pdf`
+      );
     } catch {
-      setError('Failed to open PDF.');
+      setError('Failed to download PDF.');
     } finally {
       setPdfLoading(false);
     }
-  };
-
-  const formatTime = (iso) => {
-    if (!iso) return '—';
-    return new Date(iso).toLocaleTimeString('en-PK', { hour: '2-digit', minute: '2-digit' });
   };
 
   return (
@@ -111,7 +107,9 @@ export default function TripDayReportScreen({ navigation, route }) {
                   <Text style={styles.summaryLabel}>Total Seats</Text>
                 </View>
                 <View style={styles.summaryCard}>
-                  <Text style={styles.summaryValue}>{(data.totalSeats || 24) - (data.bookedSeats || 0)}</Text>
+                  <Text style={styles.summaryValue}>
+                    {(data.totalSeats || 24) - (data.bookedSeats || 0)}
+                  </Text>
                   <Text style={styles.summaryLabel}>Available</Text>
                 </View>
               </View>
@@ -143,7 +141,9 @@ export default function TripDayReportScreen({ navigation, route }) {
                       <Text style={styles.cardNumber}>{i + 1}</Text>
                       <View style={{ flex: 1 }}>
                         <Text style={styles.cardName}>{b.patientName || '—'}</Text>
-                        <Text style={styles.cardSub}>{b.patientRelation || '—'} · {b.employeeName || '—'}</Text>
+                        <Text style={styles.cardSub}>
+                          {b.patientRelation || '—'} · {b.employeeName || '—'}
+                        </Text>
                       </View>
                       {b.returnTrip && (
                         <View style={styles.returnBadge}>
@@ -212,7 +212,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#276749', borderRadius: 8,
     paddingVertical: 12, alignItems: 'center',
   },
-  pdfBtnText: { color: '#ffffff', fontWeight: '700', fontSize: 14 },
+  pdfBtnText:  { color: '#ffffff', fontWeight: '700', fontSize: 14 },
   btnDisabled: { opacity: 0.5 },
   card: {
     backgroundColor: '#ffffff', borderRadius: 10, padding: 14,
@@ -233,8 +233,8 @@ const styles = StyleSheet.create({
     borderWidth: 1, borderColor: '#d6bcfa',
   },
   returnBadgeText: { fontSize: 11, color: '#6b46c1', fontWeight: '600' },
-  cardGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
-  infoItem: { flexDirection: 'row', alignItems: 'center', width: '47%', gap: 6 },
+  cardGrid:  { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  infoItem:  { flexDirection: 'row', alignItems: 'center', width: '47%', gap: 6 },
   infoIcon:  { fontSize: 14 },
   infoLabel: { fontSize: 10, color: '#a0aec0', fontWeight: '600' },
   infoValue: { fontSize: 12, color: '#2d3748', fontWeight: '600' },

@@ -5,7 +5,7 @@ import { webAlert } from '../../utils/webAlert';
 //
 //  Flow:
 //  1. Step 1 — Email + password
-//  2. Step 2 — Full name, employee number, phone
+//  2. Step 2 — Full name, employee number, phone, date of birth
 //  3. Step 3 — Residence details + disclaimer checkbox
 //  4. Firebase Auth creates the account
 //  5. Backend /register saves user doc (isActive: false, role: employee)
@@ -22,6 +22,7 @@ import { createUserWithEmailAndPassword } from 'firebase/auth';
 import { auth } from '../../config/firebase';
 import axios from 'axios';
 import { API } from '../../config/api';
+import DatePickerField from '../../components/DatePickerField';
 
 // ── Notification permission (Android 13+, safe to call on older versions)
 const requestNotificationPermission = async () => {
@@ -82,6 +83,7 @@ export default function SignupScreen({ navigation }) {
   const [fullName,       setFullName]       = useState('');
   const [employeeNumber, setEmployeeNumber] = useState('');
   const [phone,          setPhone]          = useState('');
+  const [dob,            setDob]            = useState(null);
 
   // Step 3 — residence
   const [townshipResidentWithFamily,   setTownshipResidentWithFamily]   = useState(null);
@@ -136,6 +138,9 @@ export default function SignupScreen({ navigation }) {
     }
     if (!phone.trim() || phone.length < 10) {
       webAlert('Invalid', 'Please enter a valid phone number.'); return;
+    }
+    if (!dob) {
+      webAlert('Required', 'Please select your date of birth.'); return;
     }
     setStep(STEP_RESIDENCE);
   };
@@ -196,6 +201,7 @@ export default function SignupScreen({ navigation }) {
         fullName:       fullName.trim(),
         phoneNumber:    phone.trim(),
         employeeNumber: employeeNumber.trim().toUpperCase(),
+        dateOfBirth:    dob ? dob.toISOString().split('T')[0] : null,
         ...residencePayload,
       }, {
         headers: { Authorization: `Bearer ${idToken}` },
@@ -323,7 +329,7 @@ export default function SignupScreen({ navigation }) {
               <Text style={styles.label}>Email Address</Text>
               <TextInput
                 style={styles.input}
-                placeholder="you@fatima-group.com"
+                placeholder="Use your personal email address"
                 placeholderTextColor="#94a3b8"
                 keyboardType="email-address"
                 autoCapitalize="none"
@@ -382,14 +388,14 @@ export default function SignupScreen({ navigation }) {
               <Text style={styles.label}>Employee Number</Text>
               <TextInput
                 style={styles.input}
-                placeholder="e.g. FFL-00100"
+                placeholder="e.g. FFL-00100 or ESB-00100"
                 placeholderTextColor="#94a3b8"
                 autoCapitalize="characters"
                 value={employeeNumber}
                 onChangeText={(text) => setEmployeeNumber(formatEmployeeNumber(text))}
                 maxLength={9}
               />
-              <Text style={styles.fieldHint}>Format: FFL-00000 · ESB-00000 · OSL-00000 · FAS-00000</Text>
+              <Text style={styles.fieldHint}>Enter 5-digit number with prefix · FFL-00000 · ESB-00000 · OSL-00000 · FAS-00000</Text>
 
               <Text style={styles.label}>Mobile Number</Text>
               <TextInput
@@ -399,6 +405,13 @@ export default function SignupScreen({ navigation }) {
                 keyboardType="phone-pad"
                 value={phone}
                 onChangeText={setPhone}
+              />
+
+              <DatePickerField
+                label="Date of Birth"
+                value={dob}
+                onChange={setDob}
+                maximumDate={new Date()}
               />
 
               <TouchableOpacity style={styles.primaryBtn} onPress={goToStep3}>

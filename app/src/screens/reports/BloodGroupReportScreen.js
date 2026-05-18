@@ -4,11 +4,12 @@
 import React, { useState, useCallback } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity,
-  ScrollView, ActivityIndicator, RefreshControl, Linking,
+  ScrollView, ActivityIndicator, RefreshControl,
 } from 'react-native';
 import { getAuth } from 'firebase/auth';
 import { useFocusEffect } from '@react-navigation/native';
 import { API } from '../../config/api';
+import { downloadFile } from '../../utils/downloadFile';
 
 const BLOOD_GROUPS = ['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-'];
 
@@ -54,9 +55,9 @@ export default function BloodGroupReportScreen({ navigation }) {
   const handleDownloadCSV = async () => {
     setCsvLoading(true);
     try {
-      const token = await getToken();
-      await Linking.openURL(
-        `${API.reports}/blood-groups/csv?token=${token}`
+      await downloadFile(
+        `${API.reports}/blood-groups/csv`,
+        'blood-group-repository.csv'
       );
     } catch {
       setError('Failed to download CSV.');
@@ -65,10 +66,9 @@ export default function BloodGroupReportScreen({ navigation }) {
     }
   };
 
-  // Build blood group counts from employee data
   const bloodGroupStats = BLOOD_GROUPS.map(bg => ({
-    group: bg,
-    count: (data?.employees || []).filter(e => e.bloodGroup === bg).length,
+    group:  bg,
+    count:  (data?.employees || []).filter(e => e.bloodGroup === bg).length,
     donors: (data?.employees || []).filter(e => e.bloodGroup === bg && e.bloodDonorConsent).length,
   }));
 
@@ -143,15 +143,22 @@ export default function BloodGroupReportScreen({ navigation }) {
                   </TouchableOpacity>
                 ))}
               </View>
+
               {filterGroup && (
-                <TouchableOpacity onPress={() => setFilterGroup('')} style={styles.clearFilter}>
+                <TouchableOpacity
+                  onPress={() => setFilterGroup('')}
+                  style={styles.clearFilter}
+                >
                   <Text style={styles.clearFilterText}>✕ Clear filter</Text>
                 </TouchableOpacity>
               )}
 
               {/* Employee list */}
               <Text style={styles.sectionLabel}>
-                {filterGroup ? `${filterGroup} Employees (${filteredEmployees.length})` : `All Employees with Blood Group (${filteredEmployees.length})`}
+                {filterGroup
+                  ? `${filterGroup} Employees (${filteredEmployees.length})`
+                  : `All Employees with Blood Group (${filteredEmployees.length})`
+                }
               </Text>
 
               {filteredEmployees.map((emp, i) => (
@@ -217,7 +224,7 @@ const styles = StyleSheet.create({
   bgCount:        { fontSize: 18, fontWeight: '800', color: '#e53e3e', marginTop: 2 },
   bgCountSelected:{ color: '#ffffff' },
   bgDonors:       { fontSize: 10, marginTop: 2 },
-  clearFilter: { alignSelf: 'flex-start' },
+  clearFilter:     { alignSelf: 'flex-start' },
   clearFilterText: { fontSize: 12, color: '#3182ce', fontWeight: '600' },
   empRow: {
     flexDirection: 'row', alignItems: 'center', gap: 12,

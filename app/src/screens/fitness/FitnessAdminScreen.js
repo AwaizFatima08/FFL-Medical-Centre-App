@@ -16,6 +16,7 @@ import {
 import { getAuth } from 'firebase/auth';
 import { useFocusEffect } from '@react-navigation/native';
 import { API } from '../../config/api';
+import DatePickerField from '../../components/DatePickerField';
 
 // ─── Status display config ────────────────────────────────────────────────────
 const STATUS_CONFIG = {
@@ -522,14 +523,11 @@ export default function FitnessAdminScreen({ navigation, route }) {
           </View>
         )}
 
-        <Text style={styles.inputLabel}>Date * (YYYY-MM-DD)</Text>
-        <TextInput
-          style={styles.input}
-          placeholder="e.g. 2025-06-15"
-          placeholderTextColor="#a0aec0"
-          value={schedDate}
-          onChangeText={setSchedDate}
-          keyboardType="numbers-and-punctuation"
+        <DatePickerField
+          label="Date *"
+          value={schedDate ? new Date(schedDate) : null}
+          onChange={(date) => setSchedDate(date.toISOString().split('T')[0])}
+          minimumDate={new Date()}
         />
 
         <Text style={styles.inputLabel}>Time * (HH:MM)</Text>
@@ -631,14 +629,11 @@ export default function FitnessAdminScreen({ navigation, route }) {
             <Text style={styles.panelCurrentSlot}>
               Current slot: {reschedulePanel.currentDate} at {reschedulePanel.currentTime}
             </Text>
-            <Text style={styles.inputLabel}>New Date * (YYYY-MM-DD)</Text>
-            <TextInput
-              style={styles.input}
-              placeholder="e.g. 2025-07-10"
-              placeholderTextColor="#a0aec0"
-              value={newDate}
-              onChangeText={setNewDate}
-              keyboardType="numbers-and-punctuation"
+            <DatePickerField
+              label="New Date *"
+              value={newDate ? new Date(newDate) : null}
+              onChange={(date) => setNewDate(date.toISOString().split('T')[0])}
+              minimumDate={new Date()}
             />
             <Text style={styles.inputLabel}>New Time * (HH:MM)</Text>
             <TextInput

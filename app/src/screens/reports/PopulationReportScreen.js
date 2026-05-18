@@ -6,14 +6,15 @@
 import React, { useState, useCallback } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity,
-  ScrollView, ActivityIndicator, RefreshControl, Linking,
+  ScrollView, ActivityIndicator, RefreshControl,
 } from 'react-native';
 import { getAuth } from 'firebase/auth';
 import { useFocusEffect } from '@react-navigation/native';
 import { API } from '../../config/api';
+import { downloadFile } from '../../utils/downloadFile';
 
 export default function PopulationReportScreen({ navigation, route }) {
-  const type      = route.params?.type || 'township'; // 'township' | 'non-township'
+  const type       = route.params?.type || 'township';
   const isTownship = type === 'township';
 
   const [data,       setData]       = useState(null);
@@ -60,10 +61,12 @@ export default function PopulationReportScreen({ navigation, route }) {
   const handleDownloadPDF = async () => {
     setPdfLoading(true);
     try {
-      const token = await getToken();
-      await Linking.openURL(`${endpoint}?format=pdf&token=${token}`);
+      const filename = isTownship
+        ? 'township-population.pdf'
+        : 'non-township-population.pdf';
+      await downloadFile(`${endpoint}?format=pdf`, filename);
     } catch {
-      setError('Failed to open PDF.');
+      setError('Failed to download PDF.');
     } finally {
       setPdfLoading(false);
     }

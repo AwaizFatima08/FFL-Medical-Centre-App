@@ -15,6 +15,7 @@ import {
   FAMILY_RELATIONS, BLOOD_GROUPS,
   MARITAL_STATUSES, EMPLOYMENT_STATUSES,
 } from '../../constants';
+import DatePickerField from '../../components/DatePickerField';
 
 // ─── Simple dropdown component ────────────────────────────────────────────────
 function DropdownField({ label, value, options, onSelect, required, disabled }) {
@@ -107,7 +108,7 @@ function ageInYears(date) {
 export default function FamilyMemberAddScreen({ navigation }) {
   const [relation,         setRelation]         = useState('');
   const [name,             setName]             = useState('');
-  const [dob,              setDob]              = useState('');
+  const [dob,              setDob]              = useState(null);
   const [cnic,             setCnic]             = useState('');
   const [nadraCard,        setNadraCard]        = useState('');
   const [bloodGroup,       setBloodGroup]       = useState('');
@@ -122,7 +123,7 @@ export default function FamilyMemberAddScreen({ navigation }) {
   const auth = getAuth();
   const uid  = auth.currentUser?.uid;
 
-  const dobDate   = parseDate(dob);
+  const dobDate   = dob instanceof Date ? dob : null;
   const age       = ageInYears(dobDate);
   const isAdult   = dobDate ? age >= 25 : false;
   const needsCnic = dobDate ? age >= 18 : false;
@@ -153,7 +154,6 @@ export default function FamilyMemberAddScreen({ navigation }) {
     if (!relation)    { webAlert('Required', 'Please select a relation.'); return false; }
     if (!name.trim()) { webAlert('Required', 'Please enter the full name.'); return false; }
     if (!dob)         { webAlert('Required', 'Please enter date of birth.'); return false; }
-    if (!dobDate)     { webAlert('Invalid Date', 'Please enter date as DD/MM/YYYY.'); return false; }
     if (dobDate > new Date()) {
       webAlert('Invalid Date', 'Date of birth cannot be in the future.');
       return false;
@@ -275,7 +275,12 @@ export default function FamilyMemberAddScreen({ navigation }) {
         </View>
 
         {/* Date of Birth */}
-        <DateField label="Date of Birth" value={dob} onChange={setDob} required />
+        <DatePickerField
+          label="Date of Birth *"
+          value={dob}
+          onChange={setDob}
+          maximumDate={new Date()}
+        />
 
         {/* Age indicator */}
         {dobDate && (

@@ -4,12 +4,12 @@
 import React, { useState, useCallback } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity,
-  ScrollView, ActivityIndicator, RefreshControl,
-  TextInput, Linking,
+  ScrollView, ActivityIndicator, RefreshControl, TextInput,
 } from 'react-native';
 import { getAuth } from 'firebase/auth';
 import { useFocusEffect } from '@react-navigation/native';
 import { API } from '../../config/api';
+import { downloadFile } from '../../utils/downloadFile';
 
 export default function EmployeeOnlyReportScreen({ navigation }) {
   const [data,       setData]       = useState(null);
@@ -53,12 +53,12 @@ export default function EmployeeOnlyReportScreen({ navigation }) {
   const handleDownloadPDF = async () => {
     setPdfLoading(true);
     try {
-      const token = await getToken();
-      await Linking.openURL(
-        `${API.reports}/population/employees-only?format=pdf&token=${token}`
+      await downloadFile(
+        `${API.reports}/population/employees-only?format=pdf`,
+        'employee-report.pdf'
       );
     } catch {
-      setError('Failed to open PDF.');
+      setError('Failed to download PDF.');
     } finally {
       setPdfLoading(false);
     }
@@ -139,7 +139,8 @@ export default function EmployeeOnlyReportScreen({ navigation }) {
                       {emp.department} · {emp.designation}
                     </Text>
                     <Text style={styles.empRow}>
-                      {emp.residenceType !== '—' ? emp.residenceType + ' · ' : ''}{emp.houseNumber} · Age: {emp.age} · Family: {emp.familyMemberCount}
+                      {emp.residenceType !== '—' ? emp.residenceType + ' · ' : ''}
+                      {emp.houseNumber} · Age: {emp.age} · Family: {emp.familyMemberCount}
                     </Text>
                   </View>
                 </View>
@@ -176,7 +177,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#ebf8ff', borderRadius: 8,
     paddingHorizontal: 12, paddingVertical: 6,
   },
-  totalText:  { fontSize: 13, color: '#2b6cb0', fontWeight: '700' },
+  totalText:   { fontSize: 13, color: '#2b6cb0', fontWeight: '700' },
   pdfBtn: {
     backgroundColor: '#276749', borderRadius: 8,
     paddingHorizontal: 16, paddingVertical: 8,

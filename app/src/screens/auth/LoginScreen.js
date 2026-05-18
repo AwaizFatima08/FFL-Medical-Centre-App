@@ -103,7 +103,7 @@ export default function LoginScreen({ navigation }) {
         {/* ── Card ── */}
         <View style={styles.card}>
           <Text style={styles.cardTitle}>Sign In</Text>
-          <Text style={styles.cardSub}>Use your FFL email and password</Text>
+          <Text style={styles.cardSub}>Use your personal email address used to create account</Text>
 
           <Text style={styles.label}>Email Address</Text>
           <TextInput

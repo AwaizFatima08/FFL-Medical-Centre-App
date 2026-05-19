@@ -108,7 +108,7 @@ export default function LoginScreen({ navigation }) {
           <Text style={styles.label}>Email Address</Text>
           <TextInput
             style={styles.input}
-            placeholder="you@fatima-group.com"
+            placeholder="Use your personal email address"
             placeholderTextColor="#94a3b8"
             keyboardType="email-address"
             autoCapitalize="none"

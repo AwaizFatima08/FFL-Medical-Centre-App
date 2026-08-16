@@ -101,3 +101,5 @@ service-account.json
 skills/
 .agents/
 *~
+serviceAccountKey.json
+app/dist/

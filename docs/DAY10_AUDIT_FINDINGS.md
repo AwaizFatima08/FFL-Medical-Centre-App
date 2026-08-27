@@ -42,29 +42,26 @@ Confirmed present and functional on **all 6 roles** on the fresh build (`22baf9a
 ---
 
 ### 3. Spurious "Network error" / "Login Failed" dialogs
-**Type:** Functional (cosmetic-adjacent — doesn't break data, but is a false-alarm error UX) | **Status:** 🔴 STILL OPEN (re-confirmed Aug 27, 2026 on the current, non-stale build)
+**Type:** Functional | **Status:** ✅ RESOLVED (fixed and confirmed Aug 27, 2026 — both web and mobile)
 
-Unlike findings 1 and 2, this issue reproduced cleanly on the freshly rebuilt and reinstalled APK — this is a real, currently-present bug, not a stale-build artifact.
+**Root cause, confirmed via Cloud Run server logs:** Google Cloud billing had been **disabled** for the `ffl-medical-centre-app` project since **August 16, 2026 (01:13:33 PKT)** — confirmed by reviewing the full `auth` function log history, which shows unbroken 500 errors with the billing-disabled message from that timestamp through 23:41 on August 27 (11 days). Every single Cloud Run backend function (`auth`, `circulars`, `availability`, `feedback`, `directory`, etc.) rejected every request it received with an internal error: `"The request failed because billing is disabled for this project."` Because the failure happened before the function's own code ever ran, no CORS headers were ever returned on the failed response — so browsers reported it as a generic CORS error, and the mobile app reported it as a generic network/login error. **This was never a timing, cold-start, or race-condition issue** — every backend call failed unconditionally, every time, regardless of speed or retries.
 
-**Screens reproduced today (admin role, mobile):** Login (see detail below), Circulars & Notices, Doctors Directory, Patient Feedback, Doctor/Manage Availability.
+**Fix:** re-linked a valid billing account to the project via Google Cloud Console, then redeployed the `auth` Cloud Function (`firebase deploy --only functions:auth`) to clear a stale instance that had cached the old billing-disabled state. Confirmed via direct `curl` tests against the Cloud Run endpoint, then via live login testing on both **web** (`ffl-medical-centre-app.web.app`, two separate accounts, DevTools Network tab showing clean 200 responses on `/me`, `update-last-login`, `pending-users`) and **mobile** (installed APK `22baf9a5`, no rebuild needed since the fix was entirely server-side) — no error dialogs on either platform.
 
-**Login-specific behavior (new detail, confirmed Aug 27):** The error does not appear on the login form itself. Sequence observed: user enters email + password → taps Sign In → screen navigates to the home screen in the background → a "Login Failed — Login failed. Please try again." dialog appears on top of the already-loaded home screen → user is, in fact, already successfully logged in. Pressing OK dismisses the dialog with **no side effects** — no retry occurs, nothing is re-triggered, session remains valid. This is consistent across all affected screens: the underlying action already succeeded before the dialog appears; OK just clears the dialog.
+**Investigation trail (kept for reference — several incorrect theories were ruled out with evidence before finding the real cause):**
+1. Initial theory: race condition / cold start (first API call after inactivity times out, self-resolves on retry). Added a silent-retry helper (`app/src/utils/apiRetry.js`) and applied it to `LoginScreen.js`'s `/me` call as a first attempt at a fix. **This did not resolve the issue** — retrying against a billing-disabled endpoint just fails identically twice, which is what testing showed.
+2. Browser DevTools Network/Console tabs revealed the real browser-level error: `CORS error` / `"No 'Access-Control-Allow-Origin' header is present"` on every backend call (`me`, `update-last-login`, `pending-users`, `my`).
+3. Ruled out: missing CORS middleware — `functions/index.js` already had correct `cors({ origin: true })` config.
+4. Ruled out: Cloud Run requiring authentication at the platform level — Security tab confirmed `allUsers` already had public invoker access.
+5. Ruled out: wrong/dead URL — a direct `curl OPTIONS` request to the exact URL in `app/src/config/api.js` (`auth-nniqmcbj4a-el.a.run.app`) returned 404 at one point, but the Cloud Run console's own listed URL (`asia-south1-ffl-medical-centre-app.cloudfunctions.net/auth`) returned a 500, not 404 — ruling out a simple wrong-URL explanation.
+6. **Found via Cloud Run Logs tab:** the actual `textPayload` on every failing request read `"The request failed because billing is disabled for this project."`, consistently since Aug 18.
+7. After linking billing, brief 429 "Rate exceeded" / "no available instance" errors appeared for ~20 minutes — ruled out as a hard quota ceiling (Quotas page showed all Cloud Run metrics under 25% usage, nothing near a limit) and attributed to normal propagation delay after a billing change. Resolved on its own once enough time had passed and the `auth` function was redeployed fresh.
 
-**This strongly supports the race-condition theory:** some check is firing against auth/session or data-load state that hasn't caught up to an action that already completed successfully (e.g. a Firebase call executing before auth/session initialization settles).
+**Retry helper left in place, not removed:** `app/src/utils/apiRetry.js` and the retry logic added to `LoginScreen.js`'s `/me` call are harmless and provide minor resilience against genuine transient network blips, even though they were not the fix for this particular bug. No need to revert.
 
-**Two message variants observed — may indicate two related but distinct code paths, not one identical bug:**
-- `"Network error. Please check your connection."` — seen on Circulars, Doctors Directory, Patient Feedback, Doctor Availability
-- `"Login failed. Please try again."` — seen only post-login, on the home screen
+**Not yet rolled out to other screens:** the retry pattern was only applied to `LoginScreen.js` before the real root cause was found. Given the actual bug was billing (now fixed), there is **no remaining need** to roll the retry pattern out to Circulars, Doctors Directory, Patient Feedback, or Doctor Availability — their errors were caused by the same billing outage and are resolved now that billing is fixed. Confirmed via live re-test on both web and mobile, admin role, two accounts — no errors on any previously-affected screen.
 
-**Dialog title inconsistency (possible implementation clue):**
-- Title **"Error"** — Circulars & Notices
-- Title **"Alert"** — Doctors Directory, Patient Feedback, Doctor Availability, and the post-login "Login Failed" dialog
-
-This split may point to two different implementations of the same underlying pattern (e.g. one screen still calling native `Alert.alert()` directly vs. others using the custom `webAlert`/`webConfirm` helper noted in project conventions). Worth checking during root-cause investigation rather than assuming a single shared code path.
-
-**Clean on this pass, NOT confirmed resolved:** Reports, Blood Donor Directory, Family Records, Fitness Appointments, and User Approvals showed no error dialog during today's re-check (admin role). Given the confirmed race-condition nature of this bug, a clean pass does not rule out intermittent recurrence. **Do not mark these screens as fixed or unaffected without repeated clean checks across multiple sessions/roles.**
-
-**Previously noted distinct error (Day 10 audit) — status unclear:** the original audit found a *different* message on User Approvals ("Could not load pending users"). Today's pass showed User Approvals clean (no error at all). This could mean it's been fixed, or simply didn't trigger this time. Re-check before assuming either.
+**Operational lesson for future sessions:** when every backend call fails identically regardless of screen, role, or platform, check Google Cloud **Billing** status early — a disabled billing account produces errors that look exactly like CORS misconfiguration, missing permissions, or network timeouts, and can waste significant investigation time if billing isn't checked first.
 
 ---
 
@@ -127,7 +124,7 @@ Driver's home screen (single "No Active Trip" / active-trip status card, no tile
 |---|---|---|---|---|
 | 1 | Vaccination mobile/web mismatch | Functional | ✅ Resolved | Fix already in code (May 13); Day 10 audit ran on stale build. No code change needed. |
 | 2 | Blood Donors / Reports missing on mobile | Functional | ✅ Resolved | Same stale-build situation as #1. No code change needed. |
-| 3 | Spurious error dialogs | Functional | 🔴 Open — re-confirmed on current build | Login shows a post-success "Login Failed" dialog; two message variants and two dialog-title variants observed — may be 2 related code paths, not 1. Root cause not yet found. |
+| 3 | Spurious error dialogs | Functional | ✅ Resolved | Root cause: Cloud Run billing disabled since ~Aug 18. Fixed by re-linking billing + redeploying `auth` function. Confirmed clean on web (2 accounts) and mobile. |
 | 4 | Login screen scroll | Cosmetic | ⏳ Not yet re-verified | Re-confirm on current build before fixing. |
 | 5 | Mobile tile/icon/logout alignment | Cosmetic | ⏳ Not yet re-verified | Re-confirm on current build. Doctor (6 tiles) fits without scroll on current build — may be a 7+-tile-role issue specifically. |
 | 6 | Header/logout layout inconsistency | Cosmetic / design decision | Unchanged — open | Not a bug; decide at design-lock. |
@@ -141,11 +138,11 @@ Driver's home screen (single "No Active Trip" / active-trip status card, no tile
 1. ~~Review each role~~ — done
 2. ~~Consolidate one findings report~~ — done (this document)
 3. ~~Rebuild + reinstall current APK before starting fixes~~ — **done, Aug 27** (this step was added after discovering findings 1 & 2 were stale-build artifacts)
-4. ~~Re-verify all findings against the current build~~ — **done for items 1, 2, 3. Still pending for items 4, 5, 8.**
-5. Re-verify items 4, 5, and 8 on the current build before writing any code for them
-6. Investigate root cause of item 3 (spurious error dialogs) — highest-priority remaining functional bug
+4. ~~Re-verify all findings against the current build~~ — **done for items 1, 2, 3**
+5. ~~Investigate and fix root cause of item 3~~ — **done, Aug 27.** Root cause was Cloud Run billing disabled since ~Aug 18, not a code bug. Fixed by re-linking billing account and redeploying the `auth` function. Confirmed clean on web and mobile.
+6. Re-verify items 4, 5, and 8 on the current build before writing any code for them — **next up**
 7. Fix items 4 and 5 (if still confirmed) — cosmetic but high-priority
-8. Review all frontend modifications made during the fix pass
+8. Review all frontend modifications made during the fix pass (including the retry helper added in step 5's investigation — harmless, can stay)
 9. Lock the design document — resolve items 6 and 7 (open design decisions) at this stage
 10. Move to Play Store submission
 

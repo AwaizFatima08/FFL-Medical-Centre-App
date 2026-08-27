@@ -43,9 +43,23 @@ export default function LoginScreen({ navigation }) {
       }    
 
       // 3. Fetch user profile (includes role & isActive)
-      const profileRes = await axios.get(`${API.auth}/me`, {
-        headers: { Authorization: `Bearer ${idToken}` },
-      });
+      // Retry once on network-level failure only (e.g. Cloud Run cold start).
+      // Do NOT retry if the server actually responded with an error —
+      // that's a real failure, not a timing issue.
+      let profileRes;
+      try {
+        profileRes = await axios.get(`${API.auth}/me`, {
+          headers: { Authorization: `Bearer ${idToken}` },
+        });
+      } catch (firstAttemptError) {
+        if (firstAttemptError.response) {
+          throw firstAttemptError; // server responded with a real error — don't retry
+        }
+        await new Promise((resolve) => setTimeout(resolve, 2000));
+        profileRes = await axios.get(`${API.auth}/me`, {
+          headers: { Authorization: `Bearer ${idToken}` },
+        });
+      }
       const { user, employee } = profileRes.data.data;
 
       // 4. Check if admin has activated the account

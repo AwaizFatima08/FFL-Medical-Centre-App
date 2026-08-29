@@ -3,7 +3,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, ScrollView,
-  Animated, Modal, Pressable, Image, Dimensions,
+  Animated, Modal, Pressable, Image, Dimensions, Platform,
 } from 'react-native';
 import { collection, query, where, getDocs } from 'firebase/firestore';
 import LogoutButton     from '../../components/LogoutButton';
@@ -11,21 +11,24 @@ import NotificationBell from '../../components/NotificationBell';
 import { auth, db } from '../../config/firebase';
 
 const PANEL_WIDTH = Math.min(280, Dimensions.get('window').width * 0.75);
+const IS_WEB = Platform.OS === 'web';
 
 const TILES = [
+  { id: 'family', label: 'My Family', icon: '👨‍👩‍👧‍👦', screen: 'FamilyMemberList', active: true },
+  { id: 'availability', label: 'Doctor Availability', icon: '👨‍⚕️', screen: 'DoctorAvailability', active: true },
   { id: 'ambulance', label: 'Request Ambulance', icon: '🚑', screen: 'AmbulanceRequest', active: true },
   { id: 'trip', label: 'Medical Trip', icon: '🚌', screen: 'TripMyBooking', active: true },
   { id: 'directory', label: 'Doctors Directory', icon: '🏥', screen: 'DirectoryList', active: true },
   { id: 'feedback', label: 'Feedback', icon: '📋', screen: 'Feedback', active: true },
-  { id: 'availability', label: 'Doctor Availability', icon: '👨‍⚕️', screen: 'DoctorAvailability', active: true },
-  { id: 'family', label: 'My Family', icon: '👨‍👩‍👧‍👦', screen: 'FamilyMemberList', active: true },
-  { id: 'vaccination', label: 'Vaccination', icon: '💉', screen: 'VaccinationChildList', active: false },
   { id: 'circulars', label: 'Circulars & Notices', icon: '📢', screen: 'Circulars', active: true },
   { id: 'fitness', label: 'Annual Fitness', icon: '🏃', screen: 'FitnessEmployee', active: true },
   { id: 'donors', label: 'Blood Donors', icon: '🩸', screen: 'BloodDonorDirectory', active: true },
+   { id: 'vaccination', label: 'Vaccination', icon: '💉', screen: 'VaccinationChildList', active: false },
   { id: 'lab', label: 'Lab Updates', icon: '🧪', screen: null, active: false },
   { id: 'pharmacy', label: 'Pharmacy Updates', icon: '💊', screen: null, active: false },
 ];
+
+const SORTED_TILES = [...TILES].sort((a, b) => (a.active === b.active ? 0 : a.active ? -1 : 1));
 
 const HEALTH_TIPS = [
   'Drink at least 8 glasses of water a day to stay hydrated during work hours.',
@@ -52,11 +55,11 @@ function getGreetingPrefix() {
   return 'Good evening';
 }
 
-function getTipOfTheDay() {
+function pickTipOfDay(pool) {
   const now = new Date();
   const startOfYear = new Date(now.getFullYear(), 0, 0);
   const dayOfYear = Math.floor((now - startOfYear) / 86400000);
-  return HEALTH_TIPS[dayOfYear % HEALTH_TIPS.length];
+  return pool[dayOfYear % pool.length];
 }
 
 export default function EmployeeHome({ navigation }) {
@@ -76,32 +79,44 @@ export default function EmployeeHome({ navigation }) {
           if (fullName) setFirstName(fullName.split(' ')[0]);
         }
       } catch (e) {
-        // stays "there" if lookup fails — safe fallback, no crash
+        // stays "there" if lookup fails
       }
     }
     fetchName();
   }, []);
 
+    const [tipText, setTipText] = useState(pickTipOfDay(HEALTH_TIPS));
+
+  useEffect(() => {
+    async function fetchTip() {
+      try {
+        const q = query(collection(db, 'healthTips'), where('isActive', '==', true));
+        const snap = await getDocs(q);
+        const activeTips = snap.docs.map(d => d.data().text).filter(Boolean);
+        if (activeTips.length > 0) {
+          setTipText(pickTipOfDay(activeTips));
+        }
+        // if none active, keeps the local fallback already set
+      } catch (e) {
+        // keeps local fallback on failure
+      }
+    }
+    fetchTip();
+  }, []);
+
   const openPanel = () => {
     setPanelVisible(true);
-    Animated.timing(slideAnim, {
-      toValue: 0,
-      duration: 250,
-      useNativeDriver: true,
-    }).start();
+    Animated.timing(slideAnim, { toValue: 0, duration: 250, useNativeDriver: true }).start();
   };
 
   const closePanel = () => {
-    Animated.timing(slideAnim, {
-      toValue: -PANEL_WIDTH,
-      duration: 200,
-      useNativeDriver: true,
-    }).start(() => setPanelVisible(false));
+    Animated.timing(slideAnim, { toValue: -PANEL_WIDTH, duration: 200, useNativeDriver: true })
+      .start(() => setPanelVisible(false));
   };
 
   const handleTilePress = (tile) => {
     if (!tile.active) return;
-    closePanel();
+    if (!IS_WEB) closePanel();
     navigation.navigate(tile.screen, { userRole: 'employee' });
   };
 
@@ -109,114 +124,170 @@ export default function EmployeeHome({ navigation }) {
   const dateString = now.toLocaleDateString(undefined, { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
   const timeString = now.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
 
+  const panelBody = (
+    <ScrollView contentContainerStyle={styles.panelContent}>
+      <Text style={styles.panelTitle}>Menu</Text>
+      {SORTED_TILES.map((tile) => (
+        <TouchableOpacity
+          key={tile.id}
+          style={[styles.panelItem, !tile.active && styles.panelItemDisabled]}
+          onPress={() => handleTilePress(tile)}
+          activeOpacity={tile.active ? 0.6 : 1}
+        >
+          <Text style={styles.panelItemIcon}>{tile.icon}</Text>
+          <Text style={[styles.panelItemLabel, !tile.active && styles.panelItemLabelDisabled]}>
+            {tile.label}
+          </Text>
+          {!tile.active && <Text style={styles.comingSoon}>Soon</Text>}
+        </TouchableOpacity>
+      ))}
+    </ScrollView>
+  );
+
   return (
-    <View style={{ flex: 1 }}>
-      <ScrollView contentContainerStyle={styles.container}>
-
-        {/* Header */}
-        <View style={styles.headerRow}>
-          <TouchableOpacity onPress={openPanel} style={styles.menuButton}>
-            <Text style={styles.menuIcon}>☰</Text>
-          </TouchableOpacity>
-          <View style={styles.headerCenter}>
-            <Text style={styles.heading}>FFL Medical Centre</Text>
-            <Text style={styles.subheading}>Employee Portal</Text>
-          </View>
-          <View style={styles.headerRight}>
-            <NotificationBell navigation={navigation} />
-            <LogoutButton />
-          </View>
+    <View style={styles.root}>
+      {IS_WEB && (
+        <View style={[styles.webPanel, { width: PANEL_WIDTH }]}>
+          {panelBody}
         </View>
+      )}
 
-        {/* Dashboard content */}
-        <View style={styles.dashboard}>
-          <Image
-            source={require('../../../assets/FFCL_Logo.png')}
-            style={styles.logo}
-            resizeMode="contain"
-          />
-          <Text style={styles.greeting}>{getGreetingPrefix()}, {firstName}</Text>
-          <Text style={styles.dateText}>{dateString}</Text>
-          <Text style={styles.timeText}>{timeString}</Text>
+      <View style={styles.mainArea}>
+        <ScrollView contentContainerStyle={styles.container}>
 
-          <View style={styles.tipCard}>
-            <Text style={styles.tipLabel}>💡 Health Tip of the Day</Text>
-            <Text style={styles.tipText}>{getTipOfTheDay()}</Text>
-          </View>
-
-          <View style={styles.emergencyCard}>
-            <Text style={styles.emergencyLabel}>🚨 Medical Centre Emergency Numbers</Text>
-            <Text style={styles.emergencyRow}>Reception: 5935</Text>
-            <Text style={styles.emergencyRow}>Medical Emergency: 5555</Text>
-          </View>
-        </View>
-
-      </ScrollView>
-
-      {/* Side panel */}
-      <Modal visible={panelVisible} transparent animationType="none" onRequestClose={closePanel}>
-        <Pressable style={styles.backdrop} onPress={closePanel} />
-        <Animated.View style={[styles.panel, { width: PANEL_WIDTH, transform: [{ translateX: slideAnim }] }]}>
-          <ScrollView contentContainerStyle={styles.panelContent}>
-            <Text style={styles.panelTitle}>Menu</Text>
-            {TILES.map((tile) => (
-              <TouchableOpacity
-                key={tile.id}
-                style={[styles.panelItem, !tile.active && styles.panelItemDisabled]}
-                onPress={() => handleTilePress(tile)}
-                activeOpacity={tile.active ? 0.6 : 1}
-              >
-                <Text style={styles.panelItemIcon}>{tile.icon}</Text>
-                <Text style={[styles.panelItemLabel, !tile.active && styles.panelItemLabelDisabled]}>
-                  {tile.label}
-                </Text>
-                {!tile.active && <Text style={styles.comingSoon}>Soon</Text>}
+          {IS_WEB ? (
+            <View style={styles.headerRowWeb}>
+              <Image
+                source={require('../../../assets/FFCL_Logo.png')}
+                style={styles.headerLogoWeb}
+                resizeMode="contain"
+              />
+              <View style={styles.headerRightWeb}>
+                <NotificationBell navigation={navigation} />
+                <LogoutButton />
+              </View>
+            </View>
+          ) : (
+            <View style={styles.headerRowMobile}>
+              <TouchableOpacity onPress={openPanel} style={styles.menuButton}>
+                <Text style={styles.menuIcon}>☰</Text>
               </TouchableOpacity>
-            ))}
-          </ScrollView>
-        </Animated.View>
-      </Modal>
+              <Image
+                source={require('../../../assets/FFCL_Logo.png')}
+                style={styles.headerLogoMobile}
+                resizeMode="contain"
+              />
+              <View style={{ flex: 1 }} />
+              <View style={styles.headerRight}>
+                <NotificationBell navigation={navigation} />
+                <LogoutButton />
+              </View>
+            </View>
+          )}
+
+          <View style={styles.dashboard}>
+            <Text style={styles.greeting}>{getGreetingPrefix()}, {firstName}</Text>
+            <Text style={styles.dateText}>{dateString}</Text>
+            <Text style={styles.timeText}>{timeString}</Text>
+
+            <View style={styles.tipCard}>
+              <Text style={styles.tipLabel}>💡 Health Tip of the Day</Text>
+              <Text style={styles.tipText}>{tipText}</Text>
+            </View>
+
+            <View style={styles.emergencyCard}>
+              <Text style={styles.emergencyLabel}>🚨 Medical Centre Emergency Numbers</Text>
+              <Text style={styles.emergencyRow}>Reception: 5935</Text>
+              <Text style={styles.emergencyRow}>Medical Emergency: 5555</Text>
+            </View>
+
+            {/* Health graphic — now a normal inline image, not a background layer */}
+            <Image
+              source={require('../../../assets/health_watermark.png')}
+              style={styles.healthGraphic}
+              resizeMode="contain"
+            />
+          </View>
+        </ScrollView>
+      </View>
+
+      {!IS_WEB && (
+        <Modal visible={panelVisible} transparent animationType="none" onRequestClose={closePanel}>
+          <Pressable style={styles.backdrop} onPress={closePanel} />
+          <Animated.View style={[styles.panel, { width: PANEL_WIDTH, transform: [{ translateX: slideAnim }] }]}>
+            {panelBody}
+          </Animated.View>
+        </Modal>
+      )}
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flexGrow: 1, backgroundColor: '#f0f4f8',
-    paddingTop: 56, paddingBottom: 40, paddingHorizontal: 20,
+  root: { flex: 1, flexDirection: 'row', backgroundColor: '#f0f4f8' },
+  mainArea: { flex: 1, position: 'relative' },
+
+  watermark: {
+    position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
+    width: '100%', height: '100%', opacity: 0.5, alignSelf: 'center',
   },
-  headerRow: {
-    flexDirection: 'row', justifyContent: 'space-between',
-    alignItems: 'center', width: '100%', marginBottom: 32,
+
+  container: {
+    flexGrow: 1, paddingTop: 24, paddingBottom: 40, paddingHorizontal: 20,
+  },
+
+  // Mobile header: hamburger + small logo left, icons right
+  headerRowMobile: {
+    flexDirection: 'row', alignItems: 'center', width: '100%', marginBottom: 32, gap: 12,
   },
   menuButton: { padding: 6 },
   menuIcon: { fontSize: 26, color: '#2d3748' },
-  headerCenter: { flex: 1, alignItems: 'center' },
-  heading:    { fontSize: 20, fontWeight: 'bold', color: '#2d3748' },
-  subheading: { fontSize: 13, color: '#718096', marginTop: 2 },
+  headerLogoMobile: { width: 120, height: 120 },
   headerRight: { flexDirection: 'row', alignItems: 'center', gap: 8 },
 
+  // Web header: logo truly centered regardless of icon width, icons pinned top-right
+  headerRowWeb: {
+    position: 'relative',
+    width: '100%', height: 140, marginBottom: 32,
+    justifyContent: 'center', alignItems: 'center',
+  },
+  headerLogoWeb: { width: 300, height: 300 },
+  headerRightWeb: {
+    position: 'absolute', right: 0, top: 0, bottom: 0,
+    flexDirection: 'row', alignItems: 'center', gap: 8,
+  },
+
   dashboard: { alignItems: 'center', width: '100%', maxWidth: 500, alignSelf: 'center' },
-  logo: { width: 100, height: 100, marginBottom: 16 },
-  greeting: { fontSize: 22, fontWeight: 'bold', color: '#2d3748', marginBottom: 4 },
-  dateText: { fontSize: 15, color: '#4a5568' },
-  timeText: { fontSize: 15, color: '#4a5568', marginBottom: 24 },
+  greeting: { fontSize: 22, fontWeight: 'bold', color: '#2d3748', marginBottom: 4, textAlign: 'center' },
+  dateText: { fontSize: 16, color: '#4a5568', textAlign: 'center' },
+  timeText: { fontSize: 16, color: '#4a5568', marginBottom: 24, textAlign: 'center' },
 
   tipCard: {
-    backgroundColor: '#fff', borderRadius: 12, padding: 16,
-    width: '100%', marginBottom: 16,
+    backgroundColor: '#f7eaea', borderRadius: 12, padding: 20,
+    width: '100%', borderWidth: 1, borderColor: '#feb2b2', marginBottom: 16, alignItems: 'center', opacity: 1,
     shadowColor: '#000', shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.06, shadowRadius: 4, elevation: 2,
   },
-  tipLabel: { fontSize: 14, fontWeight: '600', color: '#2d3748', marginBottom: 6 },
-  tipText: { fontSize: 14, color: '#4a5568', lineHeight: 20 },
+  tipLabel: { fontSize: 18, fontWeight: '600', color: '#2d3748', marginBottom: 6, textAlign: 'center' },
+  tipText: { fontSize: 16, fontWeight: '400', color: '#4a5568', lineHeight: 20, textAlign: 'center' },
 
   emergencyCard: {
     backgroundColor: '#fff5f5', borderRadius: 12, padding: 16,
-    width: '100%', borderWidth: 1, borderColor: '#feb2b2',
+    width: '100%', borderWidth: 1, borderColor: '#feb2b2', alignItems: 'center', opacity: 1,
   },
-  emergencyLabel: { fontSize: 14, fontWeight: '600', color: '#c53030', marginBottom: 8 },
-  emergencyRow: { fontSize: 14, color: '#742a2a', marginTop: 2 },
+  emergencyLabel: { fontSize: 18, fontWeight: '600', color: '#c53030', marginBottom: 8, textAlign: 'center' },
+  emergencyRow: { fontSize: 16, fontWeight: '400', color: '#742a2a', marginTop: 2, textAlign: 'center' },
+
+  // Health graphic — sits below the emergency card, own margin, own controllable size
+  healthGraphic: {
+  width: 280,
+  height: 114,
+  marginTop: 12,
+},
+  
+  webPanel: {
+    backgroundColor: '#fff', borderRightWidth: 1, borderRightColor: '#e2e8f0',
+  },
 
   backdrop: {
     position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
@@ -228,11 +299,12 @@ const styles = StyleSheet.create({
     shadowColor: '#000', shadowOffset: { width: 2, height: 0 },
     shadowOpacity: 0.2, shadowRadius: 8, elevation: 10,
   },
-  panelContent: { paddingTop: 56, paddingHorizontal: 16, paddingBottom: 24 },
+
+  panelContent: { paddingTop: 24, paddingHorizontal: 16, paddingBottom: 24 },
   panelTitle: { fontSize: 18, fontWeight: 'bold', color: '#2d3748', marginBottom: 16 },
   panelItem: {
     flexDirection: 'row', alignItems: 'center',
-    paddingVertical: 14, borderBottomWidth: 1, borderBottomColor: '#edf2f7',
+    paddingVertical: 6, borderBottomWidth: 1, borderBottomColor: '#edf2f7',
   },
   panelItemDisabled: { opacity: 0.5 },
   panelItemIcon: { fontSize: 22, marginRight: 14 },

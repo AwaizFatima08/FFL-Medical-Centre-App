@@ -11,7 +11,6 @@ Quick reference for daily work. For locked flow status, architecture, and decisi
 - Firebase project: ffl-medical-centre-app
 - Web app: https://ffl-medical-centre-app.web.app
 - Dev server: 192.168.100.122:8081 (Expo) | VS Code: 192.168.100.122:8080
-  *(NAS IP changed from 192.168.1.30 — updated Aug 27, 2026. If dev server isn't responding, confirm `npx expo start` is actually running on the NAS before assuming a network issue.)*
 
 ## Daily Commands
 
@@ -30,53 +29,73 @@ firebase deploy --only hosting
 cd /mnt/storage/projects/ffl-medical-centre/functions
 firebase deploy --only functions:FUNCTION_NAME
 
+**Deploy Firestore rules:**
+cd /mnt/storage/projects/ffl-medical-centre
+firebase deploy --only firestore:rules
+*(Easy to forget — a rules change with no matching deploy silently blocks reads/writes to that collection. Lesson from Aug 29: Health Tips feature initially failed end-to-end with "Failed to load/add" errors purely because rules were written but never deployed.)*
+
 **Build Android APK (EAS):**
 cd /mnt/storage/projects/ffl-medical-centre/app
 npx eas build --platform android --profile preview
-*(Standalone installable APK, ~10-20 min build time on Expo's servers. Always confirm `git status` is clean and `git pull` is up to date before building, so the build reflects the true latest code.)*
+*(Always confirm `git status` is clean and `git pull` is up to date before building.)*
 
 **Check which commit a build was made from:**
+cd /mnt/storage/projects/ffl-medical-centre/app
 npx eas build:list --platform android --limit 5
-*(Cross-reference the "Commit" field against `git log` before trusting a finding tested on an installed APK — see Day 10 lesson below.)*
+*(Cross-reference the "Commit" field against `git log -1` before trusting a finding tested on an installed APK.)*
 
 **Backup (end of session):**
 bash /mnt/storage/projects/ffl-medical-centre/scripts/backup.sh "Day N: description"
-*(Note: workflow has shifted to manual VS Code editing on the NAS — Homi now handles backups manually rather than relying on this script as the primary flow. Script still works if used.)*
+*(Handles git commit+push, local snapshot, and Drive sync in one step. Trigger phrase: "lets backup and close".)*
 
 ## Session Log
 (Newest first)
 
-- **Aug 27, 2026 (item 3 root cause found & fixed):** Investigated finding #3 (spurious error dialogs). Initial theory (Cloud Run cold-start race condition) led to a retry helper (`app/src/utils/apiRetry.js`) applied to `LoginScreen.js` — this did NOT fix the issue. Browser DevTools revealed the real symptom was a CORS error on every backend call. Ruled out missing CORS config, missing Cloud Run public-invoker permission, and wrong/dead URLs one at a time with direct evidence (curl tests, Cloud Run console checks) before finding the actual cause in the Cloud Run **Logs** tab: **Google Cloud billing had been disabled for the project since ~Aug 18**, causing every single backend function call to fail unconditionally, on every screen, both platforms — not a timing issue at all. Fixed by re-linking a valid billing account and redeploying the `auth` function to clear a stale instance. A brief ~20min window of 429 errors followed (propagation delay, not a quota ceiling — Quotas page confirmed all Cloud Run metrics under 25% usage) and resolved on its own. **Confirmed fully resolved** via live login testing on web (2 accounts, clean Network tab) and mobile (installed APK, no rebuild needed — fix was server-side only). Retry helper left in place (harmless) but was not the actual fix. `docs/DAY10_AUDIT_FINDINGS.md` updated with full investigation trail and an operational lesson: check Billing status early when every backend call fails identically, before assuming a code bug.
-- **Aug 27, 2026 (code-fix phase start):** Before starting Day 10's planned code fixes, discovered the audit had been conducted against a stale installed APK (predating commit `259fe099`, May 13). Rebuilt and reinstalled current APK (`22baf9a5`, commit `cee399f4`) and re-verified all functional findings against it. **Result: findings #1 (vaccination mismatch) and #2 (tile parity gap) were already resolved in code — no fixes needed.** Finding #3 (spurious error dialogs) re-confirmed as still genuinely present at that point (root cause found later same day — see entry above). Findings #4, #5, #8 not yet re-verified on current build — treat as provisional. NAS IP corrected (was 192.168.1.30, now 192.168.100.122).
-- Day 10 (audit close-out): Full pre-production audit complete — all 6 roles in scope reviewed (employee, reception, doctor, driver, admin_incharge, cmo). Nurse, lab_technologist, pharmacy_incharge deferred to V2. 8 consolidated findings documented in docs/DAY10_AUDIT_FINDINGS.md. Two design decisions logged as open (home screen header/logout layout, employee tile color) — to be resolved at design-lock stage, not during bug fixes.
-- Day 10: Repo cleanup — protected serviceAccountKey.json, removed 3 stray backup folders, untracked app/dist, created docs/ and scripts/, moved importVaccineSchedule.js + backup.sh into scripts/, removed dead fix.py test file, committed design doc.
+- **Aug 29, 2026 (major feature day — employee UX overhaul + auth flow hardening):**
+  - **Employee home screen redesign:** replaced the 12-tile overflow grid with a side panel navigation — animated slide-in drawer on mobile (hamburger toggle), permanent fixed sidebar on web. New dashboard: time-aware greeting (pulled from `employees.fullName` via `userId`, not Firebase Auth `displayName` — that field was never populated), live date/time, health tip of the day, medical centre emergency numbers (Reception 5935, Medical Emergency 5555). Inactive tiles (Vaccination, Lab Updates, Pharmacy Updates) sort to bottom on both platforms.
+  - **Custom health graphic:** AI-generated artwork (caduceus + empathy/care icons) had baked-in checkerboard "transparency" and a third-party watermark from an online background-remover tool — both required custom Python image processing (grid-position-based checker detection + border/island flood-fill) to produce a genuinely clean transparent PNG. Displayed as an inline image below the emergency card (not a background watermark — reversed an earlier design choice after real-device testing showed positioning issues).
+  - **Logout icon bug (all roles, mobile only):** `⏻` Unicode power symbol isn't in Android's default font — rendered as a placeholder box. Fixed by dropping the icon entirely (text-only "Logout" — zero font-dependency risk going forward). Also fixed an invalid `fontWeight: '1200'` found in the same component.
+  - **Health Tips feature (new):** `healthTips` Firestore collection, `HealthTipsAdminScreen.js` (admin_incharge only — add/delete/toggle tips, any language or mix of languages, no forced English/Urdu split), employee dashboard now fetches active tips and rotates one per day with a local hardcoded fallback if Firestore is empty or unreachable. Required a rules deploy that was initially missed — see Daily Commands note above.
+  - **Admin Home grid:** 9→10 tiles, changed 3-column/140px to 4-column/108px layout to keep everything on one screen without scrolling; incidentally this also resolved the still-open Day 10 finding #5 (tile overflow) for admin_incharge.
+  - **Login screen (item 4, finally closed):** root cause was a single oversized `creditLogo` style (1000×100) reused for two differently-sized logos. Rebuilt with correctly-sized separate styles; added a "Remember Me" checkbox that persists only the **email** (not password — a real device-storage security risk was flagged and avoided) via AsyncStorage. Web got a further redesign per Homi's request: fixed-width left credentials panel (HomiLabs branding, managed-by names, tagline) + narrower centered sign-in card on the right; mobile stays single-column.
+  - **Signup date picker (web) — broken, now fixed:** `@react-native-community/datetimepicker` has no real web implementation; tapping the field did nothing on web (silent no-op). Fixed by branching to a native HTML `<input type="date">` on web only, mobile untouched. Same shared `DatePickerField.js` component is used across other screens (Family, Fitness, etc.) — same fix applies everywhere.
+  - **Signup DOB timezone bug:** `dob.toISOString()` converts to UTC before formatting, which can shift the saved date back a day for users in PKT (UTC+5). Fixed to build the date string from local date parts directly — same pattern already used elsewhere in the codebase per prior Key Learnings.
+  - **Manage Users feature (new, found via live A–Z signup testing):** Pending Approvals only ever showed *never-approved* signups — once approved, a user vanished from admin's view entirely with no way to review, disable, or reassign their role. Fixed with a new `approvedAt` field distinguishing "never approved" (Pending Approvals territory) from "approved, possibly later disabled" (new Manage Users screen territory) — critical because the existing Reject button **permanently deletes the Firebase Auth account**, and without this distinction, disabling an approved user would have made them reappear in Pending Approvals and risk accidental permanent deletion. New backend routes: `/all-users`, `/disable-user`, `/enable-user`, `/change-role`, each guarded to only operate on correctly-staged users. Verified end-to-end including a full disable→enable round-trip confirming no leakage back into Pending Approvals.
+  - **Legal:** Red Crescent emblem use in the app's custom graphic flagged as a protected-symbol/Geneva Conventions concern (not a generic medical icon, despite common misuse elsewhere). Homi reviewed and made an informed decision to proceed as-is; not registering the logo, treats it as accepted practice in Pakistan medical signage. Logged here for the record, not revisited further per his direction.
+  - **Design-lock items closed by decision, not code:** driver's header-bar style accepted as an intentional one-off (different navigation structure, not a tile grid — nothing to unify). Employee pink tiles vs. white elsewhere: left as-is — Homi's explicit rationale is that employees are the actual end customer and get disproportionate design investment; other roles are internal and lower priority for cosmetic parity.
+
+- **Aug 27, 2026 (item 3 root cause found & fixed):** Investigated finding #3 (spurious error dialogs). Real cause: Google Cloud billing had been disabled since ~Aug 18, causing every backend call to fail unconditionally. Fixed by re-linking billing + redeploying `auth` function. Confirmed resolved on web and mobile.
+- **Aug 27, 2026 (code-fix phase start):** Discovered Day 10 audit had been conducted against a stale APK. Findings #1 and #2 were already resolved in code — no fixes needed. NAS IP corrected (192.168.100.122).
+- Day 10 (audit close-out): Full pre-production audit complete. 8 consolidated findings documented in docs/DAY10_AUDIT_FINDINGS.md.
+- Day 10: Repo cleanup — protected serviceAccountKey.json, removed stray backups, created docs/ and scripts/.
 
 ## Open Items
 
-**Bug fixes (from Day 10 audit, re-verified Aug 27 — see DAY10_AUDIT_FINDINGS.md for full detail):**
-- [x] ~~Vaccination flow mobile/web mismatch~~ — **RESOLVED**, already fixed in code (commit `259fe099`), confirmed on fresh build Aug 27
-- [x] ~~Blood Donor Directory + Reports tiles missing from mobile home screens~~ — **RESOLVED**, confirmed present on all 6 roles on fresh build Aug 27
-- [x] ~~Spurious "Network error" / "Login Failed" dialogs~~ — **RESOLVED, Aug 27.** Root cause was Cloud Run billing disabled since ~Aug 18 (not a code bug). Fixed by re-linking billing + redeploying `auth` function. Confirmed clean on web (2 accounts) and mobile.
-- [ ] Login screen requires scrolling — **not yet re-verified on current build.** Confirm before writing any fix (same discipline that closed items 1 & 2 without code changes).
-- [ ] Mobile home screen tile/icon/logout alignment — **not yet re-verified on current build.** Note: doctor (6 tiles) fit without scrolling on current build — may be specific to 7+-tile roles (reception, admin, cmo), not universal.
+**All original Day 10 audit findings — CLOSED:**
+- [x] Vaccination flow mismatch — resolved
+- [x] Blood Donor Directory + Reports tiles missing — resolved
+- [x] Spurious error dialogs — resolved (billing outage)
+- [x] Login screen scrolling — resolved Aug 29 (logo sizing + Remember Me + web two-column redesign)
+- [x] Mobile home tile/icon/logout alignment — resolved (employee side-panel redesign; admin 4-column grid)
 
-**Design decisions (resolve at design-lock, not during fixes):**
-- [ ] Home screen header/logout layout — standardize on driver's header-bar style, or keep floating bell/logout used by the other 5 roles?
-- [ ] Employee's pink tiles vs. white tiles everywhere else — keep the distinction or unify? (confirmed still present on current build, Aug 27)
+**Design decisions — CLOSED by explicit decision:**
+- [x] Header/logout layout — driver accepted as an intentional one-off, no unification needed
+- [x] Employee pink tiles vs. white — kept as-is; not revisited, per Homi's stated priority (employee = actual customer, gets the design investment; other roles stay functional/internal)
 
-**Process (per audit methodology, in order):**
-1. ~~Audit all roles~~ — done
-2. ~~Consolidate findings report~~ — done (DAY10_AUDIT_FINDINGS.md)
-3. ~~Rebuild + reinstall current APK before starting fixes~~ — done Aug 27
-4. ~~Re-verify findings against current build~~ — done for items 1, 2, 3
-5. ~~Investigate and fix root cause of item 3~~ — done Aug 27 (billing outage, not a code bug — see session log)
-6. Re-verify items 4, 5, 8 on current build — **next up**
-7. Fix items 4 and 5 (if still confirmed) — cosmetic but high priority
-8. Review all frontend modifications made during the fix pass
-9. Lock design document (resolve open design decisions above)
-10. Production build + Play Store submission
+**New items found + closed during Aug 29 live testing:**
+- [x] Broken logout icon (all roles, mobile)
+- [x] Signup date picker non-functional on web
+- [x] Signup DOB timezone-shift bug
+- [x] No way to review/disable/reassign already-approved users — built Manage Users feature
 
-**Other pending:**
+**Fast-follow backlog (logged, not yet started):**
+- None currently — Health Tips and Manage Users, both originally logged as fast-follow candidates, were pulled into this session and completed.
+
+**Process (per audit methodology):**
+1–9. ~~All done~~ — audit, findings, fixes, design-lock decisions, all closed as of Aug 29.
+10. **Production build + Play Store submission — next major milestone.** Homi is continuing live A–Z flow testing (signup → approval → role-based screens) before locking further and moving toward submission; more findings may surface from that review and will be logged here as they're found.
+
+**Other pending (unchanged from before):**
 - Notification debugging — deferred to final pre-production testing round
-- Family module — not yet built (V1 scope); feedback form patient-name field stays text-based until then
-- Report frontend screens — backend done (7 endpoints, pdfkit/json2csv), frontend screens pending
+- Family module — not yet built (V1 scope)
+- Report frontend screens — backend done (7 endpoints), frontend screens pending

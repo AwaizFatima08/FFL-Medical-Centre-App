@@ -23,7 +23,7 @@ export default function LogoutButton() {
 
   return (
     <TouchableOpacity style={styles.button} onPress={handleLogout}>
-      <Text style={styles.text}>⏻ Logout</Text>
+      <Text style={styles.text}>Logout</Text>
     </TouchableOpacity>
   );
 }
@@ -40,6 +40,6 @@ const styles = StyleSheet.create({
   text: {
     color: '#c53030',
     fontSize: 16,
-    fontWeight: '1200',
+    fontWeight: 'bold',
   },
 });

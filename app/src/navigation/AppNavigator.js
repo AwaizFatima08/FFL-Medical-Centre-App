@@ -55,6 +55,8 @@ import CircularUploadScreen from '../screens/circulars/CircularUploadScreen';
 
 // ─── Admin flow ───────────────────────────────────────────────────────────────
 import UserApprovalScreen from '../screens/admin/UserApprovalScreen';
+import UserManagementScreen from '../screens/admin/UserManagementScreen';
+import HealthTipsAdminScreen from '../screens/admin/HealthTipsAdminScreen';
 
 // ─── Family flow ──────────────────────────────────────────────────────────────
 import FamilyMemberListScreen  from '../screens/family/FamilyMemberListScreen';
@@ -151,6 +153,8 @@ export default function AppNavigator({ userRole }) {
 
       {/* Admin flow */}
       <Stack.Screen name="UserApproval" component={UserApprovalScreen} />
+      <Stack.Screen name="UserManagement" component={UserManagementScreen} />
+      <Stack.Screen name="HealthTipsAdmin" component={HealthTipsAdminScreen} />
 
       {/* Vaccination flow */}
       <Stack.Screen name="VaccinationChildList"   component={VaccinationChildListScreen} />

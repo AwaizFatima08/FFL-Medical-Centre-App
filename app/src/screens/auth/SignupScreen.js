@@ -201,7 +201,7 @@ export default function SignupScreen({ navigation }) {
         fullName:       fullName.trim(),
         phoneNumber:    phone.trim(),
         employeeNumber: employeeNumber.trim().toUpperCase(),
-        dateOfBirth:    dob ? dob.toISOString().split('T')[0] : null,
+                dateOfBirth:    dob ? `${dob.getFullYear()}-${String(dob.getMonth() + 1).padStart(2, '0')}-${String(dob.getDate()).padStart(2, '0')}` : null,
         ...residencePayload,
       }, {
         headers: { Authorization: `Bearer ${idToken}` },

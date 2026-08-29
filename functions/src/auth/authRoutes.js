@@ -46,8 +46,6 @@ const verifyRole = (allowedRoles) => {
 };
 
 // ─── POST /register ──────────────────────────────────────
-// Called after Firebase Auth creates the user on client side
-// Creates the user document in Firestore
 router.post('/register', verifyToken, async (req, res) => {
   try {
     const db = admin.firestore();
@@ -55,7 +53,6 @@ router.post('/register', verifyToken, async (req, res) => {
       fullName,
       phoneNumber,
       employeeNumber,
-      // ── Residence fields ─────────────────────────────
       townshipResidentWithFamily,
       townshipResidentBachelor,
       residenceType,
@@ -68,13 +65,11 @@ router.post('/register', verifyToken, async (req, res) => {
       return errorResponse(res, 'fullName, phoneNumber and employeeNumber are required', 400);
     }
 
-    // Check if user document already exists
     const existingUser = await db.collection('users').doc(req.user.uid).get();
     if (existingUser.exists) {
       return errorResponse(res, 'User already registered', 409);
     }
 
-    // Check employee number not already registered
     const empCheck = await db.collection('employees')
       .where('officialEmployeeNumber', '==', employeeNumber)
       .get();
@@ -84,18 +79,17 @@ router.post('/register', verifyToken, async (req, res) => {
 
     const batch = db.batch();
 
-    // Create user document
     const userRef = db.collection('users').doc(req.user.uid);
     batch.set(userRef, {
       email:       req.user.email || null,
       phone:       phoneNumber,
       role:        ROLES.EMPLOYEE,
       isActive:    false,
+      approvedAt:  null, // explicitly null so it's distinguishable from "was approved, later disabled"
       createdAt:   nowISO(),
       lastLoginAt: nowISO(),
     });
 
-    // ── Build employee document with residence fields ──
     const employeeData = {
       userId:                 req.user.uid,
       fullName,
@@ -103,7 +97,6 @@ router.post('/register', verifyToken, async (req, res) => {
       phoneNumber,
       isValidated:            false,
       createdAt:              nowISO(),
-      // Residence fields
       townshipResidentWithFamily: townshipResidentWithFamily === true,
       townshipResidentBachelor:   townshipResidentBachelor   === true,
       residenceType:              residenceType   || null,
@@ -117,7 +110,6 @@ router.post('/register', verifyToken, async (req, res) => {
 
     await batch.commit();
 
-    // ── Notify admin by email ─────────────────────────
     try {
       await db.collection('mail').add({
         to:      'admin@ffl.com',
@@ -159,7 +151,6 @@ router.post('/register', verifyToken, async (req, res) => {
 });
 
 // ─── POST /complete-profile ──────────────────────────────
-// Employee fills in full profile after registration
 router.post('/complete-profile', verifyToken, async (req, res) => {
   try {
     const db = admin.firestore();
@@ -266,6 +257,11 @@ router.post('/update-last-login', verifyToken, async (req, res) => {
 });
 
 // ─── GET /pending-users ───────────────────────────────────
+// "Pending" means: inactive AND never approved before (approvedAt is falsy).
+// This is what keeps previously-approved-then-disabled users OUT of this
+// queue — critical, since this screen's Reject button permanently deletes
+// the account. Filtering happens in code (not via Firestore query) so it
+// stays safe even for older documents created before `approvedAt` existed.
 router.get('/pending-users', verifyToken, verifyRole([ROLES.ADMIN_INCHARGE, ROLES.CMO]), async (req, res) => {
   try {
     const db = admin.firestore();
@@ -278,7 +274,9 @@ router.get('/pending-users', verifyToken, verifyRole([ROLES.ADMIN_INCHARGE, ROLE
       return successResponse(res, [], 'No pending users');
     }
 
-    const pending = await Promise.all(usersSnap.docs.map(async (userDoc) => {
+    const neverApprovedDocs = usersSnap.docs.filter(doc => !doc.data().approvedAt);
+
+    const pending = await Promise.all(neverApprovedDocs.map(async (userDoc) => {
       const userData = userDoc.data();
       const empSnap = await db.collection('employees')
         .where('userId', '==', userDoc.id)
@@ -351,7 +349,7 @@ router.post('/approve-user', verifyToken, verifyRole([ROLES.ADMIN_INCHARGE]), as
     }
 
     try {
-      const verificationLink = await admin.auth().generateEmailVerificationLink(
+      await admin.auth().generateEmailVerificationLink(
         userDoc.data().email,
         { url: 'https://ffl-medical-centre-app.firebaseapp.com' }
       );
@@ -368,6 +366,8 @@ router.post('/approve-user', verifyToken, verifyRole([ROLES.ADMIN_INCHARGE]), as
 });
 
 // ─── POST /reject-user ────────────────────────────────────
+// Only ever safe to call on someone who has NEVER been approved
+// (guarded here — this permanently deletes the Firebase Auth account).
 router.post('/reject-user', verifyToken, verifyRole([ROLES.ADMIN_INCHARGE]), async (req, res) => {
   try {
     const db = admin.firestore();
@@ -383,6 +383,9 @@ router.post('/reject-user', verifyToken, verifyRole([ROLES.ADMIN_INCHARGE]), asy
     }
     if (userDoc.data().isActive) {
       return errorResponse(res, 'Cannot reject an already active user', 409);
+    }
+    if (userDoc.data().approvedAt) {
+      return errorResponse(res, 'This user was previously approved — use Disable instead of Reject to avoid permanently deleting their account.', 409);
     }
 
     await admin.auth().deleteUser(uid);
@@ -400,6 +403,157 @@ router.post('/reject-user', verifyToken, verifyRole([ROLES.ADMIN_INCHARGE]), asy
   } catch (error) {
     console.error('Reject user error:', error);
     return errorResponse(res, 'Failed to reject user', 500);
+  }
+});
+
+// ─── GET /all-users ────────────────────────────────────────
+// Every user who has ever been approved (active or disabled) — the data
+// source for the Manage Users screen. Deliberately excludes never-approved
+// pending signups, which stay on the Pending Approvals screen only.
+router.get('/all-users', verifyToken, verifyRole([ROLES.ADMIN_INCHARGE, ROLES.CMO]), async (req, res) => {
+  try {
+    const db = admin.firestore();
+
+    const usersSnap = await db.collection('users').get();
+    const approvedDocs = usersSnap.docs.filter(doc => !!doc.data().approvedAt);
+
+    const allUsers = await Promise.all(approvedDocs.map(async (userDoc) => {
+      const userData = userDoc.data();
+      const empSnap = await db.collection('employees')
+        .where('userId', '==', userDoc.id)
+        .limit(1)
+        .get();
+      const empData = empSnap.empty ? {} : empSnap.docs[0].data();
+
+      return {
+        uid:                    userDoc.id,
+        email:                  userData.email || null,
+        phone:                  userData.phone || null,
+        role:                   userData.role,
+        isActive:               userData.isActive,
+        approvedAt:             userData.approvedAt || null,
+        disabledAt:             userData.disabledAt || null,
+        fullName:               empData.fullName               || '—',
+        officialEmployeeNumber: empData.officialEmployeeNumber || '—',
+        phoneNumber:            empData.phoneNumber || userData.phone || '—',
+        employeeId:             empSnap.empty ? null : empSnap.docs[0].id,
+      };
+    }));
+
+    allUsers.sort((a, b) => a.fullName.localeCompare(b.fullName));
+
+    return successResponse(res, allUsers, 'All users fetched');
+  } catch (error) {
+    console.error('All users error:', error);
+    return errorResponse(res, 'Failed to fetch users', 500);
+  }
+});
+
+// ─── POST /disable-user ───────────────────────────────────
+// Reversible — blocks login by setting isActive:false, but never touches
+// Firebase Auth or Firestore records. Only valid on previously-approved users.
+router.post('/disable-user', verifyToken, verifyRole([ROLES.ADMIN_INCHARGE]), async (req, res) => {
+  try {
+    const db = admin.firestore();
+    const { uid } = req.body;
+
+    if (!uid) {
+      return errorResponse(res, 'uid is required', 400);
+    }
+
+    const userDoc = await db.collection('users').doc(uid).get();
+    if (!userDoc.exists) {
+      return errorResponse(res, 'User not found', 404);
+    }
+    if (!userDoc.data().approvedAt) {
+      return errorResponse(res, 'This user was never approved — use Reject instead.', 409);
+    }
+    if (!userDoc.data().isActive) {
+      return errorResponse(res, 'User is already disabled', 409);
+    }
+
+    await db.collection('users').doc(uid).update({
+      isActive:    false,
+      disabledBy:  req.user.uid,
+      disabledAt:  nowISO(),
+    });
+
+    return successResponse(res, { uid }, 'User disabled successfully');
+  } catch (error) {
+    console.error('Disable user error:', error);
+    return errorResponse(res, 'Failed to disable user', 500);
+  }
+});
+
+// ─── POST /enable-user ─────────────────────────────────────
+// Re-activates a previously-disabled (but originally approved) user.
+router.post('/enable-user', verifyToken, verifyRole([ROLES.ADMIN_INCHARGE]), async (req, res) => {
+  try {
+    const db = admin.firestore();
+    const { uid } = req.body;
+
+    if (!uid) {
+      return errorResponse(res, 'uid is required', 400);
+    }
+
+    const userDoc = await db.collection('users').doc(uid).get();
+    if (!userDoc.exists) {
+      return errorResponse(res, 'User not found', 404);
+    }
+    if (!userDoc.data().approvedAt) {
+      return errorResponse(res, 'This user was never approved — use Pending Approvals instead.', 409);
+    }
+    if (userDoc.data().isActive) {
+      return errorResponse(res, 'User is already active', 409);
+    }
+
+    await db.collection('users').doc(uid).update({
+      isActive:      true,
+      reEnabledBy:   req.user.uid,
+      reEnabledAt:   nowISO(),
+    });
+
+    return successResponse(res, { uid }, 'User re-enabled successfully');
+  } catch (error) {
+    console.error('Enable user error:', error);
+    return errorResponse(res, 'Failed to enable user', 500);
+  }
+});
+
+// ─── POST /change-role ─────────────────────────────────────
+// Changes the role of an already-approved user (active or disabled).
+router.post('/change-role', verifyToken, verifyRole([ROLES.ADMIN_INCHARGE]), async (req, res) => {
+  try {
+    const db = admin.firestore();
+    const { uid, role } = req.body;
+
+    if (!uid || !role) {
+      return errorResponse(res, 'uid and role are required', 400);
+    }
+
+    const validRoles = Object.values(ROLES);
+    if (!validRoles.includes(role)) {
+      return errorResponse(res, `Invalid role. Valid roles: ${validRoles.join(', ')}`, 400);
+    }
+
+    const userDoc = await db.collection('users').doc(uid).get();
+    if (!userDoc.exists) {
+      return errorResponse(res, 'User not found', 404);
+    }
+    if (!userDoc.data().approvedAt) {
+      return errorResponse(res, 'This user was never approved — use Pending Approvals instead.', 409);
+    }
+
+    await db.collection('users').doc(uid).update({
+      role,
+      roleChangedBy: req.user.uid,
+      roleChangedAt: nowISO(),
+    });
+
+    return successResponse(res, { uid, role }, 'Role updated successfully');
+  } catch (error) {
+    console.error('Change role error:', error);
+    return errorResponse(res, 'Failed to change role', 500);
   }
 });
 

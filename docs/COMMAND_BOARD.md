@@ -2,6 +2,8 @@
 
 Quick reference for daily work. For locked flow status, architecture, and decisions, see FFL_Medical_Centre_Master_Design.md instead — this file does not duplicate that content. For the full pre-production audit findings, see docs/DAY10_AUDIT_FINDINGS.md.
 
+**Note on this revision (Day 13):** After a 3-month gap in active work, this file was found significantly out of date — items marked "not yet built" were confirmed complete, and several undiscovered bugs surfaced during a full-repo + live-Firestore review. This revision replaces prior Open Items entirely with a numbered phase structure covering the rest of V1, rather than patching the old session-log format further.
+
 ---
 
 ## Quick Paths
@@ -13,89 +15,132 @@ Quick reference for daily work. For locked flow status, architecture, and decisi
 - Dev server: 192.168.100.122:8081 (Expo) | VS Code: 192.168.100.122:8080
 
 ## Daily Commands
+*(unchanged — see repo history for full command list: dev server, deploy web/functions/rules, EAS build, backup script)*
 
-**Start dev server:**
-cd /mnt/storage/projects/ffl-medical-centre/app
-npx expo start
+---
 
-**Deploy web:**
+## Scope for V1 completion (locked, Day 13)
+
+**In scope — 10 confirmed modules:**
+User signup & validation, Family flow, Ambulance flow, Medical trip, Doctor availability, Doctor directory, Blood donor database, Notices & circulars, Patient feedback, Fitness scheduling. Reports is a cross-cutting view over these, not a separate module.
+
+**Explicitly deferred to V2 — no exceptions:**
+Vaccination flow, Lab module, Store/Pharmacy module, and any new idea or module raised during this review. Enhancements to the 10 in-scope modules found while evaluating them for gaps remain in scope; anything outside them does not.
+
+**Standing decision:** No rushed publish. First public release should be impactful — quality over speed.
+
+---
+
+## Confirmed Feature Status (Day 13 correction)
+
+Prior versions of this file were wrong about the following, corrected via live file + Firestore review:
+
+| Feature | Prior status said | Actual status |
+|---|---|---|
+| Family module | "Not yet built (V1 scope)" | **Built and functional** — 4 screens, full pending-revision approval flow, backend routes live |
+| Report frontend screens | "Backend done, frontend pending" | **Built** — 7 report screens exist, matching 7 backend endpoints (correctness not yet verified — see Phase 10) |
+| My Profile (employee self-service fields) | Not previously tracked as a gap | **Confirmed missing on both employee and admin side** — see Phase 4 |
+
+---
+
+## Way Forward — V1 Completion (Phases 1–10)
+
+### Phase 1 — Confirmed live bugs — **CLOSED Day 13**
+- [x] Residence Type split by branch (family vs bachelor) + bachelor question reworded to "Are you living in township bachelor accommodation?" — closed, tested, confirmed on both branches
+- [x] Blood Donor Directory blocks admin & employee — role array in `blood-donors/:bloodGroup` route expanded to all 9 roles — closed, tested (manual `bloodDonorRegistry` test doc), confirmed both name/employee-number/phone displaying correctly
+- [x] Blood Donor Directory missing employee number — added to write in both `employeeRoutes.js` (`PUT /:employeeId`) and `authRoutes.js` (`POST /complete-profile`, a second write path to the same collection, found and fixed in the same pass) and to read (`blood-donors` route) — closed, tested
+- [x] ESB designation dropdown returns empty list — case mismatch fixed in both `app/src/constants.js` and `functions/src/constants.js` (`EMPLOYEE_TYPES.ESB` aligned to live `'ESB'`, `getDesignationsByType` now case-insensitive) — applied, **pending live verification at Phase 4** since no screen calls this function yet
+- [x] Fitness report always shows zero for fit/unfit/conditional — `reportRoutes.js` `/fitness` route now reads `fitnessOutcome` (confirmed via `FitnessAdminScreen.js`'s `OUTCOME_OPTIONS` as source of truth); third bucket renamed `conditional` → `fit_with_restrictions` to match the real value — closed. No frontend currently consumes this endpoint's response (see Phase 10 note below), so the rename carries no regression risk today.
+
+### Phase 2 — Trip reports structural fix — **CLOSED Day 13**
+- [x] Confirmed root cause: `reportRoutes.js` queried a `medicalTrips` collection (with `bookings` subcollection) that does not exist in live Firestore. Real data is flat, top-level `tripBookings`.
+- [x] Rewrote `/trip-day`, `/trips/monthly`, `/trips` to query `tripBookings` directly
+- [x] Added `getHospitalMap` helper — batched `doctorId` → `doctorDirectory.hospital` lookup (`tripBookings` has no stored `hospital` field)
+- [x] Found and fixed two additional bugs during the rewrite: seat counting summed booking count instead of `seats` field; status filter compared against `BOOKING_STATUS.APPROVED` (`'approved'`), a value that never appears in live data (real value is `'confirmed'`)
+- [x] `MEDICAL_TRIP_TOTAL_SEATS` (26, from constants) now used instead of a dead `tripData.totalSeats` fallback
+- [x] Fixed PDF phone field (`b.phone`, not the nonexistent `employeePhoneNumber`)
+- [x] Required a new Firestore composite index (`tripBookings`: `status` + `tripDate`) — created and confirmed enabled; `functions/firestore.indexes.json` re-exported and now accurately reflects all 19 live indexes (was previously a stale partial file)
+- [x] **Verified live:** Monthly Trip Report for May 2026 returned 3 real bookings, correctly enriched with hospital via lookup (RYK Hospital, Fatima Memorial Hospital), including one row correctly showing `—` where the referenced doctor has no hospital on file — confirms the fallback behaves correctly on incomplete data, not a bug
+- [ ] **Not yet live-verified:** Trip Day Report (no same-day confirmed booking existed to test against) and the general `/trips` route (not wired to any frontend screen currently). Both share the same query pattern and helper functions as the verified Monthly Trip Report, so risk is low, but flagging as unverified rather than assuming pass-by-association.
+
+### Phase 3 — Code-only consistency fixes
+*(No data migration needed — all current employee records are test data, to be wiped before launch. These are forward-looking code corrections only.)*
+- [ ] Marital status: `constants.js` uses `'single'`; live config + schema use `'unmarried'` — align code to live config
+- [ ] Department/unit casing: `constants.js` fallback uses `Production_N` style; live config uses `Production_n` style — align code to live config
+- [ ] Designation code drift (low priority): `constants.js` missing `Senior_Engineer_M9A`; GTE rank naming inconsistent across sources — only matters if live-config fetch fails and fallback is used
+
+### Phase 4 — My Profile (new feature)
+Root cause: backend (`PUT /:employeeId`) and config/dropdowns were built ahead of any frontend. Confirmed: **neither an employee-facing nor an admin-facing screen exists** for department, unit, designation, blood group, CNIC, blood donor consent, or chronic disease — this is a full gap on both sides, not a partial one.
+
+Needs two screens:
+- Employee-facing: submit/edit these fields, routed through admin review (reuse `familyMembers` pending-revision pattern)
+- Admin-facing: review/approve/correct submitted values (equivalent of `FamilyAdminReviewScreen.js` for employee fields)
+
+Build order (each fully verified before the next):
+1. Department → Unit → Designation (cascading dropdowns)
+2. Blood group + CNIC (admin-verified)
+3. Blood donor consent (employee + family) — feeds the Phase 1-fixed directory
+4. Chronic disease (employee + family, admin/CMO-visible only)
+5. Picture upload (own sub-session — camera/gallery/Storage work)
+
+**Not started until Phase 1–3 are stable and verified**, per no-rushed-publish decision.
+
+### Phase 5 — Ambulance flow review
+- [ ] Not yet reviewed this session — audit screens + backend routes for gaps/bugs within scope
+
+### Phase 6 — Doctor Availability review
+- [ ] Not yet reviewed this session — audit screens + backend routes for gaps/bugs within scope
+
+### Phase 7 — Doctor Directory review
+- [ ] Not yet reviewed this session — audit screens + backend routes for gaps/bugs within scope
+
+### Phase 8 — Notices & Circulars review
+- [ ] Not yet reviewed this session — audit screens + backend routes for gaps/bugs within scope
+
+### Phase 9 — Patient Feedback review
+- [ ] Confirmed bug (found during schema doc correction, Day 13): `reportRoutes.js`'s `/feedback` route reads `staffBehaviourRating`, `cleanlinessRating`, `servicesRating`, `comments` — none of these match the real field names (`ratings.staffBehaviour`, `ratings.housekeeping`, `ratings.waitingTime`, `suggestion`). Same shape of bug as the Phase 1 Fitness report fix. Feedback averages/report have likely never shown correct data.
+- [ ] Screens (`FeedbackDetailScreen.js`, `FeedbackFormScreen.js`, `FeedbackListScreen.js`) not yet reviewed this session — audit for further gaps/bugs within scope
+
+### Phase 10 — Reports review
+- [ ] Run all 7 report screens (Trip Day, Monthly Trip, Township Population, Non-Township, Employee-Only, Blood Group, Ambulance KPI) post Phase 2/3 fixes and confirm each returns correct live data
+- [ ] **New finding (Day 13, surfaced while fixing the Fitness report bug):** `reportRoutes.js` has 5 routes with no corresponding tile in `ReportsHubScreen.js` and no dedicated screen anywhere in `reports/` — `/fitness`, `/ambulance`, `/trips` (the one querying the non-existent `medicalTrips`, distinct from the working `/trip-day` and `/trips/monthly` routes), `/vaccination`, `/feedback`. Unclear whether these are: (a) built ahead of frontend, same pattern as My Profile and the Feedback field-name bug, or (b) legacy/dead code from before the Reports Hub was restructured. Needs a deliberate decision — build the missing screens (if in-scope: Fitness, Ambulance, Feedback all are; Vaccination is V2), or remove the dead routes — rather than leaving them unexplained.
+- [ ] Assess requirement for any new reports, remaining within scope
+- [ ] Deliberately held until after Phase 4 so reports can be reviewed against the complete employee data model (post My Profile), not re-checked twice
+
+---
+
+## Design decisions — CLOSED, unchanged
+- [x] Header/logout layout — driver accepted as intentional one-off
+- [x] Employee pink tiles vs. white — kept as-is per Homi's stated priority (employee = actual customer, gets design investment)
+
+## Process notes
+- Before Phase 2 opens, re-run a fresh live A–Z signup test to confirm Phase 1 fixes behave as expected and haven't introduced anything new
+- One issue at a time, full verification after each — confirmed working again on the Phase 1 residence-type fix (Day 13)
+- Complete file replacements over partial edits remains the default; surgical edits only for genuinely minor single-line changes
+
+## Explicitly out of scope for V1
+- Vaccination flow (full — catch-up, adult, nurse-driven)
+- Nurse, lab_technologist, pharmacy_incharge full flows
+- Any new module or idea raised during this review, however small
+
+## Other pending (unchanged from before)
+- Notification debugging — deferred to final pre-production testing round, after Phase 10
+
+## Important Commands
+
+# Tree Structure Command
+tree -L 5 -I 'node_modules|dist|.git|.expo|.agents'
+
+# backup command
+bash scripts/backup.sh
+
+# web build command
 cd /mnt/storage/projects/ffl-medical-centre/app
 rm -rf dist
 npx expo export --platform web
 cd /mnt/storage/projects/ffl-medical-centre
 firebase deploy --only hosting
 
-**Deploy functions (targeted):**
+# Functions Deploy
 cd /mnt/storage/projects/ffl-medical-centre/functions
-firebase deploy --only functions:FUNCTION_NAME
-
-**Deploy Firestore rules:**
-cd /mnt/storage/projects/ffl-medical-centre
-firebase deploy --only firestore:rules
-*(Easy to forget — a rules change with no matching deploy silently blocks reads/writes to that collection. Lesson from Aug 29: Health Tips feature initially failed end-to-end with "Failed to load/add" errors purely because rules were written but never deployed.)*
-
-**Build Android APK (EAS):**
-cd /mnt/storage/projects/ffl-medical-centre/app
-npx eas build --platform android --profile preview
-*(Always confirm `git status` is clean and `git pull` is up to date before building.)*
-
-**Check which commit a build was made from:**
-cd /mnt/storage/projects/ffl-medical-centre/app
-npx eas build:list --platform android --limit 5
-*(Cross-reference the "Commit" field against `git log -1` before trusting a finding tested on an installed APK.)*
-
-**Backup (end of session):**
-bash /mnt/storage/projects/ffl-medical-centre/scripts/backup.sh "Day N: description"
-*(Handles git commit+push, local snapshot, and Drive sync in one step. Trigger phrase: "lets backup and close".)*
-
-## Session Log
-(Newest first)
-
-- **Aug 29, 2026 (major feature day — employee UX overhaul + auth flow hardening):**
-  - **Employee home screen redesign:** replaced the 12-tile overflow grid with a side panel navigation — animated slide-in drawer on mobile (hamburger toggle), permanent fixed sidebar on web. New dashboard: time-aware greeting (pulled from `employees.fullName` via `userId`, not Firebase Auth `displayName` — that field was never populated), live date/time, health tip of the day, medical centre emergency numbers (Reception 5935, Medical Emergency 5555). Inactive tiles (Vaccination, Lab Updates, Pharmacy Updates) sort to bottom on both platforms.
-  - **Custom health graphic:** AI-generated artwork (caduceus + empathy/care icons) had baked-in checkerboard "transparency" and a third-party watermark from an online background-remover tool — both required custom Python image processing (grid-position-based checker detection + border/island flood-fill) to produce a genuinely clean transparent PNG. Displayed as an inline image below the emergency card (not a background watermark — reversed an earlier design choice after real-device testing showed positioning issues).
-  - **Logout icon bug (all roles, mobile only):** `⏻` Unicode power symbol isn't in Android's default font — rendered as a placeholder box. Fixed by dropping the icon entirely (text-only "Logout" — zero font-dependency risk going forward). Also fixed an invalid `fontWeight: '1200'` found in the same component.
-  - **Health Tips feature (new):** `healthTips` Firestore collection, `HealthTipsAdminScreen.js` (admin_incharge only — add/delete/toggle tips, any language or mix of languages, no forced English/Urdu split), employee dashboard now fetches active tips and rotates one per day with a local hardcoded fallback if Firestore is empty or unreachable. Required a rules deploy that was initially missed — see Daily Commands note above.
-  - **Admin Home grid:** 9→10 tiles, changed 3-column/140px to 4-column/108px layout to keep everything on one screen without scrolling; incidentally this also resolved the still-open Day 10 finding #5 (tile overflow) for admin_incharge.
-  - **Login screen (item 4, finally closed):** root cause was a single oversized `creditLogo` style (1000×100) reused for two differently-sized logos. Rebuilt with correctly-sized separate styles; added a "Remember Me" checkbox that persists only the **email** (not password — a real device-storage security risk was flagged and avoided) via AsyncStorage. Web got a further redesign per Homi's request: fixed-width left credentials panel (HomiLabs branding, managed-by names, tagline) + narrower centered sign-in card on the right; mobile stays single-column.
-  - **Signup date picker (web) — broken, now fixed:** `@react-native-community/datetimepicker` has no real web implementation; tapping the field did nothing on web (silent no-op). Fixed by branching to a native HTML `<input type="date">` on web only, mobile untouched. Same shared `DatePickerField.js` component is used across other screens (Family, Fitness, etc.) — same fix applies everywhere.
-  - **Signup DOB timezone bug:** `dob.toISOString()` converts to UTC before formatting, which can shift the saved date back a day for users in PKT (UTC+5). Fixed to build the date string from local date parts directly — same pattern already used elsewhere in the codebase per prior Key Learnings.
-  - **Manage Users feature (new, found via live A–Z signup testing):** Pending Approvals only ever showed *never-approved* signups — once approved, a user vanished from admin's view entirely with no way to review, disable, or reassign their role. Fixed with a new `approvedAt` field distinguishing "never approved" (Pending Approvals territory) from "approved, possibly later disabled" (new Manage Users screen territory) — critical because the existing Reject button **permanently deletes the Firebase Auth account**, and without this distinction, disabling an approved user would have made them reappear in Pending Approvals and risk accidental permanent deletion. New backend routes: `/all-users`, `/disable-user`, `/enable-user`, `/change-role`, each guarded to only operate on correctly-staged users. Verified end-to-end including a full disable→enable round-trip confirming no leakage back into Pending Approvals.
-  - **Legal:** Red Crescent emblem use in the app's custom graphic flagged as a protected-symbol/Geneva Conventions concern (not a generic medical icon, despite common misuse elsewhere). Homi reviewed and made an informed decision to proceed as-is; not registering the logo, treats it as accepted practice in Pakistan medical signage. Logged here for the record, not revisited further per his direction.
-  - **Design-lock items closed by decision, not code:** driver's header-bar style accepted as an intentional one-off (different navigation structure, not a tile grid — nothing to unify). Employee pink tiles vs. white elsewhere: left as-is — Homi's explicit rationale is that employees are the actual end customer and get disproportionate design investment; other roles are internal and lower priority for cosmetic parity.
-
-- **Aug 27, 2026 (item 3 root cause found & fixed):** Investigated finding #3 (spurious error dialogs). Real cause: Google Cloud billing had been disabled since ~Aug 18, causing every backend call to fail unconditionally. Fixed by re-linking billing + redeploying `auth` function. Confirmed resolved on web and mobile.
-- **Aug 27, 2026 (code-fix phase start):** Discovered Day 10 audit had been conducted against a stale APK. Findings #1 and #2 were already resolved in code — no fixes needed. NAS IP corrected (192.168.100.122).
-- Day 10 (audit close-out): Full pre-production audit complete. 8 consolidated findings documented in docs/DAY10_AUDIT_FINDINGS.md.
-- Day 10: Repo cleanup — protected serviceAccountKey.json, removed stray backups, created docs/ and scripts/.
-
-## Open Items
-
-**All original Day 10 audit findings — CLOSED:**
-- [x] Vaccination flow mismatch — resolved
-- [x] Blood Donor Directory + Reports tiles missing — resolved
-- [x] Spurious error dialogs — resolved (billing outage)
-- [x] Login screen scrolling — resolved Aug 29 (logo sizing + Remember Me + web two-column redesign)
-- [x] Mobile home tile/icon/logout alignment — resolved (employee side-panel redesign; admin 4-column grid)
-
-**Design decisions — CLOSED by explicit decision:**
-- [x] Header/logout layout — driver accepted as an intentional one-off, no unification needed
-- [x] Employee pink tiles vs. white — kept as-is; not revisited, per Homi's stated priority (employee = actual customer, gets the design investment; other roles stay functional/internal)
-
-**New items found + closed during Aug 29 live testing:**
-- [x] Broken logout icon (all roles, mobile)
-- [x] Signup date picker non-functional on web
-- [x] Signup DOB timezone-shift bug
-- [x] No way to review/disable/reassign already-approved users — built Manage Users feature
-
-**Fast-follow backlog (logged, not yet started):**
-- None currently — Health Tips and Manage Users, both originally logged as fast-follow candidates, were pulled into this session and completed.
-
-**Process (per audit methodology):**
-1–9. ~~All done~~ — audit, findings, fixes, design-lock decisions, all closed as of Aug 29.
-10. **Production build + Play Store submission — next major milestone.** Homi is continuing live A–Z flow testing (signup → approval → role-based screens) before locking further and moving toward submission; more findings may surface from that review and will be logged here as they're found.
-
-**Other pending (unchanged from before):**
-- Notification debugging — deferred to final pre-production testing round
-- Family module — not yet built (V1 scope)
-- Report frontend screens — backend done (7 endpoints), frontend screens pending
+firebase deploy --only functions:employees

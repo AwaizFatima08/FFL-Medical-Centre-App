@@ -11,6 +11,7 @@ const {
   BOOKING_STATUS,
   APPOINTMENT_STATUS,
   VACCINE_STATUS,
+  MEDICAL_TRIP_TOTAL_SEATS,   // ← Day 13 (Phase 2): real configured capacity, replaces the old tripData.totalSeats fallback
 } = require('../constants');
 
 // ─── HELPER — DATE RANGE FILTER ──────────────────────────
@@ -49,6 +50,28 @@ const sendPDF = (res, filename, buildFn) => {
   doc.end();
 };
 
+// ─── HELPER — BATCH HOSPITAL LOOKUP (Day 13, Phase 2) ────
+// tripBookings has no `hospital` field of its own — it's looked up via
+// doctorId → doctorDirectory.hospital at report-generation time.
+// Fetches each unique doctorId once, not once per booking.
+const getHospitalMap = async (db, doctorIds) => {
+  const uniqueIds = [...new Set(doctorIds.filter(Boolean))];
+  const map = {};
+  await Promise.all(uniqueIds.map(async (id) => {
+    const doc = await db.collection('doctorDirectory').doc(id).get();
+    map[id] = doc.exists ? (doc.data().hospital || null) : null;
+  }));
+  return map;
+};
+
+// ─── HELPER — DAY OF WEEK FROM YYYY-MM-DD ────────────────
+// tripBookings has no stored dayOfWeek field — derived from tripDate.
+const dayOfWeekFrom = (tripDate) => {
+  if (!tripDate) return null;
+  const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+  return days[new Date(tripDate).getDay()];
+};
+
 // ─────────────────────────────────────────────────────────
 // ─── EXISTING ROUTES (unchanged) ─────────────────────────
 // ─────────────────────────────────────────────────────────
@@ -76,48 +99,6 @@ router.get('/ambulance', verifyToken, verifyRole([
     return successResponse(res, { summary, requests });
   } catch (error) {
     return errorResponse(res, 'Failed to generate ambulance report', 500);
-  }
-});
-
-// ─── GET /trips ───────────────────────────────────────────
-router.get('/trips', verifyToken, verifyRole([
-  ROLES.CMO, ROLES.DOCTOR, ROLES.RECEPTION, ROLES.ADMIN_INCHARGE,
-]), async (req, res) => {
-  try {
-    const db = admin.firestore();
-    const { fromDate, toDate, month, year } = req.query;
-    const snapshot = await db.collection('medicalTrips').orderBy('tripDate', 'desc').get();
-    let trips = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-    if (fromDate || toDate) trips = trips.filter(t => inDateRange(t.tripDate, fromDate, toDate));
-    if (month && year) {
-      trips = trips.filter(t => {
-        const date = new Date(t.tripDate);
-        return date.getMonth() + 1 === parseInt(month) && date.getFullYear() === parseInt(year);
-      });
-    }
-    const tripsWithBookings = await Promise.all(trips.map(async (trip) => {
-      const bookingsSnapshot = await db.collection('medicalTrips').doc(trip.id).collection('bookings').get();
-      const bookings = bookingsSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-      const approvedBookings = bookings.filter(b => b.status === BOOKING_STATUS.APPROVED);
-      return {
-        ...trip,
-        bookings,
-        approvedCount:   approvedBookings.length,
-        totalPassengers: approvedBookings.reduce((sum, b) => sum + (b.seatsRequired || 1), 0),
-      };
-    }));
-    const summary = {
-      totalTrips:      trips.length,
-      totalBookings:   tripsWithBookings.reduce((sum, t) => sum + t.bookings.length, 0),
-      totalPassengers: tripsWithBookings.reduce((sum, t) => sum + t.totalPassengers, 0),
-      byDayOfWeek:     {},
-    };
-    tripsWithBookings.forEach(t => {
-      summary.byDayOfWeek[t.dayOfWeek] = (summary.byDayOfWeek[t.dayOfWeek] || 0) + 1;
-    });
-    return successResponse(res, { summary, trips: tripsWithBookings });
-  } catch (error) {
-    return errorResponse(res, 'Failed to generate trip report', 500);
   }
 });
 
@@ -177,9 +158,9 @@ router.get('/fitness', verifyToken, verifyRole([
       missed:       appointments.filter(a => a.status === APPOINTMENT_STATUS.MISSED).length,
       notScheduled: totalEmployees - appointments.length,
       byFitnessStatus: {
-        fit:         appointments.filter(a => a.fitnessStatus === 'fit').length,
-        unfit:       appointments.filter(a => a.fitnessStatus === 'unfit').length,
-        conditional: appointments.filter(a => a.fitnessStatus === 'conditional').length,
+        fit:                   appointments.filter(a => a.fitnessOutcome === 'fit').length,
+        unfit:                 appointments.filter(a => a.fitnessOutcome === 'unfit').length,
+        fit_with_restrictions: appointments.filter(a => a.fitnessOutcome === 'fit_with_restrictions').length,
       },
       complianceRate: totalEmployees > 0
         ? Math.round((appointments.filter(a => a.status === APPOINTMENT_STATUS.COMPLETED).length / totalEmployees) * 100)
@@ -256,11 +237,63 @@ router.get('/feedback', verifyToken, verifyRole([
 });
 
 // ─────────────────────────────────────────────────────────
-// ─── NEW ROUTES ───────────────────────────────────────────
+// ─── TRIP ROUTES — REWRITTEN Day 13 (Phase 2) ────────────
+// tripBookings is a FLAT, top-level collection — each document IS a
+// booking directly. There is no `medicalTrips` parent collection or
+// `bookings` subcollection in live Firestore; the old routes queried a
+// structure that never existed, so these reports never returned real data.
+// `hospital` is not a stored field on tripBookings — it's looked up via
+// doctorId → doctorDirectory.hospital at report-generation time.
 // ─────────────────────────────────────────────────────────
 
+// ─── GET /trips ────────────────────────────────────────────
+// General trip/booking report across a date range or month — booking-level
+// metrics (no separate "trip" entity exists in the real data model).
+router.get('/trips', verifyToken, verifyRole([
+  ROLES.CMO, ROLES.DOCTOR, ROLES.RECEPTION, ROLES.ADMIN_INCHARGE,
+]), async (req, res) => {
+  try {
+    const db = admin.firestore();
+    const { fromDate, toDate, month, year } = req.query;
+
+    let query = db.collection('tripBookings');
+    const snapshot = await query.get();
+    let bookings = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+
+    if (fromDate || toDate) bookings = bookings.filter(b => inDateRange(b.tripDate, fromDate, toDate));
+    if (month && year) {
+      bookings = bookings.filter(b => {
+        const date = new Date(b.tripDate);
+        return date.getMonth() + 1 === parseInt(month) && date.getFullYear() === parseInt(year);
+      });
+    }
+
+    const confirmedBookings = bookings.filter(b => b.status === 'confirmed');
+
+    const summary = {
+      totalBookings:   bookings.length,
+      totalConfirmed:  confirmedBookings.length,
+      totalPassengers: confirmedBookings.reduce((sum, b) => sum + (b.seats || 1), 0),
+      byStatus:        {},
+      byDayOfWeek:      {},
+    };
+    bookings.forEach(b => {
+      summary.byStatus[b.status] = (summary.byStatus[b.status] || 0) + 1;
+      const dow = dayOfWeekFrom(b.tripDate);
+      if (dow) summary.byDayOfWeek[dow] = (summary.byDayOfWeek[dow] || 0) + 1;
+    });
+
+    bookings.sort((a, b) => (b.tripDate || '').localeCompare(a.tripDate || ''));
+
+    return successResponse(res, { summary, bookings });
+  } catch (error) {
+    console.error('Trip report error:', error);
+    return errorResponse(res, 'Failed to generate trip report', 500);
+  }
+});
+
 // ─── GET /trip-day ────────────────────────────────────────
-// Trip day report: today's confirmed bookings
+// Trip day report: today's (or a given date's) confirmed bookings
 // Reception: in-app JSON + PDF download
 // CMO/Doctor: in-app JSON only
 router.get('/trip-day', verifyToken, verifyRole([
@@ -270,40 +303,21 @@ router.get('/trip-day', verifyToken, verifyRole([
     const db = admin.firestore();
     const { date, format } = req.query;
 
-    // Default to today if no date provided
     const tripDate = date || new Date().toISOString().split('T')[0];
 
-    // Find the trip document for this date
-    const tripSnap = await db.collection('medicalTrips')
+    const bookingsSnap = await db.collection('tripBookings')
       .where('tripDate', '==', tripDate)
-      .limit(1)
-      .get();
-
-    if (tripSnap.empty) {
-      if (format === 'pdf') {
-        return sendPDF(res, `trip-report-${tripDate}.pdf`, (doc) => {
-          doc.fontSize(16).font('Helvetica-Bold').text('FFL Medical Centre', { align: 'center' });
-          doc.fontSize(12).font('Helvetica').text(`Medical Trip Report — ${tripDate}`, { align: 'center' });
-          doc.moveDown(2);
-          doc.fontSize(12).text('No trip scheduled for this date.', { align: 'center' });
-        });
-      }
-      return successResponse(res, { tripDate, bookings: [], totalSeats: 0, bookedSeats: 0 });
-    }
-
-    const tripDoc   = tripSnap.docs[0];
-    const tripData  = tripDoc.data();
-
-    // Get all confirmed bookings for this trip
-    const bookingsSnap = await db.collection('medicalTrips')
-      .doc(tripDoc.id)
-      .collection('bookings')
       .where('status', '==', 'confirmed')
       .get();
 
-    const bookings = bookingsSnap.docs
-      .map(doc => ({ id: doc.id, ...doc.data() }))
+    const rawBookings = bookingsSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+    const hospitalMap = await getHospitalMap(db, rawBookings.map(b => b.doctorId));
+
+    const bookings = rawBookings
+      .map(b => ({ ...b, hospital: hospitalMap[b.doctorId] || null }))
       .sort((a, b) => (a.pickupHouse || '').localeCompare(b.pickupHouse || ''));
+
+    const bookedSeats = bookings.reduce((sum, b) => sum + (b.seats || 1), 0);
 
     if (format === 'pdf') {
       return sendPDF(res, `trip-report-${tripDate}.pdf`, (doc) => {
@@ -317,6 +331,11 @@ router.get('/trip-day', verifyToken, verifyRole([
         doc.moveDown();
         doc.moveTo(40, doc.y).lineTo(555, doc.y).stroke();
         doc.moveDown(0.5);
+
+        if (bookings.length === 0) {
+          doc.fontSize(12).text('No confirmed bookings for this date.', { align: 'center' });
+          return;
+        }
 
         // Column headers
         const cols = { no: 40, name: 70, house: 220, phone: 310, doctor: 400, hospital: 490 };
@@ -346,16 +365,15 @@ router.get('/trip-day', verifyToken, verifyRole([
           doc.moveUp();
           doc.text(b.pickupHouse   || '—',  cols.house,   y, { width: 85 });
           doc.moveUp();
-          doc.text(b.employeePhoneNumber || b.phoneNumber || '—', cols.phone, y, { width: 85 });
+          doc.text(b.phone         || '—',  cols.phone,   y, { width: 85 });  // ← Day 13 fix: real field is `phone`
           doc.moveUp();
           doc.text(b.doctorName    || '—',  cols.doctor,  y, { width: 85 });
           doc.moveUp();
-          doc.text(b.hospital      || '—',  cols.hospital,y, { width: 65 });
+          doc.text(b.hospital      || '—',  cols.hospital,y, { width: 65 });  // ← Day 13 fix: looked up, not stored
           doc.moveDown(0.2);
           doc.moveTo(40, doc.y).lineTo(555, doc.y).stroke('#eeeeee');
           doc.moveDown(0.2);
 
-          // New page if near bottom
           if (doc.y > 750) doc.addPage();
         });
 
@@ -367,9 +385,8 @@ router.get('/trip-day', verifyToken, verifyRole([
 
     return successResponse(res, {
       tripDate,
-      tripId:     tripDoc.id,
-      totalSeats: tripData.totalSeats || 24,
-      bookedSeats: bookings.length,
+      totalSeats:  MEDICAL_TRIP_TOTAL_SEATS,   // ← Day 13 fix: real configured capacity
+      bookedSeats,
       bookings,
     });
 
@@ -390,43 +407,30 @@ router.get('/trips/monthly', verifyToken, verifyRole([
     const month = parseInt(req.query.month) || new Date().getMonth() + 1;
     const year  = parseInt(req.query.year)  || new Date().getFullYear();
 
-    // Pad month for string comparison
     const monthStr = String(month).padStart(2, '0');
-    const prefix   = `${year}-${monthStr}`;
+    const prefix    = `${year}-${monthStr}`;
 
-    // Get all trips for this month
-    const tripsSnap = await db.collection('medicalTrips')
+    const bookingsSnap = await db.collection('tripBookings')
       .where('tripDate', '>=', `${prefix}-01`)
       .where('tripDate', '<=', `${prefix}-31`)
+      .where('status', '==', 'confirmed')
       .get();
 
-    const rows = [];
+    const rawBookings = bookingsSnap.docs.map(doc => doc.data());
+    const hospitalMap = await getHospitalMap(db, rawBookings.map(b => b.doctorId));
 
-    await Promise.all(tripsSnap.docs.map(async (tripDoc) => {
-      const trip = tripDoc.data();
-      const bookingsSnap = await db.collection('medicalTrips')
-        .doc(tripDoc.id)
-        .collection('bookings')
-        .where('status', '==', 'confirmed')
-        .get();
-
-      bookingsSnap.docs.forEach(doc => {
-        const b = doc.data();
-        rows.push({
-          tripDate:       trip.tripDate,
-          patientName:    b.patientName    || '—',
-          patientRelation:b.patientRelation|| '—',
-          employeeName:   b.employeeName   || '—',
-          employeeNumber: b.employeeNumber || '—',
-          doctorName:     b.doctorName     || '—',
-          hospital:       b.hospital       || '—',
-          returnTrip:     b.returnTrip ? 'Yes' : 'No',
-          overnightStay:  b.overnightStay  ? 'Yes' : 'No',
-        });
-      });
+    const rows = rawBookings.map(b => ({
+      tripDate:        b.tripDate,
+      patientName:     b.patientName     || '—',
+      patientRelation: b.patientRelation || '—',
+      employeeName:    b.employeeName    || '—',
+      employeeNumber:  b.employeeNumber  || '—',
+      doctorName:      b.doctorName      || '—',
+      hospital:        hospitalMap[b.doctorId] || '—',   // ← Day 13 fix: looked up, not stored
+      returnTrip:      b.returnTrip    ? 'Yes' : 'No',
+      overnightStay:   b.overnightStay ? 'Yes' : 'No',
     }));
 
-    // Sort by date
     rows.sort((a, b) => a.tripDate.localeCompare(b.tripDate));
 
     return successResponse(res, {
@@ -440,6 +444,10 @@ router.get('/trips/monthly', verifyToken, verifyRole([
     return errorResponse(res, 'Failed to generate monthly trip report', 500);
   }
 });
+
+// ─────────────────────────────────────────────────────────
+// ─── OTHER ROUTES (unchanged) ────────────────────────────
+// ─────────────────────────────────────────────────────────
 
 // ─── GET /ambulance/kpis ──────────────────────────────────
 // Ambulance KPI report: response times from 4 timestamps
@@ -457,7 +465,6 @@ router.get('/ambulance/kpis', verifyToken, verifyRole([
 
     let requests = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
 
-    // Filter by single date OR month+year
     if (date) {
       requests = requests.filter(r => r.createdAt && r.createdAt.startsWith(date));
     } else if (month && year) {
@@ -466,7 +473,6 @@ router.get('/ambulance/kpis', verifyToken, verifyRole([
       requests = requests.filter(r => r.createdAt && r.createdAt.startsWith(prefix));
     }
 
-    // Only completed trips have all 4 timestamps meaningful
     const completed = requests.filter(r => r.status === 'completed');
 
     const kpiRows = requests.map(r => ({
@@ -479,14 +485,12 @@ router.get('/ambulance/kpis', verifyToken, verifyRole([
       priorityFlag:        r.priorityFlag         || '—',
       vehicleAssigned:     r.vehicleAssigned       || '—',
       status:              r.status               || '—',
-      // KPI calculations in minutes
       responseTime:        diffMinutes(r.createdAt, r.dispatchedAt),
       arrivalTime:         diffMinutes(r.dispatchedAt, r.pickedUpAt),
       returnTime:          diffMinutes(r.pickedUpAt, r.completedAt),
       totalTripTime:       diffMinutes(r.createdAt, r.completedAt),
     }));
 
-    // Averages from completed trips only
     const avg = (field) => {
       const vals = kpiRows.filter(r => r[field] !== null).map(r => r[field]);
       if (!vals.length) return null;
@@ -519,7 +523,6 @@ router.get('/population/township', verifyToken, verifyRole([
     const db = admin.firestore();
     const { format } = req.query;
 
-    // Get all validated township residents
     const empSnap = await db.collection('employees')
       .where('isValidated', '==', true)
       .get();
@@ -528,7 +531,6 @@ router.get('/population/township', verifyToken, verifyRole([
       .map(doc => ({ id: doc.id, ...doc.data() }))
       .filter(e => e.townshipResidentWithFamily === true || e.townshipResidentBachelor === true);
 
-    // Enrich with family members
     const enriched = await Promise.all(employees.map(async (emp) => {
       const famSnap = await db.collection('employees')
         .doc(emp.id).collection('familyMembers').get();
@@ -695,7 +697,6 @@ router.get('/population/employees-only', verifyToken, verifyRole([
         doc.moveTo(40, doc.y).lineTo(555, doc.y).stroke();
         doc.moveDown(0.5);
 
-        // Column headers
         const c = { no: 40, name: 65, empNo: 190, dept: 270, desig: 360, house: 445, age: 495, fam: 520 };
         doc.fontSize(8).font('Helvetica-Bold');
         doc.text('#',           c.no,    doc.y, { width: 22 });

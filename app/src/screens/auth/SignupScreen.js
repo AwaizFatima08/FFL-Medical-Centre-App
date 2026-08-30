@@ -11,6 +11,11 @@ import { webAlert } from '../../utils/webAlert';
 //  5. Backend /register saves user doc (isActive: false, role: employee)
 //  6. POST_NOTIFICATIONS permission requested
 //  7. User sees "Pending Approval" — admin activates & assigns role
+//
+//  Day 13 fix: Residence Type dropdown now shows a branch-specific list —
+//  family residents see FAMILY_TYPES only, bachelor residents see
+//  BACHELOR_TYPES only (previously both branches showed the combined list).
+//  Bachelor accommodation question reworded for clarity ("living in").
 // ─────────────────────────────────────────────────────────────
 import React, { useState, useRef } from 'react';
 import {
@@ -49,9 +54,9 @@ const requestNotificationPermission = async () => {
 };
 
 // ── Residence constants
+// Day 13: FAMILY_TYPES and BACHELOR_TYPES are now shown separately, never combined.
 const FAMILY_TYPES   = ['A-Type', 'B-Type', 'B-Modified', 'C-Type', 'D-Plus', 'D-Type', 'E-Type', 'E-Modified', 'F-Type', 'G-Type', 'MOQ'];
 const BACHELOR_TYPES = ['BQ', 'BOQ', 'Guest House'];
-const ALL_RESIDENCE_TYPES = [...FAMILY_TYPES, ...BACHELOR_TYPES];
 const CITIES = ['Sadiqabad', 'Rahimyarkhan', 'Sanjarpur', 'Kot Sabzal'];
 
 const isBachelorType = (type) => BACHELOR_TYPES.includes(type);
@@ -105,6 +110,10 @@ export default function SignupScreen({ navigation }) {
   const showRoomNumber       = showResidenceType && residenceType && isBachelorType(residenceType);
   const showCity             = isNonResident;
 
+  // Day 13: which options the Residence Type dropdown shows depends on the branch —
+  // family residents only ever see FAMILY_TYPES, bachelor residents only ever see BACHELOR_TYPES.
+  const residenceTypeOptions = townshipResidentWithFamily === true ? FAMILY_TYPES : BACHELOR_TYPES;
+
   // ── Step 1 validation
   const goToStep2 = () => {
     if (!email.trim()) {
@@ -151,7 +160,7 @@ export default function SignupScreen({ navigation }) {
       webAlert('Required', 'Please indicate whether you are a township resident with family.'); return false;
     }
     if (townshipResidentWithFamily === false && townshipResidentBachelor === null) {
-      webAlert('Required', 'Please indicate whether you are in bachelor accommodation.'); return false;
+      webAlert('Required', 'Please indicate whether you are living in bachelor accommodation.'); return false;
     }
     if (isTownshipResident && !residenceType) {
       webAlert('Required', 'Please select your residence type.'); return false;
@@ -441,7 +450,7 @@ export default function SignupScreen({ navigation }) {
 
               {townshipResidentWithFamily === false && (
                 <YesNoRow
-                  label="Are you in township bachelor accommodation?"
+                  label="Are you living in township bachelor accommodation?"
                   value={townshipResidentBachelor}
                   onChange={(val) => {
                     setTownshipResidentBachelor(val);
@@ -456,7 +465,7 @@ export default function SignupScreen({ navigation }) {
               {showResidenceType && (
                 <DropdownPicker
                   label="Residence Type"
-                  options={ALL_RESIDENCE_TYPES}
+                  options={residenceTypeOptions}
                   selected={residenceType}
                   onSelect={(val) => {
                     setResidenceType(val);

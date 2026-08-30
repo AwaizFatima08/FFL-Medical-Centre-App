@@ -18,7 +18,7 @@ export const ROLES = {
 export const EMPLOYEE_TYPES = {
   MANAGEMENT:     'management',
   NON_MANAGEMENT: 'non_management',
-  ESB:            'esb',
+  ESB:            'ESB',   // ← Day 13 fix: live config value is "ESB" (capital), was "esb"
 };
 
 // ─── COMMUNITY GROUPS ─────────────────────────────────────────────────────────
@@ -157,7 +157,9 @@ export const ESB_DESIGNATIONS = [
 
 // Helper — returns correct designation list based on employee type
 export const getDesignationsByType = (employeeType) => {
-  switch (employeeType) {
+  // Day 13 fix: normalize to lowercase before comparing — live config
+  // uses "ESB" (capital), the old exact-match switch silently returned []
+  switch ((employeeType || '').toLowerCase()) {
     case 'management':     return MANAGEMENT_DESIGNATIONS;
     case 'non_management': return NON_MANAGEMENT_DESIGNATIONS;
     case 'esb':            return ESB_DESIGNATIONS;

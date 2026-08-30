@@ -1,6 +1,11 @@
 // app/src/screens/donors/BloodDonorDirectoryScreen.js
 // Read-only blood donor directory — visible to all roles
 // Searchable by blood group using existing /employees/blood-donors/:bloodGroup endpoint
+//
+// Day 13 fix: added employeeNumber display (backend now returns it after
+// the matching write+read fix in employeeRoutes.js). Role-based access to
+// this screen's underlying endpoint was also fixed the same day — see
+// employeeRoutes.js for details.
 
 import React, { useState } from 'react';
 import {
@@ -106,6 +111,9 @@ export default function BloodDonorDirectoryScreen({ navigation }) {
                 </View>
                 <View style={styles.donorInfo}>
                   <Text style={styles.donorName}>{donor.fullName}</Text>
+                  {!!donor.officialEmployeeNumber && (
+                    <Text style={styles.donorEmpNumber}>{donor.officialEmployeeNumber}</Text>
+                  )}
                   <Text style={styles.donorPhone}>📞 {donor.phoneNumber || '—'}</Text>
                 </View>
               </View>
@@ -177,10 +185,11 @@ const styles = StyleSheet.create({
     backgroundColor: '#fff5f5', borderWidth: 2, borderColor: '#feb2b2',
     alignItems: 'center', justifyContent: 'center',
   },
-  bloodBadgeText: { fontSize: 13, fontWeight: '800', color: '#c53030' },
-  donorInfo:      { flex: 1 },
-  donorName:      { fontSize: 15, fontWeight: '700', color: '#2d3748' },
-  donorPhone:     { fontSize: 13, color: '#718096', marginTop: 3 },
+  bloodBadgeText:  { fontSize: 13, fontWeight: '800', color: '#c53030' },
+  donorInfo:       { flex: 1 },
+  donorName:       { fontSize: 15, fontWeight: '700', color: '#2d3748' },
+  donorEmpNumber:  { fontSize: 12, color: '#a0aec0', marginTop: 1 },
+  donorPhone:      { fontSize: 13, color: '#718096', marginTop: 3 },
 
   emptyState: { alignItems: 'center', paddingTop: 60, gap: 12 },
   emptyIcon:  { fontSize: 48 },

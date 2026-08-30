@@ -191,13 +191,14 @@ router.post('/complete-profile', verifyToken, async (req, res) => {
 
     if (bloodDonorConsent && bloodGroup) {
       await db.collection('bloodDonorRegistry').doc(empDoc.id).set({
-        employeeId:       empDoc.id,
-        userId:           req.user.uid,
-        fullName:         empDoc.data().fullName,
+        employeeId:             empDoc.id,
+        userId:                 req.user.uid,
+        fullName:               empDoc.data().fullName,
+        officialEmployeeNumber: empDoc.data().officialEmployeeNumber || null,  // ← Day 13 fix, mirrors employeeRoutes.js
         bloodGroup,
-        phoneNumber:      empDoc.data().phoneNumber,
-        consentGiven:     true,
-        consentUpdatedAt: nowISO(),
+        phoneNumber:            empDoc.data().phoneNumber,
+        consentGiven:           true,
+        consentUpdatedAt:       nowISO(),
       });
     }
 

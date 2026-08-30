@@ -245,16 +245,19 @@ router.put('/:employeeId', verifyToken, async (req, res) => {
     if (bloodDonorConsent !== undefined) {
       updates.bloodDonorConsent = bloodDonorConsent;
       // Update blood donor registry
+      // Day 13 fix: officialEmployeeNumber now included so the directory can
+      // display it — was previously omitted, so the read side had nothing to show.
       const donorRef = db.collection('bloodDonorRegistry').doc(req.params.employeeId);
       if (bloodDonorConsent && bloodGroup) {
         await donorRef.set({
-          employeeId:       req.params.employeeId,
-          userId:           empData.userId,
-          fullName:         fullName || empData.fullName,
-          bloodGroup:       bloodGroup || empData.bloodGroup,
-          phoneNumber:      phoneNumber || empData.phoneNumber,
-          consentGiven:     true,
-          consentUpdatedAt: nowISO(),
+          employeeId:             req.params.employeeId,
+          userId:                 empData.userId,
+          fullName:               fullName || empData.fullName,
+          officialEmployeeNumber: empData.officialEmployeeNumber || null,  // ← Day 13 fix
+          bloodGroup:             bloodGroup || empData.bloodGroup,
+          phoneNumber:            phoneNumber || empData.phoneNumber,
+          consentGiven:           true,
+          consentUpdatedAt:       nowISO(),
         });
       } else if (!bloodDonorConsent) {
         await donorRef.delete();
@@ -403,9 +406,16 @@ router.put('/:employeeId/family-members/:memberId',
 );
 
 // ─── GET /blood-donors/:bloodGroup ───────────────────────
-// Medical staff searches donor registry by blood group
+// Directory search by blood group — visible to ALL roles
+// Day 13 fix: previously restricted to DOCTOR/CMO/NURSE/RECEPTION only,
+// which blocked ADMIN_INCHARGE and EMPLOYEE with "Forbidden — insufficient
+// permissions" even though the frontend tile is shown to everyone.
 router.get('/blood-donors/:bloodGroup', verifyToken,
-  verifyRole([ROLES.DOCTOR, ROLES.CMO, ROLES.NURSE, ROLES.RECEPTION]),
+  verifyRole([
+    ROLES.EMPLOYEE, ROLES.RECEPTION, ROLES.DRIVER, ROLES.DOCTOR,
+    ROLES.NURSE, ROLES.LAB_TECHNOLOGIST, ROLES.PHARMACY_INCHARGE,
+    ROLES.ADMIN_INCHARGE, ROLES.CMO,
+  ]),
   async (req, res) => {
     try {
       const db = admin.firestore();
@@ -414,10 +424,11 @@ router.get('/blood-donors/:bloodGroup', verifyToken,
         .get();
 
       const donors = snapshot.docs.map(doc => ({
-        id:          doc.id,
-        fullName:    doc.data().fullName,
-        bloodGroup:  doc.data().bloodGroup,
-        phoneNumber: doc.data().phoneNumber,
+        id:                     doc.id,
+        fullName:               doc.data().fullName,
+        officialEmployeeNumber: doc.data().officialEmployeeNumber || null,  // ← Day 13 fix
+        bloodGroup:             doc.data().bloodGroup,
+        phoneNumber:            doc.data().phoneNumber,
       }));
 
       return successResponse(res, donors);

@@ -182,6 +182,20 @@ router.post('/validate/:employeeId', verifyToken,
 
 // ─── PUT /:employeeId ─────────────────────────────────────
 // Employee updates own profile / Admin updates any
+//
+// Day 14 fix (Phase 4, Step A): previously ANY field in the accepted list
+// below could be written by an employee editing their own record — including
+// department, designation, bloodGroup and cnic, which the Phase 4 design
+// deliberately makes admin-owned (medical centre already holds this data;
+// employee only confirms it, does not self-enter it). Those four fields are
+// now gated to non-employee callers (admin/other privileged roles) only.
+// An employee's own PUT request silently drops those fields rather than
+// erroring — matches this route's existing "include only what was sent"
+// pattern. maritalStatus and bloodDonorConsent remain open to self-edit,
+// per Phase 4 design (§2 of PHASE4_DESIGN.md). All other pre-existing
+// fields (fullName, contact info, residence fields) are UNCHANGED and
+// remain self-editable, as they were never part of the Phase 4 scope
+// discussion — not touched here to avoid guessing at scope not agreed on.
 router.put('/:employeeId', verifyToken, async (req, res) => {
   try {
     const db = admin.firestore();
@@ -199,11 +213,17 @@ router.put('/:employeeId', verifyToken, async (req, res) => {
       return errorResponse(res, 'Forbidden', 403);
     }
 
+    // Day 14: is this call self-service (employee editing their own record)?
+    // Used below to gate the admin-owned fields.
+    const isSelfService = req.userRole === ROLES.EMPLOYEE;
+
     const {
       fullName,
       cnic,
       designation,
       department,
+      unit,                        // ← Day 14, Step D
+      employeeType,                // ← Day 14, Step D
       houseNumber,
       roomNumber,                  // ← NEW
       phoneNumber,
@@ -221,16 +241,53 @@ router.put('/:employeeId', verifyToken, async (req, res) => {
 
     const updates = {};
     if (fullName)             updates.fullName             = fullName;
-    if (cnic)                 updates.cnic                 = cnic;
-    if (designation)          updates.designation          = designation;
-    if (department)           updates.department           = department;
+
+    // Day 14 fix — admin-owned fields (Phase 4 design): an employee editing
+    // their own record can no longer set these, regardless of what's in the
+    // request body. Admin/other privileged roles are unaffected.
+    if (cnic && !isSelfService)           updates.cnic           = cnic;
+    if (designation && !isSelfService)    updates.designation    = designation;
+    if (department && !isSelfService)     updates.department     = department;
+    if (bloodGroup && !isSelfService)     updates.bloodGroup     = bloodGroup;
+    if (unit && !isSelfService)           updates.unit           = unit;
+    if (employeeType && !isSelfService)   updates.employeeType   = employeeType;
+    // chronicDisease is intentionally NOT accepted here — Day 14 (Step E fix):
+    // it moved to employees/{employeeId}/private/medical, a separate,
+    // restricted-access document, because Firestore rules can't hide a
+    // single field within this otherwise openly-readable document. See the
+    // new PUT /:employeeId/medical route below.
+
     if (houseNumber)          updates.houseNumber          = houseNumber;
     if (roomNumber)           updates.roomNumber           = roomNumber;           // ← NEW
     if (phoneNumber)          updates.phoneNumber          = phoneNumber;
     if (emergencyPhoneNumber) updates.emergencyPhoneNumber = emergencyPhoneNumber;
     if (landlineExtension)    updates.landlineExtension    = landlineExtension;
-    if (bloodGroup)           updates.bloodGroup           = bloodGroup;
+    // maritalStatus stays open to self-edit — Phase 4 design deliberately
+    // makes this the one identity-adjacent field an employee can change
+    // themselves at any time (drives the Family tab alert state elsewhere).
     if (maritalStatus)        updates.maritalStatus        = maritalStatus;
+
+    // Day 14, Step F — auto-flag family data when marital status transitions
+    // INTO 'married' from anything else. Server-computed only — the request
+    // body never carries familyDataStatus for this path, so there's nothing
+    // for a client to spoof. Applies uniformly whether the caller is the
+    // employee themselves (self-edit) or admin.
+    if (maritalStatus === 'married' && empData.maritalStatus !== 'married') {
+      updates.familyDataStatus   = 'needs_update';
+      updates.familyDataFlagNote = null;
+    }
+
+    // Day 14, Step F — admin-only explicit control: mark family data
+    // complete, or manually re-flag with an optional note (e.g. HR reported
+    // a birth the employee hasn't logged yet). Placed after the
+    // auto-transition above so an explicit admin call always wins if both
+    // happen to be present in the same request.
+    if (req.body.familyDataStatus && !isSelfService) {
+      updates.familyDataStatus = req.body.familyDataStatus;
+    }
+    if (req.body.familyDataFlagNote !== undefined && !isSelfService) {
+      updates.familyDataFlagNote = req.body.familyDataFlagNote?.trim() || null;
+    }
 
     // Residence fields — use explicit undefined check so false values are saved
     if (townshipResidentWithFamily !== undefined)
@@ -242,6 +299,8 @@ router.put('/:employeeId', verifyToken, async (req, res) => {
     if (cityOfResidence !== undefined)
       updates.cityOfResidence            = cityOfResidence;                       // ← NEW
 
+    // bloodDonorConsent stays open to self-edit — Phase 4 design explicitly
+    // allows the employee to opt in/out at any time.
     if (bloodDonorConsent !== undefined) {
       updates.bloodDonorConsent = bloodDonorConsent;
       // Update blood donor registry
@@ -273,6 +332,58 @@ router.put('/:employeeId', verifyToken, async (req, res) => {
     return errorResponse(res, 'Update failed', 500);
   }
 });
+
+// ─── PUT /:employeeId/medical ─────────────────────────────
+// Day 14 (Phase 4, Step E fix). Admin/CMO only — writes chronic disease to
+// employees/{employeeId}/private/medical, NOT the main employee document.
+// Reason: firestore.rules allows any authenticated user to read
+// employees/{employeeId} (needed for directory/report features elsewhere),
+// and Firestore rules cannot hide a single field within an otherwise-open
+// document. This subcollection has its own restrictive rule instead.
+router.put('/:employeeId/medical', verifyToken,
+  verifyRole([ROLES.ADMIN_INCHARGE, ROLES.CMO]),
+  async (req, res) => {
+    try {
+      const db = admin.firestore();
+      const { chronicDisease } = req.body;
+
+      const empDoc = await db.collection('employees').doc(req.params.employeeId).get();
+      if (!empDoc.exists) {
+        return errorResponse(res, 'Employee not found', 404);
+      }
+
+      await db.collection('employees').doc(req.params.employeeId)
+        .collection('private').doc('medical')
+        .set({
+          chronicDisease: chronicDisease?.trim() || null,
+          updatedAt:      nowISO(),
+          updatedBy:      req.user.uid,
+        });
+
+      return successResponse(res, null, 'Medical data updated successfully');
+    } catch (error) {
+      console.error('Update medical data error:', error);
+      return errorResponse(res, 'Failed to update medical data', 500);
+    }
+  }
+);
+
+// ─── GET /:employeeId/medical ─────────────────────────────
+// Day 14 (Phase 4, Step E fix). Admin/CMO only.
+router.get('/:employeeId/medical', verifyToken,
+  verifyRole([ROLES.ADMIN_INCHARGE, ROLES.CMO]),
+  async (req, res) => {
+    try {
+      const db = admin.firestore();
+      const doc = await db.collection('employees').doc(req.params.employeeId)
+        .collection('private').doc('medical').get();
+
+      return successResponse(res, doc.exists ? doc.data() : { chronicDisease: null });
+    } catch (error) {
+      return errorResponse(res, 'Failed to fetch medical data', 500);
+    }
+  }
+);
 
 // ─── POST /:employeeId/family-members ────────────────────
 router.post('/:employeeId/family-members', verifyToken, async (req, res) => {

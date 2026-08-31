@@ -41,6 +41,10 @@ export default function FamilyMemberListScreen({ navigation }) {
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError]         = useState(null);
 
+  // Day 14, Step F — admin flag state, read from the employee's own record
+  const [familyDataStatus,   setFamilyDataStatus]   = useState(null);
+  const [familyDataFlagNote, setFamilyDataFlagNote] = useState(null);
+
   const db   = getFirestore();
   const auth = getAuth();
 
@@ -59,6 +63,16 @@ export default function FamilyMemberListScreen({ navigation }) {
       const snap = await getDocs(q);
       const data = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
       setMembers(data);
+
+      // Day 14, Step F — pull the admin flag note, if any, from the
+      // employee's own record so it can be shown here.
+      const empQ = query(collection(db, 'employees'), where('userId', '==', uid));
+      const empSnap = await getDocs(empQ);
+      if (!empSnap.empty) {
+        const empData = empSnap.docs[0].data();
+        setFamilyDataStatus(empData.familyDataStatus || null);
+        setFamilyDataFlagNote(empData.familyDataFlagNote || null);
+      }
     } catch (err) {
       console.error('FamilyMemberListScreen fetch error:', err);
       setError('Could not load family members. Please try again.');
@@ -79,6 +93,11 @@ export default function FamilyMemberListScreen({ navigation }) {
     setRefreshing(true);
     fetchMembers();
   };
+
+  // Day 14, Step F — show the admin's note whenever the family data is
+  // flagged as needing attention (not 'complete', not null/not_applicable).
+  const showFlagBanner = familyDataFlagNote &&
+    familyDataStatus && familyDataStatus !== 'complete';
 
   // ─── Render ────────────────────────────────────────────────────────────────
   if (loading) {
@@ -108,6 +127,14 @@ export default function FamilyMemberListScreen({ navigation }) {
         {error && (
           <View style={styles.errorBox}>
             <Text style={styles.errorText}>{error}</Text>
+          </View>
+        )}
+
+        {/* Day 14, Step F — admin flag note, e.g. "please add your newborn" */}
+        {showFlagBanner && (
+          <View style={styles.flagBox}>
+            <Text style={styles.flagIcon}>📌</Text>
+            <Text style={styles.flagText}>{familyDataFlagNote}</Text>
           </View>
         )}
 
@@ -210,6 +237,16 @@ const styles = StyleSheet.create({
 
   // Content
   container:       { paddingHorizontal: 16, paddingTop: 16 },
+
+  // Day 14, Step F — admin flag note banner
+  flagBox: {
+    flexDirection: 'row', alignItems: 'flex-start',
+    backgroundColor: '#fffbeb', borderRadius: 8,
+    padding: 12, marginBottom: 16,
+    borderLeftWidth: 3, borderLeftColor: '#f59e0b',
+  },
+  flagIcon: { fontSize: 16, marginRight: 8 },
+  flagText: { flex: 1, fontSize: 13, color: '#92400e', lineHeight: 18, fontWeight: '500' },
 
   // Info box
   infoBox: {

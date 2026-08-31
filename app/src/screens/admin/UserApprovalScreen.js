@@ -1,14 +1,30 @@
 // app/src/screens/admin/UserApprovalScreen.js
+//
+// Day 14 (Phase 4, Step D): approval panel now also captures the employee's
+// profile data (employee type, department, unit, designation, blood group,
+// chronic disease) at the same time as approving their account — per
+// PHASE4_DESIGN.md §4, medical centre already holds this data, so admin
+// enters it once here rather than the employee self-entering it later.
+//
+// Employee Type is picked FIRST (not derivable from department — a person
+// in "Production" could be Management or Non-Management). Department, Unit,
+// and Designation all cascade from it, using the same constants.js lists
+// already locked in Phase 3 (EMPLOYEE_TYPES, DEPARTMENT_GROUPS, UNITS,
+// getDesignationsByType, BLOOD_GROUPS).
 import React, { useState, useCallback } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity,
   ScrollView, ActivityIndicator, Alert,
-  RefreshControl, Platform,
+  RefreshControl, Platform, TextInput,
 } from 'react-native';
 import { getAuth } from 'firebase/auth';
 import { useFocusEffect } from '@react-navigation/native';
 import { API } from '../../config/api';
 import NotificationBell from '../../components/NotificationBell';
+import {
+  EMPLOYEE_TYPES, DEPARTMENT_GROUPS, UNITS,
+  getDesignationsByType, BLOOD_GROUPS,
+} from '../../constants';
 
 const ROLE_OPTIONS = [
   { label: 'Employee',          value: 'employee' },
@@ -21,6 +37,22 @@ const ROLE_OPTIONS = [
   { label: 'Admin Incharge',    value: 'admin_incharge' },
   { label: 'CMO',               value: 'cmo' },
 ];
+
+// Day 14, Step D — Employee Type options for the new profile section
+const EMPLOYEE_TYPE_OPTIONS = [
+  { label: 'Management',     value: EMPLOYEE_TYPES.MANAGEMENT },
+  { label: 'Non-Management', value: EMPLOYEE_TYPES.NON_MANAGEMENT },
+  { label: 'ESB',            value: EMPLOYEE_TYPES.ESB },
+];
+
+// Day 14, Step D — Plant + HO departments only; ESB is auto-handled
+// separately since it's a single fixed value with no real choice to make.
+const DEPARTMENT_OPTIONS = [
+  ...DEPARTMENT_GROUPS.PLANT.departments,
+  ...DEPARTMENT_GROUPS.HO.departments,
+];
+
+const ESB_DEPARTMENT_VALUE = DEPARTMENT_GROUPS.ESB.departments[0].value; // 'ESB'
 
 // Alert.alert is silent on Expo web — use window.confirm instead.
 // On native (Android/iOS) Alert.alert works normally.
@@ -57,6 +89,10 @@ export default function UserApprovalScreen({ navigation }) {
   const [roles,      setRoles]      = useState({});
   const [actioning,  setActioning]  = useState(null);
 
+  // Day 14, Step D — profile data keyed by uid:
+  // { employeeType, department, unit, designation, bloodGroup, chronicDisease }
+  const [profileData, setProfileData] = useState({});
+
   const getToken = async () => {
     const auth = getAuth();
     return await auth.currentUser.getIdToken();
@@ -90,10 +126,73 @@ export default function UserApprovalScreen({ navigation }) {
 
   const onRefresh = () => { setRefreshing(true); fetchPending(); };
 
+  // ─── Day 14, Step D — profile field helpers ──────────────────────────────
+  const getProfile = (uid) => profileData[uid] || {
+    employeeType: '', department: '', unit: '', designation: '',
+    bloodGroup: '', chronicDisease: '',
+  };
+
+  const setProfileField = (uid, field, value) => {
+    setProfileData(prev => ({
+      ...prev,
+      [uid]: { ...getProfile(uid), [field]: value },
+    }));
+  };
+
+  // Employee Type change cascades: ESB auto-fills department + unit
+  // (both fixed, single-option); anything else resets department/unit/
+  // designation so admin picks fresh for the new type.
+  const handleEmployeeTypeChange = (uid, employeeType) => {
+    if (employeeType === EMPLOYEE_TYPES.ESB) {
+      const esbUnit = UNITS[ESB_DEPARTMENT_VALUE]?.[0] || '';
+      setProfileData(prev => ({
+        ...prev,
+        [uid]: {
+          ...getProfile(uid),
+          employeeType,
+          department: ESB_DEPARTMENT_VALUE,
+          unit: esbUnit,
+          designation: '',
+        },
+      }));
+    } else {
+      setProfileData(prev => ({
+        ...prev,
+        [uid]: {
+          ...getProfile(uid),
+          employeeType, department: '', unit: '', designation: '',
+        },
+      }));
+    }
+  };
+
+  // Department change cascades: reset unit, auto-select if the department
+  // only has one possible unit (several do — BD, DBN, AIM, EI's not single
+  // but HO_* and BD/DBN are — saves the admin a redundant tap).
+  const handleDepartmentChange = (uid, department) => {
+    const options = UNITS[department] || [];
+    const autoUnit = options.length === 1 ? options[0] : '';
+    setProfileData(prev => ({
+      ...prev,
+      [uid]: { ...getProfile(uid), department, unit: autoUnit },
+    }));
+  };
+
   const handleApprove = (uid) => {
     const role = roles[uid];
     if (!role) { webAlert('Select Role', 'Please select a role before approving.'); return; }
+
+    // Day 14, Step D — profile data must be complete before approving.
+    const profile = getProfile(uid);
+    const unitOptions = UNITS[profile.department] || [];
+    if (!profile.employeeType) { webAlert('Required', 'Please select Employee Type.'); return; }
+    if (!profile.department)   { webAlert('Required', 'Please select Department.'); return; }
+    if (unitOptions.length > 0 && !profile.unit) { webAlert('Required', 'Please select Unit.'); return; }
+    if (!profile.designation)  { webAlert('Required', 'Please select Designation.'); return; }
+    if (!profile.bloodGroup)   { webAlert('Required', 'Please select Blood Group.'); return; }
+
     const roleLabel = ROLE_OPTIONS.find(r => r.value === role)?.label;
+    const user = users.find(u => u.uid === uid);
 
     webConfirm(
       'Confirm Approval',
@@ -102,19 +201,73 @@ export default function UserApprovalScreen({ navigation }) {
         setActioning(uid);
         try {
           const token = await getToken();
+
+          // 1. Approve the account (existing flow, unchanged)
           const res = await fetch(`${API.auth}/approve-user`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
             body: JSON.stringify({ uid, role }),
           });
           const data = await res.json();
-          if (res.ok) {
-            webAlert('Approved', 'User has been activated successfully.');
-            setUsers(prev => prev.filter(u => u.uid !== uid));
-            setExpanded(null);
-          } else {
+          if (!res.ok) {
             webAlert('Failed', data.message || 'Could not approve user.');
+            setActioning(null);
+            return;
           }
+
+          // 2. Day 14, Step D — save profile data onto the employee record.
+          // Uses the same PUT /:employeeId route hardened in Step A; admin
+          // callers are allowed to write these admin-owned fields.
+          if (user?.employeeId) {
+            try {
+              const profileRes = await fetch(`${API.employees}/${user.employeeId}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+                body: JSON.stringify({
+                  employeeType: profile.employeeType,
+                  department:   profile.department,
+                  unit:         profile.unit,
+                  designation:  profile.designation,
+                  bloodGroup:   profile.bloodGroup,
+                }),
+              });
+              if (!profileRes.ok) {
+                webAlert(
+                  'Partially Approved',
+                  'The user was approved, but their profile data could not be saved. Please edit their profile manually.'
+                );
+              }
+
+              // 2b. Day 14, Step E fix — chronic disease goes through its
+              // own admin/CMO-only route, writing to a restricted
+              // subcollection rather than the openly-readable employee
+              // document. Separate call, separate failure message, so a
+              // failure here doesn't get confused with the main profile save.
+              if (profile.chronicDisease?.trim()) {
+                const medicalRes = await fetch(`${API.employees}/${user.employeeId}/medical`, {
+                  method: 'PUT',
+                  headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+                  body: JSON.stringify({ chronicDisease: profile.chronicDisease.trim() }),
+                });
+                if (!medicalRes.ok) {
+                  webAlert(
+                    'Partially Approved',
+                    'The user was approved, but chronic disease data could not be saved. Please add it manually.'
+                  );
+                }
+              }
+            } catch (profileErr) {
+              console.error('Save profile error:', profileErr);
+              webAlert(
+                'Partially Approved',
+                'The user was approved, but their profile data could not be saved. Please edit their profile manually.'
+              );
+            }
+          }
+
+          webAlert('Approved', 'User has been activated successfully.');
+          setUsers(prev => prev.filter(u => u.uid !== uid));
+          setExpanded(null);
         } catch (err) {
           console.error('Approve error:', err);
           webAlert('Error', 'Network error. Please try again.');
@@ -209,6 +362,12 @@ export default function UserApprovalScreen({ navigation }) {
         {users.map(user => {
           const isExpanded = expanded === user.uid;
           const isActioning = actioning === user.uid;
+          const profile = getProfile(user.uid);
+          const unitOptions = UNITS[profile.department] || [];
+          const designationOptions = profile.employeeType
+            ? getDesignationsByType(profile.employeeType)
+            : [];
+          const isESB = profile.employeeType === EMPLOYEE_TYPES.ESB;
 
           return (
             <View key={user.uid} style={styles.card}>
@@ -268,6 +427,122 @@ export default function UserApprovalScreen({ navigation }) {
                       </TouchableOpacity>
                     ))}
                   </View>
+
+                  {/* ─── Day 14, Step D — Employee Profile Data ─────────── */}
+                  <View style={styles.profileSectionDivider} />
+                  <Text style={styles.profileSectionTitle}>Employee Profile Data</Text>
+                  <Text style={styles.profileSectionHint}>
+                    Enter this from medical centre / HR records. The employee will only
+                    confirm it, not edit it, after approval.
+                  </Text>
+
+                  {/* Employee Type */}
+                  <Text style={styles.roleLabel}>Employee Type</Text>
+                  <View style={styles.roleGrid}>
+                    {EMPLOYEE_TYPE_OPTIONS.map(opt => (
+                      <TouchableOpacity
+                        key={opt.value}
+                        style={[styles.roleChip, profile.employeeType === opt.value && styles.roleChipSelected]}
+                        onPress={() => handleEmployeeTypeChange(user.uid, opt.value)}
+                      >
+                        <Text style={[styles.roleChipText, profile.employeeType === opt.value && styles.roleChipTextSelected]}>
+                          {opt.label}
+                        </Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+
+                  {/* Department — hidden for ESB, it's auto-set */}
+                  {profile.employeeType && !isESB && (
+                    <>
+                      <Text style={styles.roleLabel}>Department</Text>
+                      <View style={styles.roleGrid}>
+                        {DEPARTMENT_OPTIONS.map(opt => (
+                          <TouchableOpacity
+                            key={opt.value}
+                            style={[styles.roleChip, profile.department === opt.value && styles.roleChipSelected]}
+                            onPress={() => handleDepartmentChange(user.uid, opt.value)}
+                          >
+                            <Text style={[styles.roleChipText, profile.department === opt.value && styles.roleChipTextSelected]}>
+                              {opt.label}
+                            </Text>
+                          </TouchableOpacity>
+                        ))}
+                      </View>
+                    </>
+                  )}
+                  {isESB && (
+                    <View style={styles.readOnlyNote}>
+                      <Text style={styles.readOnlyNoteText}>Department: Education Society Board (auto-set)</Text>
+                    </View>
+                  )}
+
+                  {/* Unit — cascades from department */}
+                  {profile.department && unitOptions.length > 0 && (
+                    <>
+                      <Text style={styles.roleLabel}>Unit</Text>
+                      <View style={styles.roleGrid}>
+                        {unitOptions.map(opt => (
+                          <TouchableOpacity
+                            key={opt}
+                            style={[styles.roleChip, profile.unit === opt && styles.roleChipSelected]}
+                            onPress={() => setProfileField(user.uid, 'unit', opt)}
+                          >
+                            <Text style={[styles.roleChipText, profile.unit === opt && styles.roleChipTextSelected]}>
+                              {opt}
+                            </Text>
+                          </TouchableOpacity>
+                        ))}
+                      </View>
+                    </>
+                  )}
+
+                  {/* Designation — cascades from employee type */}
+                  {profile.employeeType && designationOptions.length > 0 && (
+                    <>
+                      <Text style={styles.roleLabel}>Designation</Text>
+                      <View style={styles.roleGrid}>
+                        {designationOptions.map(opt => (
+                          <TouchableOpacity
+                            key={opt.value}
+                            style={[styles.roleChip, profile.designation === opt.value && styles.roleChipSelected]}
+                            onPress={() => setProfileField(user.uid, 'designation', opt.value)}
+                          >
+                            <Text style={[styles.roleChipText, profile.designation === opt.value && styles.roleChipTextSelected]}>
+                              {opt.label}
+                            </Text>
+                          </TouchableOpacity>
+                        ))}
+                      </View>
+                    </>
+                  )}
+
+                  {/* Blood Group */}
+                  <Text style={styles.roleLabel}>Blood Group</Text>
+                  <View style={styles.roleGrid}>
+                    {BLOOD_GROUPS.map(opt => (
+                      <TouchableOpacity
+                        key={opt}
+                        style={[styles.roleChip, profile.bloodGroup === opt && styles.roleChipSelected]}
+                        onPress={() => setProfileField(user.uid, 'bloodGroup', opt)}
+                      >
+                        <Text style={[styles.roleChipText, profile.bloodGroup === opt && styles.roleChipTextSelected]}>
+                          {opt}
+                        </Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+
+                  {/* Chronic Disease — optional, admin/CMO-visible only */}
+                  <Text style={styles.roleLabel}>Chronic Disease (optional, admin/CMO-visible only)</Text>
+                  <TextInput
+                    style={styles.chronicInput}
+                    placeholder="e.g. Diabetes, Hypertension — leave blank if none known"
+                    placeholderTextColor="#a0aec0"
+                    value={profile.chronicDisease}
+                    onChangeText={(text) => setProfileField(user.uid, 'chronicDisease', text)}
+                    multiline
+                  />
 
                   <View style={styles.actionRow}>
                     <TouchableOpacity
@@ -379,6 +654,21 @@ const styles = StyleSheet.create({
   roleChipSelected:     { borderColor: '#3b82f6', backgroundColor: '#eff6ff' },
   roleChipText:         { fontSize: 12, color: '#4a5568', fontWeight: '500' },
   roleChipTextSelected: { color: '#1d4ed8', fontWeight: '700' },
+
+  // Day 14, Step D
+  profileSectionDivider: { height: 1, backgroundColor: '#e2e8f0', marginTop: 4, marginBottom: 14 },
+  profileSectionTitle:   { fontSize: 14, fontWeight: '700', color: '#2d3748', marginBottom: 4 },
+  profileSectionHint:    { fontSize: 12, color: '#718096', marginBottom: 14, lineHeight: 17 },
+  readOnlyNote: {
+    backgroundColor: '#f7fafc', borderRadius: 8, borderWidth: 1, borderColor: '#e2e8f0',
+    paddingHorizontal: 12, paddingVertical: 10, marginBottom: 16,
+  },
+  readOnlyNoteText: { fontSize: 12, color: '#4a5568' },
+  chronicInput: {
+    borderWidth: 1, borderColor: '#e2e8f0', borderRadius: 8,
+    paddingHorizontal: 12, paddingVertical: 10, fontSize: 13, color: '#2d3748',
+    minHeight: 60, textAlignVertical: 'top', backgroundColor: '#ffffff', marginBottom: 16,
+  },
 
   actionRow: { flexDirection: 'row', gap: 10 },
   btnReject: {

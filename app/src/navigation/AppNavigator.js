@@ -82,6 +82,9 @@ import PopulationReportScreen    from '../screens/reports/PopulationReportScreen
 import EmployeeOnlyReportScreen  from '../screens/reports/EmployeeOnlyReportScreen';
 import BloodGroupReportScreen    from '../screens/reports/BloodGroupReportScreen';
 
+// ─── My Profile (Phase 4, Day 14) ──────────────────────────────────────────────
+import MyProfileScreen from '../screens/profile/MyProfileScreen';
+
 const Stack = createNativeStackNavigator();
 
 export default function AppNavigator({ userRole }) {
@@ -174,6 +177,9 @@ export default function AppNavigator({ userRole }) {
       <Stack.Screen name="NonTownshipReport" component={PopulationReportScreen} />
       <Stack.Screen name="EmployeeOnlyReport" component={EmployeeOnlyReportScreen} />
       <Stack.Screen name="BloodGroupReport"  component={BloodGroupReportScreen} />
+
+      {/* My Profile (Phase 4, Day 14) */}
+      <Stack.Screen name="MyProfile" component={MyProfileScreen} />
 
     </Stack.Navigator>
   );

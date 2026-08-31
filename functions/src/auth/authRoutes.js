@@ -46,6 +46,11 @@ const verifyRole = (allowedRoles) => {
 };
 
 // ─── POST /register ──────────────────────────────────────
+// Day 14 (Phase 4, Step C): cnic and maritalStatus added — captured at
+// signup per PHASE4_DESIGN.md §3. Both required, same as the other
+// identity fields below. cnic is admin-owned after this point (see
+// employeeRoutes.js PUT /:employeeId, Step A) — this is the only place
+// it's ever self-entered. maritalStatus stays employee-editable later.
 router.post('/register', verifyToken, async (req, res) => {
   try {
     const db = admin.firestore();
@@ -53,6 +58,8 @@ router.post('/register', verifyToken, async (req, res) => {
       fullName,
       phoneNumber,
       employeeNumber,
+      cnic,           // ← Day 14, Step C
+      maritalStatus,  // ← Day 14, Step C
       townshipResidentWithFamily,
       townshipResidentBachelor,
       residenceType,
@@ -61,8 +68,8 @@ router.post('/register', verifyToken, async (req, res) => {
       cityOfResidence,
     } = req.body;
 
-    if (!fullName || !phoneNumber || !employeeNumber) {
-      return errorResponse(res, 'fullName, phoneNumber and employeeNumber are required', 400);
+    if (!fullName || !phoneNumber || !employeeNumber || !cnic || !maritalStatus) {
+      return errorResponse(res, 'fullName, phoneNumber, employeeNumber, cnic and maritalStatus are required', 400);
     }
 
     const existingUser = await db.collection('users').doc(req.user.uid).get();
@@ -77,6 +84,15 @@ router.post('/register', verifyToken, async (req, res) => {
       return errorResponse(res, 'Employee number already registered', 409);
     }
 
+    // Day 14, Step C — CNIC is identity data, same duplicate-guard treatment
+    // as employee number above.
+    const cnicCheck = await db.collection('employees')
+      .where('cnic', '==', cnic)
+      .get();
+    if (!cnicCheck.empty) {
+      return errorResponse(res, 'This CNIC is already registered', 409);
+    }
+
     const batch = db.batch();
 
     const userRef = db.collection('users').doc(req.user.uid);
@@ -85,7 +101,7 @@ router.post('/register', verifyToken, async (req, res) => {
       phone:       phoneNumber,
       role:        ROLES.EMPLOYEE,
       isActive:    false,
-      approvedAt:  null, // explicitly null so it's distinguishable from "was approved, later disabled"
+      approvedAt:  null,
       createdAt:   nowISO(),
       lastLoginAt: nowISO(),
     });
@@ -95,6 +111,8 @@ router.post('/register', verifyToken, async (req, res) => {
       fullName,
       officialEmployeeNumber: employeeNumber,
       phoneNumber,
+      cnic,           // ← Day 14, Step C
+      maritalStatus,  // ← Day 14, Step C
       isValidated:            false,
       createdAt:              nowISO(),
       townshipResidentWithFamily: townshipResidentWithFamily === true,
@@ -150,21 +168,30 @@ router.post('/register', verifyToken, async (req, res) => {
   }
 });
 
-// ─── POST /complete-profile ──────────────────────────────
-router.post('/complete-profile', verifyToken, async (req, res) => {
+// ─── POST /confirm-profile ────────────────────────────────
+// Day 14 (Phase 4, Step B): repurposed from the old, unused /complete-profile
+// route. That route let an employee self-write cnic/designation/department/
+// bloodGroup/maritalStatus/houseNumber/etc in one unguarded call — but per
+// the Phase 4 design, admin enters that data (medical centre already holds
+// it), and the employee's only job post-approval is to CONFIRM it's correct
+// and set their blood donor consent. Nothing called the old route, so this
+// is a clean repurpose, not a breaking change.
+//
+// dataConfirmed must be explicitly true — this is the employee ticking
+// "I confirm the data above is correct" (see PHASE4_DESIGN.md §5).
+//
+// bloodDonorConsent write logic below intentionally mirrors employeeRoutes.js
+// PUT /:employeeId's blood donor registry handling — kept manually in sync
+// rather than extracted into a shared helper, to keep this file simple. If
+// you change one, check the other.
+router.post('/confirm-profile', verifyToken, async (req, res) => {
   try {
     const db = admin.firestore();
-    const {
-      cnic,
-      designation,
-      department,
-      houseNumber,
-      emergencyPhoneNumber,
-      landlineExtension,
-      bloodGroup,
-      bloodDonorConsent,
-      maritalStatus,
-    } = req.body;
+    const { dataConfirmed, bloodDonorConsent } = req.body;
+
+    if (dataConfirmed !== true) {
+      return errorResponse(res, 'dataConfirmed must be true to submit this confirmation', 400);
+    }
 
     const empQuery = await db.collection('employees')
       .where('userId', '==', req.user.uid)
@@ -175,38 +202,40 @@ router.post('/complete-profile', verifyToken, async (req, res) => {
     }
 
     const empDoc = empQuery.docs[0];
+    const empData = empDoc.data();
 
-    await empDoc.ref.update({
-      cnic:                 cnic || null,
-      designation:          designation || null,
-      department:           department || null,
-      houseNumber:          houseNumber || null,
-      emergencyPhoneNumber: emergencyPhoneNumber || null,
-      landlineExtension:    landlineExtension || null,
-      bloodGroup:           bloodGroup || null,
-      bloodDonorConsent:    bloodDonorConsent || false,
-      maritalStatus:        maritalStatus || null,
-      profileCompletedAt:   nowISO(),
-    });
+    const updates = {
+      dataConfirmedByEmployee: true,
+      dataConfirmedAt:         nowISO(),
+    };
 
-    if (bloodDonorConsent && bloodGroup) {
-      await db.collection('bloodDonorRegistry').doc(empDoc.id).set({
-        employeeId:             empDoc.id,
-        userId:                 req.user.uid,
-        fullName:               empDoc.data().fullName,
-        officialEmployeeNumber: empDoc.data().officialEmployeeNumber || null,  // ← Day 13 fix, mirrors employeeRoutes.js
-        bloodGroup,
-        phoneNumber:            empDoc.data().phoneNumber,
-        consentGiven:           true,
-        consentUpdatedAt:       nowISO(),
-      });
+    if (bloodDonorConsent !== undefined) {
+      updates.bloodDonorConsent = bloodDonorConsent;
+
+      const donorRef = db.collection('bloodDonorRegistry').doc(empDoc.id);
+      if (bloodDonorConsent && empData.bloodGroup) {
+        await donorRef.set({
+          employeeId:             empDoc.id,
+          userId:                 req.user.uid,
+          fullName:               empData.fullName,
+          officialEmployeeNumber: empData.officialEmployeeNumber || null,
+          bloodGroup:             empData.bloodGroup,
+          phoneNumber:            empData.phoneNumber,
+          consentGiven:           true,
+          consentUpdatedAt:       nowISO(),
+        });
+      } else if (!bloodDonorConsent) {
+        await donorRef.delete();
+      }
     }
 
-    return successResponse(res, null, 'Profile updated successfully');
+    await empDoc.ref.update(updates);
+
+    return successResponse(res, null, 'Profile confirmed successfully');
 
   } catch (error) {
-    console.error('Complete profile error:', error);
-    return errorResponse(res, 'Profile update failed', 500);
+    console.error('Confirm profile error:', error);
+    return errorResponse(res, 'Profile confirmation failed', 500);
   }
 });
 
@@ -258,11 +287,6 @@ router.post('/update-last-login', verifyToken, async (req, res) => {
 });
 
 // ─── GET /pending-users ───────────────────────────────────
-// "Pending" means: inactive AND never approved before (approvedAt is falsy).
-// This is what keeps previously-approved-then-disabled users OUT of this
-// queue — critical, since this screen's Reject button permanently deletes
-// the account. Filtering happens in code (not via Firestore query) so it
-// stays safe even for older documents created before `approvedAt` existed.
 router.get('/pending-users', verifyToken, verifyRole([ROLES.ADMIN_INCHARGE, ROLES.CMO]), async (req, res) => {
   try {
     const db = admin.firestore();
@@ -367,8 +391,6 @@ router.post('/approve-user', verifyToken, verifyRole([ROLES.ADMIN_INCHARGE]), as
 });
 
 // ─── POST /reject-user ────────────────────────────────────
-// Only ever safe to call on someone who has NEVER been approved
-// (guarded here — this permanently deletes the Firebase Auth account).
 router.post('/reject-user', verifyToken, verifyRole([ROLES.ADMIN_INCHARGE]), async (req, res) => {
   try {
     const db = admin.firestore();
@@ -408,9 +430,6 @@ router.post('/reject-user', verifyToken, verifyRole([ROLES.ADMIN_INCHARGE]), asy
 });
 
 // ─── GET /all-users ────────────────────────────────────────
-// Every user who has ever been approved (active or disabled) — the data
-// source for the Manage Users screen. Deliberately excludes never-approved
-// pending signups, which stay on the Pending Approvals screen only.
 router.get('/all-users', verifyToken, verifyRole([ROLES.ADMIN_INCHARGE, ROLES.CMO]), async (req, res) => {
   try {
     const db = admin.firestore();
@@ -451,8 +470,6 @@ router.get('/all-users', verifyToken, verifyRole([ROLES.ADMIN_INCHARGE, ROLES.CM
 });
 
 // ─── POST /disable-user ───────────────────────────────────
-// Reversible — blocks login by setting isActive:false, but never touches
-// Firebase Auth or Firestore records. Only valid on previously-approved users.
 router.post('/disable-user', verifyToken, verifyRole([ROLES.ADMIN_INCHARGE]), async (req, res) => {
   try {
     const db = admin.firestore();
@@ -487,7 +504,6 @@ router.post('/disable-user', verifyToken, verifyRole([ROLES.ADMIN_INCHARGE]), as
 });
 
 // ─── POST /enable-user ─────────────────────────────────────
-// Re-activates a previously-disabled (but originally approved) user.
 router.post('/enable-user', verifyToken, verifyRole([ROLES.ADMIN_INCHARGE]), async (req, res) => {
   try {
     const db = admin.firestore();
@@ -522,7 +538,6 @@ router.post('/enable-user', verifyToken, verifyRole([ROLES.ADMIN_INCHARGE]), asy
 });
 
 // ─── POST /change-role ─────────────────────────────────────
-// Changes the role of an already-approved user (active or disabled).
 router.post('/change-role', verifyToken, verifyRole([ROLES.ADMIN_INCHARGE]), async (req, res) => {
   try {
     const db = admin.firestore();

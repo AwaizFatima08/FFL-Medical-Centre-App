@@ -14,6 +14,7 @@ const PANEL_WIDTH = Math.min(280, Dimensions.get('window').width * 0.75);
 const IS_WEB = Platform.OS === 'web';
 
 const TILES = [
+  { id: 'profile', label: 'My Profile', icon: '🧾', screen: 'MyProfile', active: true }, // Day 14, Step E
   { id: 'family', label: 'My Family', icon: '👨‍👩‍👧‍👦', screen: 'FamilyMemberList', active: true },
   { id: 'availability', label: 'Doctor Availability', icon: '👨‍⚕️', screen: 'DoctorAvailability', active: true },
   { id: 'ambulance', label: 'Request Ambulance', icon: '🚑', screen: 'AmbulanceRequest', active: true },
@@ -67,6 +68,20 @@ export default function EmployeeHome({ navigation }) {
   const [firstName, setFirstName] = useState('there');
   const slideAnim = useRef(new Animated.Value(-PANEL_WIDTH)).current;
 
+  // Day 14, Step E — whether the logged-in employee still needs to confirm
+  // their profile. Drives the small badge on the My Profile tile below.
+  const [profileNeedsConfirm, setProfileNeedsConfirm] = useState(false);
+
+  // Day 14, Step F — Family tab active/alert state.
+  // Rule (PHASE4_DESIGN.md §7): tab is active whenever the employee has at
+  // least one active family member, OR marital status is 'married' (even
+  // with zero members — that's the alert state). Alert clears only when
+  // admin explicitly marks familyDataStatus 'complete'.
+  // Defaults to true/false (normal, non-alert) until the fetch resolves, so
+  // the tile doesn't flash disabled on first paint for the common case.
+  const [familyTileActive, setFamilyTileActive] = useState(true);
+  const [familyTileAlert,  setFamilyTileAlert]  = useState(false);
+
   useEffect(() => {
     async function fetchName() {
       const uid = auth?.currentUser?.uid;
@@ -75,11 +90,27 @@ export default function EmployeeHome({ navigation }) {
         const q = query(collection(db, 'employees'), where('userId', '==', uid));
         const snap = await getDocs(q);
         if (!snap.empty) {
-          const fullName = snap.docs[0].data().fullName;
+          const data = snap.docs[0].data();
+          const fullName = data.fullName;
           if (fullName) setFirstName(fullName.split(' ')[0]);
+          // Day 14, Step E — badge the My Profile tile until confirmed
+          setProfileNeedsConfirm(!data.dataConfirmedByEmployee);
+
+          // Day 14, Step F — Family tile active/alert state
+          const memberQ = query(
+            collection(db, 'familyMembers'),
+            where('employeeId', '==', uid),
+            where('isActive', '==', true),
+          );
+          const memberSnap = await getDocs(memberQ);
+          const hasActiveMembers = !memberSnap.empty;
+          const isMarried = data.maritalStatus === 'married';
+          const isActive = hasActiveMembers || isMarried;
+          setFamilyTileActive(isActive);
+          setFamilyTileAlert(isActive && data.familyDataStatus !== 'complete');
         }
       } catch (e) {
-        // stays "there" if lookup fails
+        // stays "there" (and family tile stays in its default state) if lookup fails
       }
     }
     fetchName();
@@ -115,7 +146,10 @@ export default function EmployeeHome({ navigation }) {
   };
 
   const handleTilePress = (tile) => {
-    if (!tile.active) return;
+    // Day 14, Step F — family tile's active-ness is dynamic (see effect
+    // above), everything else stays static as before.
+    const effectiveActive = tile.id === 'family' ? familyTileActive : tile.active;
+    if (!effectiveActive) return;
     if (!IS_WEB) closePanel();
     navigation.navigate(tile.screen, { userRole: 'employee' });
   };
@@ -127,20 +161,40 @@ export default function EmployeeHome({ navigation }) {
   const panelBody = (
     <ScrollView contentContainerStyle={styles.panelContent}>
       <Text style={styles.panelTitle}>Menu</Text>
-      {SORTED_TILES.map((tile) => (
-        <TouchableOpacity
-          key={tile.id}
-          style={[styles.panelItem, !tile.active && styles.panelItemDisabled]}
-          onPress={() => handleTilePress(tile)}
-          activeOpacity={tile.active ? 0.6 : 1}
-        >
-          <Text style={styles.panelItemIcon}>{tile.icon}</Text>
-          <Text style={[styles.panelItemLabel, !tile.active && styles.panelItemLabelDisabled]}>
-            {tile.label}
-          </Text>
-          {!tile.active && <Text style={styles.comingSoon}>Soon</Text>}
-        </TouchableOpacity>
-      ))}
+      {SORTED_TILES.map((tile) => {
+        // Day 14, Step F — family tile active-ness is dynamic; everything
+        // else uses its static value from the TILES array as before.
+        const effectiveActive = tile.id === 'family' ? familyTileActive : tile.active;
+        return (
+          <TouchableOpacity
+            key={tile.id}
+            style={[styles.panelItem, !effectiveActive && styles.panelItemDisabled]}
+            onPress={() => handleTilePress(tile)}
+            activeOpacity={effectiveActive ? 0.6 : 1}
+          >
+            <Text style={styles.panelItemIcon}>{tile.icon}</Text>
+            <Text style={[styles.panelItemLabel, !effectiveActive && styles.panelItemLabelDisabled]}>
+              {tile.label}
+            </Text>
+            {/* Day 14, Step E/F — nudge badges, same visual language as the
+                family module's "Edit pending review" badge */}
+            {tile.id === 'profile' && profileNeedsConfirm && (
+              <View style={styles.confirmBadge}>
+                <Text style={styles.confirmBadgeText}>Confirm</Text>
+              </View>
+            )}
+            {tile.id === 'family' && effectiveActive && familyTileAlert && (
+              <View style={styles.confirmBadge}>
+                <Text style={styles.confirmBadgeText}>Update</Text>
+              </View>
+            )}
+            {tile.active && !effectiveActive && tile.id === 'family' && (
+              <Text style={styles.comingSoon}>Not applicable</Text>
+            )}
+            {!tile.active && <Text style={styles.comingSoon}>Soon</Text>}
+          </TouchableOpacity>
+        );
+      })}
     </ScrollView>
   );
 
@@ -311,4 +365,11 @@ const styles = StyleSheet.create({
   panelItemLabel: { fontSize: 15, color: '#2d3748', flex: 1 },
   panelItemLabelDisabled: { color: '#a0aec0' },
   comingSoon: { fontSize: 11, color: '#a0aec0', fontStyle: 'italic' },
+
+  // Day 14, Step E
+  confirmBadge: {
+    backgroundColor: '#fef3c7', paddingHorizontal: 8, paddingVertical: 2,
+    borderRadius: 10, marginLeft: 6,
+  },
+  confirmBadgeText: { fontSize: 10, color: '#92400e', fontWeight: '700' },
 });

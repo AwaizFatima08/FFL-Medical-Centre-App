@@ -33,7 +33,7 @@ export const COMMUNITY_GROUPS = {
 export const BLOOD_GROUPS = ['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-'];
 
 // ─── MARITAL STATUS ───────────────────────────────────────────────────────────
-export const MARITAL_STATUSES = ['single', 'married', 'divorced', 'widowed'];
+export const MARITAL_STATUSES = ['married', 'unmarried', 'divorced', 'widowed'];
 
 // ─── DEPARTMENTS ──────────────────────────────────────────────────────────────
 // Groups are for display only — not stored in Firestore
@@ -41,17 +41,17 @@ export const DEPARTMENT_GROUPS = {
   PLANT: {
     label: 'Plant Functions',
     departments: [
-      { label: 'Admin',                value: 'Admin' },
-      { label: 'Production (N)',        value: 'Production_N' },
+      { label: 'Admin',                value: 'admin' },
+      { label: 'Production (N)',        value: 'Production_n' },
       { label: 'Production (S)',        value: 'Production_S' },
-      { label: 'Maintenance',          value: 'Maintenance' },
+      { label: 'Maintenance',          value: 'maintenance' },
       { label: 'AIM',                  value: 'AIM' },
       { label: 'BD',                   value: 'BD' },
       { label: 'HSEQT',               value: 'HSEQT' },
       { label: 'E&I',                  value: 'EI' },
       { label: 'DBN',                  value: 'DBN' },
-      { label: 'Process Engineering',  value: 'Process_Engineering' },
-      { label: 'Project Engineering',  value: 'Project_Engineering' },
+      { label: 'Process Engineering',  value: 'process_Engineering' },
+      { label: 'Project Engineering',  value: 'project_Engineering' },
     ],
   },
   HO: {
@@ -75,33 +75,33 @@ export const DEPARTMENT_GROUPS = {
 
 // Flat list — used for Firestore storage and filtering
 export const DEPARTMENTS = [
-  'Admin', 'Production_N', 'Production_S', 'Maintenance',
+  'admin', 'Production_n', 'Production_S', 'maintenance',
   'AIM', 'BD', 'HSEQT', 'EI', 'DBN',
-  'Process_Engineering', 'Project_Engineering',
+  'process_Engineering', 'project_Engineering',
   'HO_IT', 'HO_HR', 'HO_Finance', 'HO_SCF', 'HO_Marketing', 'HO_Internal_Audit',
   'ESB',
 ];
 
 // ─── UNITS (cascading — keyed by department value) ────────────────────────────
 export const UNITS = {
-  Admin:                ['Industrial_Relations', 'Admin', 'Medical_Centre', 'Horticulture', 'CET', 'Security', 'Management_Club'],
-  Production_N:         ['Ammonia', 'Urea', 'Nitric_Acid', 'OU'],
-  Production_S:         ['NP', 'CAN', 'PHS'],
-  Maintenance:          ['Workshop', 'OU_Field', 'OU_Equipment', 'Ammonia_Field', 'Ammonia_Equipment', 'NA_Field', 'NA_Equipment', 'Urea_Field', 'Urea_Equipment', 'PHS_Field', 'PHS_Equipment', 'NP_Field', 'NP_Equipment', 'CAN_Field', 'CAN_Equipment', 'Planning'],
-  HSEQT:                ['HSE', 'LDC'],
+  admin:                ['admin', 'industrial_relations', 'horticulture', 'CET', 'medical_centre', 'security', 'management_club'],
+  Production_n:         ['OU', 'Ammonia', 'Nitric_Acid', 'Urea'],
+  Production_S:         ['CAN', 'PHS', 'NP'],
+  maintenance:          ['OU_Equipment', 'OU_Machinery', 'NP_Equipment', 'NP_Machinery', 'Ammonia_Equipment', 'Ammonia_Machinery', 'Urea_Equipment', 'Urea_Machinery', 'NA_Equipment', 'NA_Machinery', 'CAN_Equipment', 'CAN_Machinery', 'Workshop', 'Planning', 'PHS_Equipment', 'PHS_Machinery'],
+  HSEQT:                ['HSE', 'Learning_Development_Centre'],
   BD:                   ['BD'],
   DBN:                  ['DBN'],
-  AIM:                  ['AIM'],
-  EI:                   ['EI'],
-  Process_Engineering:  ['Laboratory', 'Process_N', 'Process_S'],
-  Project_Engineering:  ['Civil_Plant', 'Projects', 'Warehouse'],
+  AIM:                  ['Inspection'],
+  EI:                   ['Electrical', 'Instrument', 'Control_Systems'],
+  process_Engineering:  ['Laboratory', 'Process_N', 'Process_S'],
+  project_Engineering:  ['Warehouse', 'Civil_Plantsite', 'Projects'],
   HO_IT:                ['HO_IT'],
   HO_HR:                ['HO_HR'],
   HO_Finance:           ['HO_Finance'],
   HO_SCF:               ['HO_SCF'],
   HO_Marketing:         ['HO_Marketing'],
   HO_Internal_Audit:    ['HO_Internal_Audit'],
-  ESB:                  [], // No sub-units
+  ESB:                  ['ESB'], // corrected — live config has one value here, not empty
 };
 
 // ─── DESIGNATIONS ─────────────────────────────────────────────────────────────
@@ -114,11 +114,12 @@ export const MANAGEMENT_DESIGNATIONS = [
   { label: 'Senior Staff Engineer (M-11)',        value: 'Senior_Staff_Engineer_M11' },
   { label: 'Section Head (M-10)',                 value: 'Section_Head_M10' },
   { label: 'Staff Engineer (M-10)',               value: 'Staff_Engineer_M10' },
+  { label: 'Senior Engineer (M-9A)',              value: 'Senior_Engineer_M9A' },
   { label: 'Senior Engineer (M-9)',               value: 'Senior_Engineer_M9' },
   { label: 'Engineer I (M-8)',                    value: 'Engineer_I_M8' },
   { label: 'Engineer II (M-7)',                   value: 'Engineer_II_M7' },
   { label: 'Engineer III (M-6)',                  value: 'Engineer_III_M6' },
-  { label: 'Graduate Trainee Engineer (M-5)',     value: 'Graduate_Trainee_Engineer_M5' },
+  { label: 'Graduate Trainee Engineer (M-5)',     value: 'GTE_M5' },
   { label: 'Sr. Sub Engineer I (MT-6)',           value: 'Sr_Sub_Engineer_I_MT6' },
   { label: 'Sr. Sub Engineer II (MT-5)',          value: 'Sr_Sub_Engineer_II_MT5' },
   { label: 'Sr. Sub Engineer III (MT-4)',         value: 'Sr_Sub_Engineer_III_MT4' },
@@ -136,23 +137,22 @@ export const NON_MANAGEMENT_DESIGNATIONS = [
   { label: 'Operator I (S-3)',       value: 'Operator_I_S3' },
   { label: 'Operator II (S-2)',      value: 'Operator_II_S2' },
   { label: 'Operator III (S-1)',     value: 'Operator_III_S1' },
-  { label: 'Apprentice Technician',  value: 'Apprentice_Technician' },
 ];
 
 export const ESB_DESIGNATIONS = [
-  { label: 'Director',          value: 'ESB_Director' },
-  { label: 'Principal',         value: 'ESB_Principal' },
-  { label: 'Vice Principal',    value: 'ESB_Vice_Principal' },
-  { label: 'Head Master',       value: 'ESB_Head_Master' },
-  { label: 'Head Mistress',     value: 'ESB_Head_Mistress' },
-  { label: 'Senior Teacher I',  value: 'ESB_Senior_Teacher_I' },
-  { label: 'Senior Teacher II', value: 'ESB_Senior_Teacher_II' },
-  { label: 'Senior Teacher III',value: 'ESB_Senior_Teacher_III' },
-  { label: 'Teacher I',         value: 'ESB_Teacher_I' },
-  { label: 'Teacher II',        value: 'ESB_Teacher_II' },
-  { label: 'Teacher III',       value: 'ESB_Teacher_III' },
-  { label: 'Trainee Teacher',   value: 'ESB_Trainee_Teacher' },
-  { label: 'Contract Teacher',  value: 'ESB_Contract_Teacher' },
+  { label: 'Director',          value: 'Director' },
+  { label: 'Principal',         value: 'Principal' },
+  { label: 'Vice Principal',    value: 'Vice_Principal' },
+  { label: 'Head Mistress',     value: 'Head_Mistress' },
+  { label: 'Senior Teacher I',  value: 'Senior_Teacher_I' },
+  { label: 'Senior Teacher II', value: 'Senior_Teacher_II' },
+  { label: 'Senior Teacher III',value: 'Senior_Teacher_III' },
+  { label: 'Teacher I',         value: 'Teacher_I' },
+  { label: 'Teacher II',        value: 'Teacher_II' },
+  { label: 'Teacher III',       value: 'Teacher_III' },
+  { label: 'Trainee Teacher',   value: 'Trainee_Teacher' },
+  { label: 'Contract Teacher',  value: 'Contract_Teacher' },
+  { label: 'Supervisor',        value: 'Supervisor' },
 ];
 
 // Helper — returns correct designation list based on employee type
@@ -272,4 +272,3 @@ export const CMO_CREDENTIALS = {
 export const VACCINATION_REPORT_DISCLAIMER =
   'This is an electronically generated report from the official FFL Medical Centre App ' +
   'and does not require further signature or manual validation.';
-

@@ -6,6 +6,7 @@ import {
   View, Text, StyleSheet, TouchableOpacity, ScrollView,
   ActivityIndicator, RefreshControl, TextInput, Modal,
 } from 'react-native';
+import { getAuth } from 'firebase/auth';
 import {
   getFirestore, collection, query, where,
   getDocs, doc, updateDoc, Timestamp, orderBy,
@@ -13,9 +14,14 @@ import {
 import NotificationBell from '../../components/NotificationBell';
 
 // ─── Tab options ──────────────────────────────────────────────────────────────
+// Day 14, Step F — added 'status' tab: admin's family-data-completeness
+// controls (mark complete / manually re-flag with a note). This is a
+// SEPARATE, coarser-grained concept from the per-member pending/validated
+// status the 'new'/'edit' tabs already handle — see PHASE4_DESIGN.md §7.
 const TABS = [
-  { key: 'new',  label: 'New Members' },
-  { key: 'edit', label: 'Edits' },
+  { key: 'new',    label: 'New Members' },
+  { key: 'edit',   label: 'Edits' },
+  { key: 'status', label: 'Family Status' },
 ];
 
 // ─── Format timestamp ─────────────────────────────────────────────────────────
@@ -79,6 +85,20 @@ export default function FamilyAdminReviewScreen({ navigation }) {
   const [processing,   setProcessing]   = useState(false);
   const [employeeNames, setEmployeeNames] = useState({}); // uid → name cache
 
+  // Day 14, Step F — Family Status tab state
+  const [flaggedEmployees,  setFlaggedEmployees]  = useState([]);
+  const [statusProcessing,  setStatusProcessing]  = useState(null); // employeeId currently being acted on
+  const [searchNumber,      setSearchNumber]      = useState('');
+  const [searchResult,      setSearchResult]      = useState(null); // { id, ...data } or 'not_found'
+  const [searching,         setSearching]         = useState(false);
+  const [flagNoteInput,     setFlagNoteInput]     = useState('');
+
+  // Day 14, Step G — disable-member state (found employee's family list)
+  const [searchResultMembers, setSearchResultMembers] = useState([]);
+  const [loadingMembers,      setLoadingMembers]      = useState(false);
+  const [disablingMemberId,   setDisablingMemberId]   = useState(null); // spouse reason-picker open for this member
+  const [disableProcessing,   setDisableProcessing]   = useState(null); // memberId currently being disabled
+
   const db = getFirestore();
 
   // ─── Fetch employee name ──────────────────────────────────────────────────
@@ -136,6 +156,15 @@ export default function FamilyAdminReviewScreen({ navigation }) {
 
       setNewMembers(newData);
       setEditMembers(editData);
+
+      // Day 14, Step F — flagged employees for the Family Status tab
+      const statusQ = query(
+        collection(db, 'employees'),
+        where('familyDataStatus', 'in', ['needs_update', 'pending_admin_review']),
+      );
+      const statusSnap = await getDocs(statusQ);
+      const statusData = statusSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+      setFlaggedEmployees(statusData);
     } catch (err) {
       console.error('FamilyAdminReview fetch error:', err);
     } finally {
@@ -262,6 +291,152 @@ export default function FamilyAdminReviewScreen({ navigation }) {
     }
   };
 
+  // ─── Day 14, Step F — mark an employee's family data complete ───────────
+  const handleMarkComplete = async (employeeId, name) => {
+    webConfirm(
+      'Mark Complete',
+      `Mark family data as complete for ${name}? This clears the alert on their Family tab.`,
+      async () => {
+        setStatusProcessing(employeeId);
+        try {
+          await updateDoc(doc(db, 'employees', employeeId), {
+            familyDataStatus:   'complete',
+            familyDataFlagNote: null,
+            updatedAt:          Timestamp.now(),
+          });
+          fetchPending();
+        } catch (err) {
+          console.error('Mark complete error:', err);
+          webAlert('Error', 'Could not update. Please try again.');
+        } finally {
+          setStatusProcessing(null);
+        }
+      },
+      false, 'Mark Complete'
+    );
+  };
+
+  // ─── Day 14, Step F/G — search an employee by number ────────────────────
+  const handleSearchEmployee = async () => {
+    if (!searchNumber.trim()) {
+      webAlert('Required', 'Enter an employee number to search.');
+      return;
+    }
+    setSearching(true);
+    setSearchResult(null);
+    setSearchResultMembers([]);
+    try {
+      const q = query(
+        collection(db, 'employees'),
+        where('officialEmployeeNumber', '==', searchNumber.trim().toUpperCase()),
+      );
+      const snap = await getDocs(q);
+      if (snap.empty) {
+        setSearchResult('not_found');
+      } else {
+        const emp = { id: snap.docs[0].id, ...snap.docs[0].data() };
+        setSearchResult(emp);
+        // Day 14, Step G — fetch this employee's active family members.
+        // Note: familyMembers.employeeId is the person's Auth UID
+        // (emp.userId), NOT the employees collection's own doc id.
+        if (emp.userId) {
+          setLoadingMembers(true);
+          try {
+            const memberQ = query(
+              collection(db, 'familyMembers'),
+              where('employeeId', '==', emp.userId),
+              where('isActive', '==', true),
+            );
+            const memberSnap = await getDocs(memberQ);
+            setSearchResultMembers(memberSnap.docs.map(d => ({ id: d.id, ...d.data() })));
+          } catch (memberErr) {
+            console.error('Fetch family members error:', memberErr);
+          } finally {
+            setLoadingMembers(false);
+          }
+        }
+      }
+    } catch (err) {
+      console.error('Search employee error:', err);
+      webAlert('Error', 'Search failed. Please try again.');
+    } finally {
+      setSearching(false);
+    }
+  };
+
+  // ─── Day 14, Step F — flag the found employee, with optional note ───────
+  const handleFlagEmployee = async () => {
+    if (!searchResult || searchResult === 'not_found') return;
+    setStatusProcessing(searchResult.id);
+    try {
+      await updateDoc(doc(db, 'employees', searchResult.id), {
+        familyDataStatus:   'needs_update',
+        familyDataFlagNote: flagNoteInput.trim() || null,
+        updatedAt:          Timestamp.now(),
+      });
+      webAlert('Flagged', `${searchResult.fullName}'s Family tab will now show an alert.`);
+      setSearchNumber('');
+      setSearchResult(null);
+      setFlagNoteInput('');
+      fetchPending();
+    } catch (err) {
+      console.error('Flag employee error:', err);
+      webAlert('Error', 'Could not flag employee. Please try again.');
+    } finally {
+      setStatusProcessing(null);
+    }
+  };
+
+  // ─── Day 14, Step G — disable a family member ────────────────────────────
+  // Core write, shared by both paths below. Spouse disabling also updates
+  // the employee's own maritalStatus — done as a second direct Firestore
+  // write here (admin has unrestricted employees-collection write access
+  // per firestore.rules, so this doesn't need to go through the backend).
+  // No grief-related messaging shown anywhere — this happens quietly.
+  const disableMember = async (member, reason) => {
+    setDisableProcessing(member.id);
+    try {
+      const adminUid = getAuth().currentUser?.uid;
+
+      await updateDoc(doc(db, 'familyMembers', member.id), {
+        isActive:       false,
+        disabledReason: reason, // 'deceased' | 'divorced'
+        disabledAt:     Timestamp.now(),
+        disabledBy:     adminUid,
+        updatedAt:      Timestamp.now(),
+      });
+
+      if (member.relation === 'spouse' && searchResult && searchResult !== 'not_found') {
+        const newMaritalStatus = reason === 'deceased' ? 'widowed' : 'divorced';
+        await updateDoc(doc(db, 'employees', searchResult.id), {
+          maritalStatus: newMaritalStatus,
+          updatedAt:     Timestamp.now(),
+        });
+        setSearchResult(prev => ({ ...prev, maritalStatus: newMaritalStatus }));
+      }
+
+      setSearchResultMembers(prev => prev.filter(m => m.id !== member.id));
+      setDisablingMemberId(null);
+      fetchPending(); // refresh the flagged-employees list too, in case this affects it
+    } catch (err) {
+      console.error('Disable member error:', err);
+      webAlert('Error', 'Could not disable this family member. Please try again.');
+    } finally {
+      setDisableProcessing(null);
+    }
+  };
+
+  // Child (son/daughter) — only "deceased" is a meaningful reason, so this
+  // skips the reason picker entirely and goes straight to a plain confirm.
+  const handleDisableChild = (member) => {
+    webConfirm(
+      'Disable Family Member',
+      `Disable ${member.name}? This is typically used to record a death.`,
+      () => disableMember(member, 'deceased'),
+      true, 'Disable'
+    );
+  };
+
   // ─── Render member card ───────────────────────────────────────────────────
   const renderCard = (member, isEdit) => {
     const empName = employeeNames[member.employeeId] || '...';
@@ -286,6 +461,37 @@ export default function FamilyAdminReviewScreen({ navigation }) {
         </Text>
         <Text style={styles.cardAction}>Tap to review ›</Text>
       </TouchableOpacity>
+    );
+  };
+
+  // ─── Day 14, Step F — render a flagged-employee card ─────────────────────
+  const renderStatusCard = (emp) => {
+    const isProcessing = statusProcessing === emp.id;
+    return (
+      <View key={emp.id} style={styles.card}>
+        <View style={styles.cardTop}>
+          <Text style={styles.cardName}>{emp.fullName}</Text>
+          <Text style={styles.cardRelation}>{emp.officialEmployeeNumber}</Text>
+        </View>
+        <Text style={styles.cardEmployee}>
+          Marital status: {emp.maritalStatus || '—'}
+        </Text>
+        {emp.familyDataFlagNote && (
+          <View style={styles.noteBox}>
+            <Text style={styles.noteText}>📌 {emp.familyDataFlagNote}</Text>
+          </View>
+        )}
+        <TouchableOpacity
+          style={[styles.completeBtn, isProcessing && styles.btnDisabled]}
+          disabled={isProcessing}
+          onPress={() => handleMarkComplete(emp.id, emp.fullName)}
+        >
+          {isProcessing
+            ? <ActivityIndicator color="#fff" size="small" />
+            : <Text style={styles.completeBtnText}>✓ Mark Complete</Text>
+          }
+        </TouchableOpacity>
+      </View>
     );
   };
 
@@ -450,8 +656,9 @@ export default function FamilyAdminReviewScreen({ navigation }) {
           >
             <Text style={[styles.tabText, activeTab === tab.key && styles.tabTextActive]}>
               {tab.label}
-              {tab.key === 'new'  && newMembers.length  > 0 ? ` (${newMembers.length})`  : ''}
-              {tab.key === 'edit' && editMembers.length > 0 ? ` (${editMembers.length})` : ''}
+              {tab.key === 'new'    && newMembers.length       > 0 ? ` (${newMembers.length})`       : ''}
+              {tab.key === 'edit'   && editMembers.length      > 0 ? ` (${editMembers.length})`      : ''}
+              {tab.key === 'status' && flaggedEmployees.length > 0 ? ` (${flaggedEmployees.length})` : ''}
             </Text>
           </TouchableOpacity>
         ))}
@@ -461,7 +668,153 @@ export default function FamilyAdminReviewScreen({ navigation }) {
         contentContainerStyle={styles.container}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
       >
-        {displayList.length === 0 ? (
+        {activeTab === 'status' ? (
+          <>
+            {/* Day 14, Step F — Family Status tab */}
+            <View style={styles.infoBoxStatus}>
+              <Text style={styles.infoBoxStatusText}>
+                Employees below are married with family data flagged as needing attention —
+                either they haven't added family members yet, or you've manually flagged them.
+                Mark complete once their Family tab data is up to date.
+              </Text>
+            </View>
+
+            {flaggedEmployees.length === 0 ? (
+              <View style={styles.emptyBox}>
+                <Text style={styles.emptyIcon}>✅</Text>
+                <Text style={styles.emptyText}>No employees currently flagged.</Text>
+              </View>
+            ) : (
+              flaggedEmployees.map(renderStatusCard)
+            )}
+
+            {/* Manual flag search */}
+            <View style={styles.searchSection}>
+              <Text style={styles.sectionTitleOutside}>Flag an Employee</Text>
+              <Text style={styles.searchHint}>
+                e.g. HR reported a marriage or new child the employee hasn't logged yet.
+              </Text>
+              <View style={styles.searchRow}>
+                <TextInput
+                  style={styles.searchInput}
+                  placeholder="Employee number (e.g. FFL-00100)"
+                  placeholderTextColor="#a0aec0"
+                  value={searchNumber}
+                  onChangeText={setSearchNumber}
+                  autoCapitalize="characters"
+                />
+                <TouchableOpacity
+                  style={styles.searchBtn}
+                  onPress={handleSearchEmployee}
+                  disabled={searching}
+                >
+                  {searching
+                    ? <ActivityIndicator color="#fff" size="small" />
+                    : <Text style={styles.searchBtnText}>Search</Text>
+                  }
+                </TouchableOpacity>
+              </View>
+
+              {searchResult === 'not_found' && (
+                <Text style={styles.notFoundText}>No employee found with that number.</Text>
+              )}
+
+              {searchResult && searchResult !== 'not_found' && (
+                <View style={styles.searchResultBox}>
+                  <Text style={styles.searchResultName}>{searchResult.fullName}</Text>
+                  <Text style={styles.searchResultMeta}>
+                    {searchResult.officialEmployeeNumber} · {searchResult.maritalStatus || 'marital status not set'}
+                  </Text>
+                  <TextInput
+                    style={styles.noteInput}
+                    placeholder="Optional note, e.g. 'please add your newborn'"
+                    placeholderTextColor="#a0aec0"
+                    value={flagNoteInput}
+                    onChangeText={setFlagNoteInput}
+                    multiline
+                  />
+                  <TouchableOpacity
+                    style={[styles.flagBtn, statusProcessing === searchResult.id && styles.btnDisabled]}
+                    disabled={statusProcessing === searchResult.id}
+                    onPress={handleFlagEmployee}
+                  >
+                    {statusProcessing === searchResult.id
+                      ? <ActivityIndicator color="#fff" size="small" />
+                      : <Text style={styles.flagBtnText}>📌 Flag for Update</Text>
+                    }
+                  </TouchableOpacity>
+
+                  {/* Day 14, Step G — manage this employee's family members */}
+                  <View style={styles.membersDivider} />
+                  <Text style={styles.membersTitle}>Family Members</Text>
+
+                  {loadingMembers ? (
+                    <ActivityIndicator color="#3b82f6" style={{ marginVertical: 8 }} />
+                  ) : searchResultMembers.length === 0 ? (
+                    <Text style={styles.noMembersText}>No active family members on record.</Text>
+                  ) : (
+                    searchResultMembers.map(member => {
+                      const isSpouse = member.relation === 'spouse';
+                      const isDisabling = disableProcessing === member.id;
+                      const showReasonPicker = disablingMemberId === member.id;
+
+                      return (
+                        <View key={member.id} style={styles.memberRow}>
+                          <View style={styles.memberRowInfo}>
+                            <Text style={styles.memberRowName}>{member.name}</Text>
+                            <Text style={styles.memberRowRelation}>
+                              {member.relation.charAt(0).toUpperCase() + member.relation.slice(1)}
+                            </Text>
+                          </View>
+
+                          {!showReasonPicker ? (
+                            <TouchableOpacity
+                              style={[styles.disableBtn, isDisabling && styles.btnDisabled]}
+                              disabled={isDisabling}
+                              onPress={() => isSpouse
+                                ? setDisablingMemberId(member.id)
+                                : handleDisableChild(member)
+                              }
+                            >
+                              {isDisabling
+                                ? <ActivityIndicator color="#c53030" size="small" />
+                                : <Text style={styles.disableBtnText}>Disable</Text>
+                              }
+                            </TouchableOpacity>
+                          ) : (
+                            <View style={styles.reasonPickerRow}>
+                              <TouchableOpacity
+                                style={styles.reasonBtn}
+                                disabled={isDisabling}
+                                onPress={() => disableMember(member, 'deceased')}
+                              >
+                                <Text style={styles.reasonBtnText}>Deceased</Text>
+                              </TouchableOpacity>
+                              <TouchableOpacity
+                                style={styles.reasonBtn}
+                                disabled={isDisabling}
+                                onPress={() => disableMember(member, 'divorced')}
+                              >
+                                <Text style={styles.reasonBtnText}>Divorced</Text>
+                              </TouchableOpacity>
+                              <TouchableOpacity
+                                style={styles.reasonCancelBtn}
+                                disabled={isDisabling}
+                                onPress={() => setDisablingMemberId(null)}
+                              >
+                                <Text style={styles.reasonCancelText}>Cancel</Text>
+                              </TouchableOpacity>
+                            </View>
+                          )}
+                        </View>
+                      );
+                    })
+                  )}
+                </View>
+              )}
+            </View>
+          </>
+        ) : displayList.length === 0 ? (
           <View style={styles.emptyBox}>
             <Text style={styles.emptyIcon}>{activeTab === 'new' ? '✅' : '📝'}</Text>
             <Text style={styles.emptyText}>
@@ -504,7 +857,7 @@ const styles = StyleSheet.create({
     borderBottomWidth: 2, borderBottomColor: 'transparent',
   },
   tabActive:     { borderBottomColor: '#3b82f6' },
-  tabText:       { fontSize: 13, color: '#718096', fontWeight: '500' },
+  tabText:       { fontSize: 12, color: '#718096', fontWeight: '500' },
   tabTextActive: { color: '#3b82f6', fontWeight: '700' },
 
   container: { padding: 16 },
@@ -525,6 +878,80 @@ const styles = StyleSheet.create({
   emptyBox:  { alignItems: 'center', marginTop: 60 },
   emptyIcon: { fontSize: 48, marginBottom: 12 },
   emptyText: { fontSize: 14, color: '#718096', textAlign: 'center' },
+
+  // Day 14, Step F — Family Status tab styles
+  infoBoxStatus: {
+    backgroundColor: '#eff6ff', borderRadius: 8, padding: 12,
+    marginBottom: 16, borderLeftWidth: 3, borderLeftColor: '#3b82f6',
+  },
+  infoBoxStatusText: { fontSize: 12, color: '#1e40af', lineHeight: 18 },
+  noteBox: {
+    backgroundColor: '#fffbeb', borderRadius: 6, padding: 8,
+    marginTop: 6, marginBottom: 10,
+  },
+  noteText: { fontSize: 12, color: '#92400e' },
+  completeBtn: {
+    backgroundColor: '#10b981', borderRadius: 8,
+    paddingVertical: 10, alignItems: 'center', marginTop: 4,
+  },
+  completeBtnText: { color: '#ffffff', fontSize: 13, fontWeight: '600' },
+
+  searchSection: { marginTop: 8 },
+  sectionTitleOutside: { fontSize: 14, fontWeight: '700', color: '#2d3748', marginBottom: 4 },
+  searchHint: { fontSize: 12, color: '#718096', marginBottom: 12, lineHeight: 17 },
+  searchRow: { flexDirection: 'row', gap: 8, marginBottom: 12 },
+  searchInput: {
+    flex: 1, backgroundColor: '#ffffff', borderRadius: 8,
+    borderWidth: 1, borderColor: '#e2e8f0',
+    paddingHorizontal: 12, paddingVertical: 10, fontSize: 13, color: '#2d3748',
+  },
+  searchBtn: {
+    backgroundColor: '#2563eb', borderRadius: 8,
+    paddingHorizontal: 18, alignItems: 'center', justifyContent: 'center',
+  },
+  searchBtnText: { color: '#ffffff', fontSize: 13, fontWeight: '600' },
+  notFoundText: { fontSize: 12, color: '#991b1b', marginBottom: 12 },
+  searchResultBox: {
+    backgroundColor: '#ffffff', borderRadius: 10, padding: 14,
+    borderWidth: 1, borderColor: '#e2e8f0',
+  },
+  searchResultName: { fontSize: 14, fontWeight: '700', color: '#2d3748' },
+  searchResultMeta: { fontSize: 12, color: '#718096', marginBottom: 10 },
+  noteInput: {
+    borderWidth: 1, borderColor: '#e2e8f0', borderRadius: 8,
+    paddingHorizontal: 12, paddingVertical: 10, fontSize: 13, color: '#2d3748',
+    minHeight: 50, textAlignVertical: 'top', marginBottom: 10, backgroundColor: '#f7fafc',
+  },
+  flagBtn: {
+    backgroundColor: '#f59e0b', borderRadius: 8,
+    paddingVertical: 10, alignItems: 'center',
+  },
+  flagBtnText: { color: '#ffffff', fontSize: 13, fontWeight: '600' },
+
+  // Day 14, Step G — family member management styles
+  membersDivider: { height: 1, backgroundColor: '#e2e8f0', marginVertical: 14 },
+  membersTitle:   { fontSize: 13, fontWeight: '700', color: '#4a5568', marginBottom: 8 },
+  noMembersText:  { fontSize: 12, color: '#a0aec0' },
+  memberRow: {
+    flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
+    paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: '#f0f4f8',
+  },
+  memberRowInfo:     { flex: 1 },
+  memberRowName:     { fontSize: 13, fontWeight: '600', color: '#2d3748' },
+  memberRowRelation: { fontSize: 11, color: '#718096' },
+  disableBtn: {
+    borderWidth: 1.5, borderColor: '#fc8181', backgroundColor: '#fff5f5',
+    borderRadius: 8, paddingHorizontal: 12, paddingVertical: 6,
+  },
+  disableBtnText: { fontSize: 12, color: '#c53030', fontWeight: '600' },
+  reasonPickerRow: { flexDirection: 'row', gap: 6 },
+  reasonBtn: {
+    backgroundColor: '#fef2f2', borderWidth: 1, borderColor: '#fc8181',
+    borderRadius: 8, paddingHorizontal: 10, paddingVertical: 6,
+  },
+  reasonBtnText: { fontSize: 11, color: '#c53030', fontWeight: '600' },
+  reasonCancelBtn: { paddingHorizontal: 8, paddingVertical: 6, justifyContent: 'center' },
+  reasonCancelText: { fontSize: 11, color: '#718096' },
 
   // Modal
   modalWrapper: { flex: 1, backgroundColor: '#f0f4f8' },

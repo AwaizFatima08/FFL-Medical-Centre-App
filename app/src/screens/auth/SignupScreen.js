@@ -5,7 +5,7 @@ import { webAlert } from '../../utils/webAlert';
 //
 //  Flow:
 //  1. Step 1 — Email + password
-//  2. Step 2 — Full name, employee number, phone, date of birth
+//  2. Step 2 — Full name, employee number, phone, date of birth, CNIC, marital status
 //  3. Step 3 — Residence details + disclaimer checkbox
 //  4. Firebase Auth creates the account
 //  5. Backend /register saves user doc (isActive: false, role: employee)
@@ -16,6 +16,13 @@ import { webAlert } from '../../utils/webAlert';
 //  family residents see FAMILY_TYPES only, bachelor residents see
 //  BACHELOR_TYPES only (previously both branches showed the combined list).
 //  Bachelor accommodation question reworded for clarity ("living in").
+//
+//  Day 14 (Phase 4, Step C): added CNIC and Marital Status to Step 2.
+//  Per PHASE4_DESIGN.md §3 — these two are the only Phase 4 fields captured
+//  at signup; everything else (department, designation, blood group, etc.)
+//  is admin-entered during approval. CNIC is locked after signup (admin-owned
+//  going forward — see employeeRoutes.js PUT /:employeeId, Step A). Marital
+//  status stays employee-editable afterward via the same route.
 // ─────────────────────────────────────────────────────────────
 import React, { useState, useRef } from 'react';
 import {
@@ -28,6 +35,7 @@ import { auth } from '../../config/firebase';
 import axios from 'axios';
 import { API } from '../../config/api';
 import DatePickerField from '../../components/DatePickerField';
+import { MARITAL_STATUSES } from '../../constants';
 
 // ── Notification permission (Android 13+, safe to call on older versions)
 const requestNotificationPermission = async () => {
@@ -72,8 +80,17 @@ const formatEmployeeNumber = (text) => {
   return clean.slice(0, 3) + '-' + clean.slice(3, 8);
 };
 
+// ── CNIC formatter: auto-inserts dashes → XXXXX-XXXXXXX-X (Day 14, Step C)
+const formatCnic = (text) => {
+  const digits = text.replace(/\D/g, '').slice(0, 13);
+  if (digits.length <= 5) return digits;
+  if (digits.length <= 12) return `${digits.slice(0, 5)}-${digits.slice(5)}`;
+  return `${digits.slice(0, 5)}-${digits.slice(5, 12)}-${digits.slice(12)}`;
+};
+
 const VALID_PREFIXES = ['FFL', 'ESB', 'OSL', 'FAS'];
 const EMP_PATTERN = /^(FFL|ESB|OSL|FAS)-\d{5}$/;
+const CNIC_PATTERN = /^\d{5}-\d{7}-\d{1}$/; // Day 14, Step C
 
 export default function SignupScreen({ navigation }) {
   const [step,           setStep]           = useState(STEP_ACCOUNT);
@@ -89,6 +106,8 @@ export default function SignupScreen({ navigation }) {
   const [employeeNumber, setEmployeeNumber] = useState('');
   const [phone,          setPhone]          = useState('');
   const [dob,            setDob]            = useState(null);
+  const [cnic,           setCnic]           = useState('');         // Day 14, Step C
+  const [maritalStatus,  setMaritalStatus]  = useState('');         // Day 14, Step C
 
   // Step 3 — residence
   const [townshipResidentWithFamily,   setTownshipResidentWithFamily]   = useState(null);
@@ -151,6 +170,16 @@ export default function SignupScreen({ navigation }) {
     if (!dob) {
       webAlert('Required', 'Please select your date of birth.'); return;
     }
+    // Day 14, Step C
+    if (!cnic.trim()) {
+      webAlert('Required', 'Please enter your CNIC.'); return;
+    }
+    if (!CNIC_PATTERN.test(cnic.trim())) {
+      webAlert('Invalid CNIC', 'CNIC must be in format XXXXX-XXXXXXX-X.'); return;
+    }
+    if (!maritalStatus) {
+      webAlert('Required', 'Please select your marital status.'); return;
+    }
     setStep(STEP_RESIDENCE);
   };
 
@@ -210,7 +239,9 @@ export default function SignupScreen({ navigation }) {
         fullName:       fullName.trim(),
         phoneNumber:    phone.trim(),
         employeeNumber: employeeNumber.trim().toUpperCase(),
-                dateOfBirth:    dob ? `${dob.getFullYear()}-${String(dob.getMonth() + 1).padStart(2, '0')}-${String(dob.getDate()).padStart(2, '0')}` : null,
+        dateOfBirth:    dob ? `${dob.getFullYear()}-${String(dob.getMonth() + 1).padStart(2, '0')}-${String(dob.getDate()).padStart(2, '0')}` : null,
+        cnic:           cnic.trim(),           // Day 14, Step C
+        maritalStatus,                          // Day 14, Step C
         ...residencePayload,
       }, {
         headers: { Authorization: `Bearer ${idToken}` },
@@ -421,6 +452,26 @@ export default function SignupScreen({ navigation }) {
                 value={dob}
                 onChange={setDob}
                 maximumDate={new Date()}
+              />
+
+              {/* Day 14, Step C — CNIC */}
+              <Text style={styles.label}>CNIC</Text>
+              <TextInput
+                style={styles.input}
+                placeholder="XXXXX-XXXXXXX-X"
+                placeholderTextColor="#94a3b8"
+                keyboardType="numeric"
+                value={cnic}
+                onChangeText={(text) => setCnic(formatCnic(text))}
+                maxLength={15}
+              />
+
+              {/* Day 14, Step C — Marital Status */}
+              <DropdownPicker
+                label="Marital Status"
+                options={MARITAL_STATUSES}
+                selected={maritalStatus}
+                onSelect={setMaritalStatus}
               />
 
               <TouchableOpacity style={styles.primaryBtn} onPress={goToStep3}>

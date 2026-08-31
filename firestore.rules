@@ -45,6 +45,12 @@ service cloud.firestore {
       return isAnyRole(['doctor', 'cmo', 'nurse', 'reception']);
     }
 
+    // Day 14 (Phase 4, Step E fix) — admin_incharge or cmo only, used by the
+    // employees/{employeeId}/private subcollection below.
+    function isAdminOrCMO() {
+      return isAnyRole(['admin_incharge', 'cmo']);
+    }
+
     // ─── USERS ───────────────────────────────────────────
     match /users/{userId} {
       allow read: if isAuthenticated() &&
@@ -56,12 +62,24 @@ service cloud.firestore {
     }
 
     // ─── EMPLOYEES ───────────────────────────────────────
+    // Day 14 (Phase 4, Step E fix): self-update is now restricted to a
+    // specific field list. Previously an employee could write ANY field on
+    // their own record — Firestore rules are the only real enforcement
+    // boundary for direct client SDK access (the Express backend's Step A
+    // field-gating only protects requests that go through it, not direct
+    // Firestore writes). Admin is unaffected — full write access retained.
     match /employees/{employeeId} {
       allow read: if isAuthenticated();
       allow create: if isAuthenticated();
       allow update: if isAuthenticated() &&
                     (isAdminIncharge() ||
-                     get(/databases/$(database)/documents/employees/$(employeeId)).data.userId == request.auth.uid);
+                     (get(/databases/$(database)/documents/employees/$(employeeId)).data.userId == request.auth.uid &&
+                      request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+                        'fullName', 'phoneNumber', 'emergencyPhoneNumber', 'landlineExtension',
+                        'houseNumber', 'roomNumber', 'townshipResidentWithFamily',
+                        'townshipResidentBachelor', 'residenceType', 'cityOfResidence',
+                        'maritalStatus', 'bloodDonorConsent', 'updatedAt'
+                      ])));
       allow delete: if isAdminIncharge();
 
       // Family members subcollection (kept for backward compatibility)
@@ -70,6 +88,16 @@ service cloud.firestore {
         allow write: if isAuthenticated() &&
                      (isAdminIncharge() ||
                       get(/databases/$(database)/documents/employees/$(employeeId)).data.userId == request.auth.uid);
+      }
+
+      // Day 14 (Phase 4, Step E fix) — sensitive fields that must NOT be
+      // readable via the open employees/{employeeId} read rule above.
+      // Firestore rules can't hide a single field within an otherwise-open
+      // document, so anything admin/CMO-only (currently: chronic disease)
+      // lives here instead, in its own restricted document.
+      match /private/{docId} {
+        allow read:  if isAdminOrCMO();
+        allow write: if isAdminOrCMO();
       }
     }
 

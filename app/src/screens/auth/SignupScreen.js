@@ -108,6 +108,7 @@ export default function SignupScreen({ navigation }) {
   const [dob,            setDob]            = useState(null);
   const [cnic,           setCnic]           = useState('');         // Day 14, Step C
   const [maritalStatus,  setMaritalStatus]  = useState('');         // Day 14, Step C
+  const [isSmoker,       setIsSmoker]       = useState(null);       // Day 14 fix #5
 
   // Step 3 — residence
   const [townshipResidentWithFamily,   setTownshipResidentWithFamily]   = useState(null);
@@ -180,6 +181,10 @@ export default function SignupScreen({ navigation }) {
     if (!maritalStatus) {
       webAlert('Required', 'Please select your marital status.'); return;
     }
+    // Day 14 fix #5
+    if (isSmoker === null) {
+      webAlert('Required', 'Please indicate whether you smoke.'); return;
+    }
     setStep(STEP_RESIDENCE);
   };
 
@@ -242,6 +247,7 @@ export default function SignupScreen({ navigation }) {
         dateOfBirth:    dob ? `${dob.getFullYear()}-${String(dob.getMonth() + 1).padStart(2, '0')}-${String(dob.getDate()).padStart(2, '0')}` : null,
         cnic:           cnic.trim(),           // Day 14, Step C
         maritalStatus,                          // Day 14, Step C
+        isSmoker,                               // Day 14 fix #5
         ...residencePayload,
       }, {
         headers: { Authorization: `Bearer ${idToken}` },
@@ -472,6 +478,13 @@ export default function SignupScreen({ navigation }) {
                 options={MARITAL_STATUSES}
                 selected={maritalStatus}
                 onSelect={setMaritalStatus}
+              />
+
+              {/* Day 14 fix #5 — Smoker status */}
+              <YesNoRow
+                label="Are you a smoker?"
+                value={isSmoker}
+                onChange={setIsSmoker}
               />
 
               <TouchableOpacity style={styles.primaryBtn} onPress={goToStep3}>

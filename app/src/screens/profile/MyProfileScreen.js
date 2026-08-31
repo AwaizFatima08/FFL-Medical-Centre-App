@@ -28,7 +28,7 @@ import { webAlert } from '../../utils/webAlert';
 import React, { useEffect, useState, useCallback } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, ScrollView,
-  ActivityIndicator, Switch,
+  ActivityIndicator, Switch, TextInput,
 } from 'react-native';
 import { getAuth } from 'firebase/auth';
 import { getFirestore, collection, query, where, getDocs } from 'firebase/firestore';
@@ -102,6 +102,16 @@ export default function MyProfileScreen({ navigation }) {
   const [savingMarital,    setSavingMarital]    = useState(false);
   const [savingConsent,    setSavingConsent]    = useState(false);
 
+  // Day 14 fix #5 — smoker status
+  const [isSmoker,      setIsSmoker]      = useState(false);
+  const [savingSmoker,  setSavingSmoker]  = useState(false);
+
+  // Day 14 fix #6 — correction request
+  const [correctionRequested, setCorrectionRequested] = useState(false);
+  const [correctionNote,      setCorrectionNote]      = useState('');
+  const [correctionInput,     setCorrectionInput]     = useState('');
+  const [submittingCorrection, setSubmittingCorrection] = useState(false);
+
   const db = getFirestore();
 
   const getToken = async () => {
@@ -130,6 +140,10 @@ export default function MyProfileScreen({ navigation }) {
       setEmployee(data);
       setBloodDonorConsent(!!data.bloodDonorConsent);
       setMaritalStatus(data.maritalStatus || '');
+      setIsSmoker(!!data.isSmoker); // Day 14 fix #5
+      // Day 14 fix #6
+      setCorrectionRequested(!!data.correctionRequested);
+      setCorrectionNote(data.correctionRequestNote || '');
     } catch (err) {
       console.error('MyProfileScreen fetch error:', err);
       webAlert('Error', 'Could not load your profile.');
@@ -224,6 +238,65 @@ export default function MyProfileScreen({ navigation }) {
       setBloodDonorConsent(!value);
     } finally {
       setSavingConsent(false);
+    }
+  };
+
+  // ─── Smoker status self-edit (post-confirmation) — Day 14 fix #5 ───────
+  const handleToggleSmoker = async (value) => {
+    setIsSmoker(value);
+    setSavingSmoker(true);
+    try {
+      const token = await getToken();
+      const res = await fetch(`${API.employees}/${employeeId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ isSmoker: value }),
+      });
+      if (!res.ok) {
+        const data = await res.json();
+        webAlert('Error', data.message || 'Could not update smoker status.');
+        setIsSmoker(!value); // revert on failure
+      }
+    } catch (err) {
+      console.error('Update smoker status error:', err);
+      webAlert('Error', 'Network error. Please try again.');
+      setIsSmoker(!value);
+    } finally {
+      setSavingSmoker(false);
+    }
+  };
+
+  // ─── Correction request — Day 14 fix #6 ─────────────────────────────────
+  const handleSubmitCorrection = async () => {
+    if (!correctionInput.trim()) {
+      webAlert('Required', 'Please describe what needs correcting.');
+      return;
+    }
+    setSubmittingCorrection(true);
+    try {
+      const token = await getToken();
+      const res = await fetch(`${API.employees}/${employeeId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({
+          correctionRequested: true,
+          correctionRequestNote: correctionInput.trim(),
+        }),
+      });
+      if (res.ok) {
+        setCorrectionRequested(true);
+        setCorrectionNote(correctionInput.trim());
+        setCorrectionInput('');
+        webAlert('Submitted', 'Admin has been notified and will review your request.');
+      } else {
+        const data = await res.json();
+        webAlert('Error', data.message || 'Could not submit request.');
+      }
+    } catch (err) {
+      console.error('Submit correction error:', err);
+      webAlert('Error', 'Network error. Please try again.');
+    } finally {
+      setSubmittingCorrection(false);
     }
   };
 
@@ -329,9 +402,39 @@ export default function MyProfileScreen({ navigation }) {
               <FieldRow label="Blood Group"   value={employee.bloodGroup} />
             </View>
             <Text style={styles.infoNote}>
-              These details are managed by the Medical Centre admin. Contact admin if
-              anything needs correcting.
+              These details are managed by the Medical Centre admin.
             </Text>
+
+            {/* Day 14 fix #6 — correction request */}
+            {correctionRequested ? (
+              <View style={styles.correctionPendingBox}>
+                <Text style={styles.correctionPendingTitle}>⏳ Correction request sent</Text>
+                <Text style={styles.correctionPendingNote}>{correctionNote}</Text>
+                <Text style={styles.correctionPendingHint}>Admin has been notified and will review this.</Text>
+              </View>
+            ) : (
+              <View style={styles.correctionBox}>
+                <Text style={styles.correctionTitle}>See something wrong above?</Text>
+                <TextInput
+                  style={styles.correctionInput}
+                  placeholder="e.g. My department should be Maintenance, not Production"
+                  placeholderTextColor="#a0aec0"
+                  value={correctionInput}
+                  onChangeText={setCorrectionInput}
+                  multiline
+                />
+                <TouchableOpacity
+                  style={[styles.correctionBtn, submittingCorrection && styles.submitBtnDisabled]}
+                  onPress={handleSubmitCorrection}
+                  disabled={submittingCorrection}
+                >
+                  {submittingCorrection
+                    ? <ActivityIndicator color="#ffffff" size="small" />
+                    : <Text style={styles.correctionBtnText}>Report Incorrect Data</Text>
+                  }
+                </TouchableOpacity>
+              </View>
+            )}
 
             <Text style={styles.sectionTitle}>Marital Status</Text>
             <View style={styles.card}>
@@ -341,6 +444,19 @@ export default function MyProfileScreen({ navigation }) {
                 disabled={savingMarital}
               />
               {savingMarital && <ActivityIndicator style={{ marginTop: 8 }} color="#3b82f6" />}
+            </View>
+
+            {/* Day 14 fix #5 — Smoker status */}
+            <Text style={styles.sectionTitle}>Smoker Status</Text>
+            <View style={[styles.card, styles.consentRow]}>
+              <Text style={styles.consentLabel}>I am a smoker</Text>
+              <Switch
+                value={isSmoker}
+                onValueChange={handleToggleSmoker}
+                disabled={savingSmoker}
+                trackColor={{ false: '#e2e8f0', true: '#93c5fd' }}
+                thumbColor={isSmoker ? '#3b82f6' : '#cbd5e0'}
+              />
             </View>
 
             <Text style={styles.sectionTitle}>Blood Donor Consent</Text>
@@ -427,7 +543,31 @@ const styles = StyleSheet.create({
   submitBtnDisabled: { opacity: 0.5 },
   submitText:        { color: '#ffffff', fontSize: 15, fontWeight: '600' },
 
-  infoNote: { fontSize: 12, color: '#a0aec0', marginBottom: 20, lineHeight: 17 },
+  infoNote: { fontSize: 12, color: '#a0aec0', marginBottom: 12, lineHeight: 17 },
+
+  // Day 14 fix #6
+  correctionBox: {
+    backgroundColor: '#ffffff', borderRadius: 12, padding: 14,
+    marginBottom: 20, borderWidth: 1, borderColor: '#e2e8f0',
+  },
+  correctionTitle: { fontSize: 13, fontWeight: '600', color: '#4a5568', marginBottom: 8 },
+  correctionInput: {
+    borderWidth: 1, borderColor: '#e2e8f0', borderRadius: 8,
+    paddingHorizontal: 12, paddingVertical: 10, fontSize: 13, color: '#2d3748',
+    minHeight: 60, textAlignVertical: 'top', backgroundColor: '#f7fafc', marginBottom: 10,
+  },
+  correctionBtn: {
+    backgroundColor: '#f59e0b', borderRadius: 8,
+    paddingVertical: 11, alignItems: 'center',
+  },
+  correctionBtnText: { color: '#ffffff', fontSize: 13, fontWeight: '600' },
+  correctionPendingBox: {
+    backgroundColor: '#fffbeb', borderRadius: 12, padding: 14,
+    marginBottom: 20, borderWidth: 1, borderColor: '#fde68a',
+  },
+  correctionPendingTitle: { fontSize: 13, fontWeight: '700', color: '#92400e', marginBottom: 6 },
+  correctionPendingNote:  { fontSize: 13, color: '#78350f', marginBottom: 6, lineHeight: 18 },
+  correctionPendingHint:  { fontSize: 11, color: '#a16207' },
 
   chipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   chip: {

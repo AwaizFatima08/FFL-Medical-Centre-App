@@ -15,7 +15,6 @@ import {
 } from '../../constants';
 import DatePickerField from '../../components/DatePickerField';
 
-// ─── Reusable dropdown ────────────────────────────────────────────────────────
 function DropdownField({ label, value, options, onSelect, required }) {
   const [open, setOpen] = useState(false);
   return (
@@ -62,7 +61,6 @@ function DropdownField({ label, value, options, onSelect, required }) {
   );
 }
 
-// ─── Helpers ──────────────────────────────────────────────────────────────────
 function ageInYears(date) {
   if (!date) return 0;
   const today = new Date();
@@ -74,7 +72,6 @@ function ageInYears(date) {
   return age;
 }
 
-// ─── Main screen ─────────────────────────────────────────────────────────────
 export default function FamilyMemberEditScreen({ route, navigation }) {
   const { memberId } = route.params;
 
@@ -82,7 +79,6 @@ export default function FamilyMemberEditScreen({ route, navigation }) {
   const [saving,           setSaving]           = useState(false);
   const [liveRecord,       setLiveRecord]       = useState(null);
 
-  // Editable fields
   const [name,             setName]             = useState('');
   const [dob,              setDob]              = useState(null);
   const [cnic,             setCnic]             = useState('');
@@ -92,16 +88,17 @@ export default function FamilyMemberEditScreen({ route, navigation }) {
   const [maritalStatus,    setMaritalStatus]    = useState('');
   const [employmentStatus, setEmploymentStatus] = useState('');
 
+  // Day 14 fix #3 — family member blood donor consent
+  const [bloodDonorConsent, setBloodDonorConsent] = useState(false);
+
   const db  = getFirestore();
   const auth = getAuth();
 
-  // ─── Derived ────────────────────────────────────────────────────────────────
   const dobDate   = dob instanceof Date ? dob : null;
   const age       = ageInYears(dobDate);
   const isAdult   = dobDate ? age >= 25 : false;
   const needsCnic = dobDate ? age >= 18 : false;
 
-  // ─── Load existing record ───────────────────────────────────────────────────
   useEffect(() => {
     const fetchMember = async () => {
       try {
@@ -114,7 +111,6 @@ export default function FamilyMemberEditScreen({ route, navigation }) {
         }
         const data = snap.data();
 
-        // Security — ensure this record belongs to the logged-in employee
         if (data.employeeId !== auth.currentUser?.uid) {
           webAlert('Error', 'Unauthorised access.');
           navigation.goBack();
@@ -123,9 +119,6 @@ export default function FamilyMemberEditScreen({ route, navigation }) {
 
         setLiveRecord({ id: snap.id, ...data });
 
-        // Pre-fill fields from live record
-        // If there is a pending revision, show that instead so employee
-        // can see what is currently under review
         const source = data.pendingRevision || data;
         setName(source.name || '');
         setDob(source.dateOfBirth
@@ -137,6 +130,10 @@ export default function FamilyMemberEditScreen({ route, navigation }) {
         setDifferentlyAbled(source.differentlyAbled || false);
         setMaritalStatus(source.maritalStatus || '');
         setEmploymentStatus(source.employmentStatus || '');
+        // Day 14 fix #3 — always from the live record, not pendingRevision
+        // (consent is a direct, admin-review-free field like the employee's
+        // own — see handleToggleConsent below).
+        setBloodDonorConsent(!!data.bloodDonorConsent);
       } catch (err) {
         console.error('FamilyMemberEdit load error:', err);
         webAlert('Error', 'Could not load record.');
@@ -148,7 +145,6 @@ export default function FamilyMemberEditScreen({ route, navigation }) {
     fetchMember();
   }, [memberId]);
 
-  // ─── Validation ─────────────────────────────────────────────────────────────
   const validate = () => {
     if (!name.trim()) { webAlert('Required', 'Full name cannot be empty.'); return false; }
     if (!dob)         { webAlert('Required', 'Date of birth is required.'); return false; }
@@ -171,11 +167,9 @@ export default function FamilyMemberEditScreen({ route, navigation }) {
     return true;
   };
 
-  // ─── Submit edit as pendingRevision ─────────────────────────────────────────
   const handleSubmit = async () => {
     if (!validate()) return;
 
-    // Check if anything actually changed
     const live = liveRecord;
     const liveDobDate = live.dateOfBirth
       ? (live.dateOfBirth.toDate ? live.dateOfBirth.toDate() : new Date(live.dateOfBirth))
@@ -224,7 +218,24 @@ export default function FamilyMemberEditScreen({ route, navigation }) {
     }
   };
 
-  // ─── Render ─────────────────────────────────────────────────────────────────
+  // Day 14 fix #3 — blood donor consent is a direct write, NOT routed
+  // through pendingRevision/admin review. Mirrors the employee-level
+  // consent's treatment (Phase 4 design: consent is always self-service).
+  const handleToggleConsent = async (value) => {
+    setBloodDonorConsent(value);
+    try {
+      await updateDoc(doc(db, 'familyMembers', memberId), {
+        bloodDonorConsent: value,
+        updatedAt:         Timestamp.now(),
+      });
+      setLiveRecord(prev => ({ ...prev, bloodDonorConsent: value }));
+    } catch (err) {
+      console.error('Update family member consent error:', err);
+      webAlert('Error', 'Could not update consent. Please try again.');
+      setBloodDonorConsent(!value);
+    }
+  };
+
   if (loading) {
     return (
       <View style={styles.centred}>
@@ -238,7 +249,6 @@ export default function FamilyMemberEditScreen({ route, navigation }) {
 
   return (
     <View style={styles.wrapper}>
-      {/* Header */}
       <View style={styles.header}>
         <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
           <Text style={styles.backText}>← Back</Text>
@@ -249,7 +259,6 @@ export default function FamilyMemberEditScreen({ route, navigation }) {
 
       <ScrollView contentContainerStyle={styles.container} keyboardShouldPersistTaps="handled">
 
-        {/* Relation — read only, cannot be changed */}
         <View style={styles.fieldGroup}>
           <Text style={styles.label}>Relation</Text>
           <View style={styles.readOnlyField}>
@@ -260,7 +269,6 @@ export default function FamilyMemberEditScreen({ route, navigation }) {
           </View>
         </View>
 
-        {/* Pending revision notice */}
         {liveRecord?.pendingRevision && (
           <View style={styles.revisionNotice}>
             <Text style={styles.revisionNoticeText}>
@@ -269,7 +277,6 @@ export default function FamilyMemberEditScreen({ route, navigation }) {
           </View>
         )}
 
-        {/* Rejected notice */}
         {liveRecord?.status === 'rejected' && liveRecord?.rejectionNote && (
           <View style={styles.rejectionNotice}>
             <Text style={styles.rejectionTitle}>❌  Previous submission rejected</Text>
@@ -277,7 +284,6 @@ export default function FamilyMemberEditScreen({ route, navigation }) {
           </View>
         )}
 
-        {/* Name */}
         <View style={styles.fieldGroup}>
           <Text style={styles.label}>Full Name <Text style={styles.required}>*</Text></Text>
           <TextInput
@@ -290,7 +296,6 @@ export default function FamilyMemberEditScreen({ route, navigation }) {
           />
         </View>
 
-        {/* Date of Birth */}
         <DatePickerField
           label="Date of Birth *"
           value={dob}
@@ -298,7 +303,6 @@ export default function FamilyMemberEditScreen({ route, navigation }) {
           maximumDate={new Date()}
         />
 
-        {/* Age indicator */}
         {dobDate && (
           <Text style={styles.ageHint}>
             Age: {age} year{age !== 1 ? 's' : ''}
@@ -306,7 +310,6 @@ export default function FamilyMemberEditScreen({ route, navigation }) {
           </Text>
         )}
 
-        {/* CNIC */}
         <View style={styles.fieldGroup}>
           <Text style={styles.label}>
             CNIC{needsCnic ? <Text style={styles.required}> *</Text> : ' (optional)'}
@@ -322,7 +325,6 @@ export default function FamilyMemberEditScreen({ route, navigation }) {
           />
         </View>
 
-        {/* NADRA Card — under 18 only */}
         {!needsCnic && (
           <View style={styles.fieldGroup}>
             <Text style={styles.label}>NADRA Smart Card No. (optional)</Text>
@@ -336,7 +338,6 @@ export default function FamilyMemberEditScreen({ route, navigation }) {
           </View>
         )}
 
-        {/* Blood Group */}
         <DropdownField
           label="Blood Group"
           value={bloodGroup}
@@ -344,7 +345,19 @@ export default function FamilyMemberEditScreen({ route, navigation }) {
           onSelect={setBloodGroup}
         />
 
-        {/* Differently Abled */}
+        {/* Day 14 fix #3 — Blood Donor Consent, direct write, no review */}
+        {bloodGroup ? (
+          <View style={styles.switchRow}>
+            <Text style={styles.label}>Consent to Blood Donor Directory ({bloodGroup})</Text>
+            <Switch
+              value={bloodDonorConsent}
+              onValueChange={handleToggleConsent}
+              trackColor={{ false: '#e2e8f0', true: '#93c5fd' }}
+              thumbColor={bloodDonorConsent ? '#3b82f6' : '#cbd5e0'}
+            />
+          </View>
+        ) : null}
+
         <View style={styles.switchRow}>
           <Text style={styles.label}>Differently Abled</Text>
           <Switch
@@ -355,7 +368,6 @@ export default function FamilyMemberEditScreen({ route, navigation }) {
           />
         </View>
 
-        {/* Marital Status */}
         {showSpouseFields && (
           <DropdownField
             label="Marital Status"
@@ -366,7 +378,6 @@ export default function FamilyMemberEditScreen({ route, navigation }) {
           />
         )}
 
-        {/* Employment Status */}
         {showSpouseFields && (
           <DropdownField
             label="Employment Status"
@@ -377,7 +388,6 @@ export default function FamilyMemberEditScreen({ route, navigation }) {
           />
         )}
 
-        {/* Submit */}
         <TouchableOpacity
           style={[styles.submitBtn, saving && styles.submitBtnDisabled]}
           onPress={handleSubmit}

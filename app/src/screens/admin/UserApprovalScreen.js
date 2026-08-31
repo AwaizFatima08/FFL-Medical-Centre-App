@@ -15,7 +15,7 @@ import React, { useState, useCallback } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity,
   ScrollView, ActivityIndicator, Alert,
-  RefreshControl, Platform, TextInput,
+  RefreshControl, Platform,
 } from 'react-native';
 import { getAuth } from 'firebase/auth';
 import { useFocusEffect } from '@react-navigation/native';
@@ -23,7 +23,7 @@ import { API } from '../../config/api';
 import NotificationBell from '../../components/NotificationBell';
 import {
   EMPLOYEE_TYPES, DEPARTMENT_GROUPS, UNITS,
-  getDesignationsByType, BLOOD_GROUPS,
+  getDesignationsByType, BLOOD_GROUPS, CHRONIC_DISEASE_OPTIONS,
 } from '../../constants';
 
 const ROLE_OPTIONS = [
@@ -129,7 +129,15 @@ export default function UserApprovalScreen({ navigation }) {
   // ─── Day 14, Step D — profile field helpers ──────────────────────────────
   const getProfile = (uid) => profileData[uid] || {
     employeeType: '', department: '', unit: '', designation: '',
-    bloodGroup: '', chronicDisease: '',
+    bloodGroup: '', chronicDisease: [],
+  };
+
+  const toggleChronicDisease = (uid, condition) => {
+    const current = getProfile(uid).chronicDisease || [];
+    const next = current.includes(condition)
+      ? current.filter(c => c !== condition)
+      : [...current, condition];
+    setProfileField(uid, 'chronicDisease', next);
   };
 
   const setProfileField = (uid, field, value) => {
@@ -243,11 +251,11 @@ export default function UserApprovalScreen({ navigation }) {
               // subcollection rather than the openly-readable employee
               // document. Separate call, separate failure message, so a
               // failure here doesn't get confused with the main profile save.
-              if (profile.chronicDisease?.trim()) {
+              if (profile.chronicDisease && profile.chronicDisease.length > 0) {
                 const medicalRes = await fetch(`${API.employees}/${user.employeeId}/medical`, {
                   method: 'PUT',
                   headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-                  body: JSON.stringify({ chronicDisease: profile.chronicDisease.trim() }),
+                  body: JSON.stringify({ chronicDisease: profile.chronicDisease }),
                 });
                 if (!medicalRes.ok) {
                   webAlert(
@@ -533,16 +541,24 @@ export default function UserApprovalScreen({ navigation }) {
                     ))}
                   </View>
 
-                  {/* Chronic Disease — optional, admin/CMO-visible only */}
+                  {/* Chronic Disease — multi-select, optional, admin/CMO-visible only */}
                   <Text style={styles.roleLabel}>Chronic Disease (optional, admin/CMO-visible only)</Text>
-                  <TextInput
-                    style={styles.chronicInput}
-                    placeholder="e.g. Diabetes, Hypertension — leave blank if none known"
-                    placeholderTextColor="#a0aec0"
-                    value={profile.chronicDisease}
-                    onChangeText={(text) => setProfileField(user.uid, 'chronicDisease', text)}
-                    multiline
-                  />
+                  <View style={styles.roleGrid}>
+                    {CHRONIC_DISEASE_OPTIONS.map(opt => {
+                      const selected = (profile.chronicDisease || []).includes(opt);
+                      return (
+                        <TouchableOpacity
+                          key={opt}
+                          style={[styles.roleChip, selected && styles.roleChipSelected]}
+                          onPress={() => toggleChronicDisease(user.uid, opt)}
+                        >
+                          <Text style={[styles.roleChipText, selected && styles.roleChipTextSelected]}>
+                            {opt}
+                          </Text>
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </View>
 
                   <View style={styles.actionRow}>
                     <TouchableOpacity

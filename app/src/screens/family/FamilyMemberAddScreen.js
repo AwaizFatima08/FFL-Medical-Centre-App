@@ -17,7 +17,6 @@ import {
 } from '../../constants';
 import DatePickerField from '../../components/DatePickerField';
 
-// ─── Simple dropdown component ────────────────────────────────────────────────
 function DropdownField({ label, value, options, onSelect, required, disabled }) {
   const [open, setOpen] = useState(false);
   return (
@@ -64,35 +63,6 @@ function DropdownField({ label, value, options, onSelect, required, disabled }) 
   );
 }
 
-// ─── Date input ───────────────────────────────────────────────────────────────
-function DateField({ label, value, onChange, required }) {
-  return (
-    <View style={styles.fieldGroup}>
-      <Text style={styles.label}>
-        {label}{required ? <Text style={styles.required}> *</Text> : null}
-      </Text>
-      <TextInput
-        style={styles.input}
-        placeholder="DD/MM/YYYY"
-        placeholderTextColor="#a0aec0"
-        value={value}
-        onChangeText={onChange}
-        keyboardType="numeric"
-        maxLength={10}
-      />
-    </View>
-  );
-}
-
-// ─── Helpers ──────────────────────────────────────────────────────────────────
-function parseDate(str) {
-  if (!str || str.length !== 10) return null;
-  const [d, m, y] = str.split('/').map(Number);
-  if (!d || !m || !y) return null;
-  const date = new Date(y, m - 1, d);
-  return isNaN(date.getTime()) ? null : date;
-}
-
 function ageInYears(date) {
   if (!date) return 0;
   const today = new Date();
@@ -104,7 +74,6 @@ function ageInYears(date) {
   return age;
 }
 
-// ─── Main screen ──────────────────────────────────────────────────────────────
 export default function FamilyMemberAddScreen({ navigation }) {
   const [relation,         setRelation]         = useState('');
   const [name,             setName]             = useState('');
@@ -119,6 +88,9 @@ export default function FamilyMemberAddScreen({ navigation }) {
   const [spouses,          setSpouses]          = useState([]);
   const [saving,           setSaving]           = useState(false);
 
+  // Day 14 fix #3 — family member blood donor consent
+  const [bloodDonorConsent, setBloodDonorConsent] = useState(false);
+
   const db  = getFirestore();
   const auth = getAuth();
   const uid  = auth.currentUser?.uid;
@@ -129,7 +101,6 @@ export default function FamilyMemberAddScreen({ navigation }) {
   const needsCnic = dobDate ? age >= 18 : false;
   const isChild   = relation === 'son' || relation === 'daughter';
 
-  // ─── Load existing spouse records for optional mother linking ───────────────
   useEffect(() => {
     if (!isChild || !uid) return;
     const fetchSpouses = async () => {
@@ -149,7 +120,6 @@ export default function FamilyMemberAddScreen({ navigation }) {
     fetchSpouses();
   }, [isChild, uid, db]);
 
-  // ─── Validation ─────────────────────────────────────────────────────────────
   const validate = () => {
     if (!relation)    { webAlert('Required', 'Please select a relation.'); return false; }
     if (!name.trim()) { webAlert('Required', 'Please enter the full name.'); return false; }
@@ -173,17 +143,14 @@ export default function FamilyMemberAddScreen({ navigation }) {
     return true;
   };
 
-  // ─── Submit ─────────────────────────────────────────────────────────────────
   const handleSubmit = async () => {
     if (!validate()) return;
     setSaving(true);
     try {
-      // Resolve motherId — auto-select if only one spouse, use selection if multiple
       let resolvedMotherId = null;
       if (isChild) {
         if (spouses.length === 1)              resolvedMotherId = spouses[0].id;
         else if (spouses.length > 1 && motherId) resolvedMotherId = motherId;
-        // No spouse records — motherId stays null, shows as Not provided on report
       }
 
       await addDoc(collection(db, 'familyMembers'), {
@@ -194,6 +161,8 @@ export default function FamilyMemberAddScreen({ navigation }) {
         cnic:             needsCnic ? cnic.trim() : null,
         nadraCardNumber:  (!needsCnic && nadraCard.trim()) ? nadraCard.trim() : null,
         bloodGroup:       bloodGroup || null,
+        // Day 14 fix #3 — only meaningful with a blood group on file
+        bloodDonorConsent: bloodGroup ? bloodDonorConsent : false,
         differentlyAbled,
         maritalStatus:    isAdult ? maritalStatus : null,
         employmentStatus: isAdult ? employmentStatus : null,
@@ -206,7 +175,6 @@ export default function FamilyMemberAddScreen({ navigation }) {
         updatedAt:        Timestamp.now(),
       });
 
-      // Show success then navigate — webAlert on web blocks until dismissed
       webAlert('Submitted', 'Family member added successfully. Admin will review and validate the record.');
       navigation.goBack();
     } catch (err) {
@@ -217,7 +185,6 @@ export default function FamilyMemberAddScreen({ navigation }) {
     }
   };
 
-  // ─── Render ─────────────────────────────────────────────────────────────────
   const showSpouseFields = relation === 'spouse' || isAdult;
 
   return (
@@ -232,7 +199,6 @@ export default function FamilyMemberAddScreen({ navigation }) {
 
       <ScrollView contentContainerStyle={styles.container} keyboardShouldPersistTaps="handled">
 
-        {/* Relation */}
         <DropdownField
           label="Relation"
           value={relation}
@@ -241,7 +207,6 @@ export default function FamilyMemberAddScreen({ navigation }) {
           required
         />
 
-        {/* Mother selection — only if child and multiple spouses exist */}
         {isChild && spouses.length > 1 && (
           <DropdownField
             label="Mother (optional)"
@@ -251,7 +216,6 @@ export default function FamilyMemberAddScreen({ navigation }) {
           />
         )}
 
-        {/* Soft advisory — child with no spouse records at all */}
         {isChild && spouses.length === 0 && (
           <View style={styles.infoBox}>
             <Text style={styles.infoText}>
@@ -261,7 +225,6 @@ export default function FamilyMemberAddScreen({ navigation }) {
           </View>
         )}
 
-        {/* Name */}
         <View style={styles.fieldGroup}>
           <Text style={styles.label}>Full Name <Text style={styles.required}>*</Text></Text>
           <TextInput
@@ -274,7 +237,6 @@ export default function FamilyMemberAddScreen({ navigation }) {
           />
         </View>
 
-        {/* Date of Birth */}
         <DatePickerField
           label="Date of Birth *"
           value={dob}
@@ -282,7 +244,6 @@ export default function FamilyMemberAddScreen({ navigation }) {
           maximumDate={new Date()}
         />
 
-        {/* Age indicator */}
         {dobDate && (
           <Text style={styles.ageHint}>
             Age: {age} year{age !== 1 ? 's' : ''}
@@ -290,7 +251,6 @@ export default function FamilyMemberAddScreen({ navigation }) {
           </Text>
         )}
 
-        {/* CNIC */}
         <View style={styles.fieldGroup}>
           <Text style={styles.label}>
             CNIC{needsCnic ? <Text style={styles.required}> *</Text> : ' (optional)'}
@@ -306,7 +266,6 @@ export default function FamilyMemberAddScreen({ navigation }) {
           />
         </View>
 
-        {/* NADRA Smart Card — under 18 only */}
         {!needsCnic && (
           <View style={styles.fieldGroup}>
             <Text style={styles.label}>NADRA Smart Card No. (optional)</Text>
@@ -320,7 +279,6 @@ export default function FamilyMemberAddScreen({ navigation }) {
           </View>
         )}
 
-        {/* Blood Group */}
         <DropdownField
           label="Blood Group"
           value={bloodGroup}
@@ -328,7 +286,20 @@ export default function FamilyMemberAddScreen({ navigation }) {
           onSelect={setBloodGroup}
         />
 
-        {/* Differently Abled */}
+        {/* Day 14 fix #3 — Blood Donor Consent, only shown once a blood
+            group is selected. */}
+        {bloodGroup ? (
+          <View style={styles.switchRow}>
+            <Text style={styles.label}>Consent to Blood Donor Directory ({bloodGroup})</Text>
+            <Switch
+              value={bloodDonorConsent}
+              onValueChange={setBloodDonorConsent}
+              trackColor={{ false: '#e2e8f0', true: '#93c5fd' }}
+              thumbColor={bloodDonorConsent ? '#3b82f6' : '#cbd5e0'}
+            />
+          </View>
+        ) : null}
+
         <View style={styles.switchRow}>
           <Text style={styles.label}>Differently Abled</Text>
           <Switch
@@ -339,7 +310,6 @@ export default function FamilyMemberAddScreen({ navigation }) {
           />
         </View>
 
-        {/* Marital & Employment Status */}
         {showSpouseFields && (
           <DropdownField
             label="Marital Status"
@@ -359,7 +329,6 @@ export default function FamilyMemberAddScreen({ navigation }) {
           />
         )}
 
-        {/* Submit */}
         <TouchableOpacity
           style={[styles.submitBtn, saving && styles.submitBtnDisabled]}
           onPress={handleSubmit}

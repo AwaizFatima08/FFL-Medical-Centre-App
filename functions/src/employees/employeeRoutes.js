@@ -232,6 +232,9 @@ router.put('/:employeeId', verifyToken, async (req, res) => {
       bloodGroup,
       bloodDonorConsent,
       maritalStatus,
+      isSmoker,                    // ← Day 14 fix #5
+      correctionRequested,         // ← Day 14 fix #6
+      correctionRequestNote,       // ← Day 14 fix #6
       // ── Residence fields ──────────────────────────────
       townshipResidentWithFamily,  // ← NEW
       townshipResidentBachelor,    // ← NEW
@@ -266,6 +269,17 @@ router.put('/:employeeId', verifyToken, async (req, res) => {
     // makes this the one identity-adjacent field an employee can change
     // themselves at any time (drives the Family tab alert state elsewhere).
     if (maritalStatus)        updates.maritalStatus        = maritalStatus;
+    // Day 14 fix #5 — isSmoker is self-editable anytime, same reasoning as
+    // maritalStatus: low-stakes status flag, no admin approval needed.
+    if (isSmoker !== undefined) updates.isSmoker = isSmoker;
+    // Day 14 fix #6 — employee reporting a data error. Self-editable in
+    // both directions: submitting a request (true + note) and the admin
+    // clearing it via UserManagementScreen after fixing the data (false +
+    // null, sent from the admin side of the same route, not gated by
+    // isSelfService since it's a plain boolean/text pair, not one of the
+    // identity-sensitive fields above).
+    if (correctionRequested !== undefined) updates.correctionRequested = correctionRequested;
+    if (correctionRequestNote !== undefined) updates.correctionRequestNote = correctionRequestNote?.trim() || null;
 
     // Day 14, Step F — auto-flag family data when marital status transitions
     // INTO 'married' from anything else. Server-computed only — the request
@@ -352,10 +366,13 @@ router.put('/:employeeId/medical', verifyToken,
         return errorResponse(res, 'Employee not found', 404);
       }
 
+      // Day 14 fix — chronicDisease is now a multi-select array (exactly
+      // the 4 options in constants.js CHRONIC_DISEASE_OPTIONS), not free text.
       await db.collection('employees').doc(req.params.employeeId)
         .collection('private').doc('medical')
         .set({
-          chronicDisease: chronicDisease?.trim() || null,
+          chronicDisease: Array.isArray(chronicDisease) && chronicDisease.length > 0
+            ? chronicDisease : null,
           updatedAt:      nowISO(),
           updatedBy:      req.user.uid,
         });

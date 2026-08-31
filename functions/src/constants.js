@@ -241,6 +241,16 @@ export const WORKING_HOURS = {
 
 // ─── FAMILY MODULE ────────────────────────────────────────────────────────────
 
+// ─── CHRONIC DISEASE (Day 14 fix) ─────────────────────────────────────────────
+// Multi-select, exactly these 4 — admin/CMO-visible only (see
+// employeeRoutes.js PUT /:employeeId/medical).
+export const CHRONIC_DISEASE_OPTIONS = [
+  'Diabetes',
+  'Hypertension',
+  'Ischemic Heart Disease',
+  'Deranged Lipid Profile',
+];
+
 export const FAMILY_RELATIONS = ['spouse', 'son', 'daughter'];
 
 export const FAMILY_MEMBER_STATUS = {

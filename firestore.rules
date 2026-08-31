@@ -78,7 +78,8 @@ service cloud.firestore {
                         'fullName', 'phoneNumber', 'emergencyPhoneNumber', 'landlineExtension',
                         'houseNumber', 'roomNumber', 'townshipResidentWithFamily',
                         'townshipResidentBachelor', 'residenceType', 'cityOfResidence',
-                        'maritalStatus', 'bloodDonorConsent', 'updatedAt'
+                        'maritalStatus', 'bloodDonorConsent', 'isSmoker',
+                        'correctionRequested', 'correctionRequestNote', 'updatedAt'
                       ])));
       allow delete: if isAdminIncharge();
 

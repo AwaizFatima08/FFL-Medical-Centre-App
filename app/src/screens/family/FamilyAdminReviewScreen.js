@@ -345,7 +345,6 @@ export default function FamilyAdminReviewScreen({ navigation }) {
             const memberQ = query(
               collection(db, 'familyMembers'),
               where('employeeId', '==', emp.userId),
-              where('isActive', '==', true),
             );
             const memberSnap = await getDocs(memberQ);
             setSearchResultMembers(memberSnap.docs.map(d => ({ id: d.id, ...d.data() })));
@@ -744,6 +743,21 @@ export default function FamilyAdminReviewScreen({ navigation }) {
                     }
                   </TouchableOpacity>
 
+                  {/* Day 14, Fix #2 — reachable regardless of whether this
+                      employee turned up in the auto-flagged list above
+                      (e.g. married-at-signup employees, or anyone found only
+                      via search). */}
+                  <TouchableOpacity
+                    style={[styles.completeBtnInline, statusProcessing === searchResult.id && styles.btnDisabled]}
+                    disabled={statusProcessing === searchResult.id}
+                    onPress={() => handleMarkComplete(searchResult.id, searchResult.fullName)}
+                  >
+                    {statusProcessing === searchResult.id
+                      ? <ActivityIndicator color="#fff" size="small" />
+                      : <Text style={styles.completeBtnText}>✓ Mark Family Data Complete</Text>
+                    }
+                  </TouchableOpacity>
+
                   {/* Day 14, Step G — manage this employee's family members */}
                   <View style={styles.membersDivider} />
                   <Text style={styles.membersTitle}>Family Members</Text>
@@ -751,12 +765,33 @@ export default function FamilyAdminReviewScreen({ navigation }) {
                   {loadingMembers ? (
                     <ActivityIndicator color="#3b82f6" style={{ marginVertical: 8 }} />
                   ) : searchResultMembers.length === 0 ? (
-                    <Text style={styles.noMembersText}>No active family members on record.</Text>
+                    <Text style={styles.noMembersText}>No family members on record.</Text>
                   ) : (
                     searchResultMembers.map(member => {
                       const isSpouse = member.relation === 'spouse';
                       const isDisabling = disableProcessing === member.id;
                       const showReasonPicker = disablingMemberId === member.id;
+                      const isDisabledMember = member.isActive === false;
+
+                      // Day 14, Step G fix #7 — disabled members stay visible,
+                      // blurred, with a reason badge, instead of disappearing.
+                      if (isDisabledMember) {
+                        return (
+                          <View key={member.id} style={[styles.memberRow, styles.memberRowDisabled]}>
+                            <View style={styles.memberRowInfo}>
+                              <Text style={[styles.memberRowName, styles.memberRowNameDisabled]}>{member.name}</Text>
+                              <Text style={styles.memberRowRelation}>
+                                {member.relation.charAt(0).toUpperCase() + member.relation.slice(1)}
+                              </Text>
+                            </View>
+                            <View style={styles.disabledStatusBadge}>
+                              <Text style={styles.disabledStatusText}>
+                                {member.disabledReason === 'deceased' ? 'Deceased' : 'Divorced'}
+                              </Text>
+                            </View>
+                          </View>
+                        );
+                      }
 
                       return (
                         <View key={member.id} style={styles.memberRow}>
@@ -927,6 +962,10 @@ const styles = StyleSheet.create({
     paddingVertical: 10, alignItems: 'center',
   },
   flagBtnText: { color: '#ffffff', fontSize: 13, fontWeight: '600' },
+  completeBtnInline: {
+    backgroundColor: '#10b981', borderRadius: 8,
+    paddingVertical: 10, alignItems: 'center', marginTop: 8,
+  },
 
   // Day 14, Step G — family member management styles
   membersDivider: { height: 1, backgroundColor: '#e2e8f0', marginVertical: 14 },
@@ -936,9 +975,16 @@ const styles = StyleSheet.create({
     flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
     paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: '#f0f4f8',
   },
+  memberRowDisabled: { opacity: 0.45 },
   memberRowInfo:     { flex: 1 },
   memberRowName:     { fontSize: 13, fontWeight: '600', color: '#2d3748' },
+  memberRowNameDisabled: { textDecorationLine: 'line-through' },
   memberRowRelation: { fontSize: 11, color: '#718096' },
+  disabledStatusBadge: {
+    backgroundColor: '#f0f4f8', borderRadius: 8,
+    paddingHorizontal: 10, paddingVertical: 5,
+  },
+  disabledStatusText: { fontSize: 11, color: '#718096', fontWeight: '600' },
   disableBtn: {
     borderWidth: 1.5, borderColor: '#fc8181', backgroundColor: '#fff5f5',
     borderRadius: 8, paddingHorizontal: 12, paddingVertical: 6,

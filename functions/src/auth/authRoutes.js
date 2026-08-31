@@ -60,6 +60,7 @@ router.post('/register', verifyToken, async (req, res) => {
       employeeNumber,
       cnic,           // ← Day 14, Step C
       maritalStatus,  // ← Day 14, Step C
+      isSmoker,       // ← Day 14 fix #5
       townshipResidentWithFamily,
       townshipResidentBachelor,
       residenceType,
@@ -68,8 +69,8 @@ router.post('/register', verifyToken, async (req, res) => {
       cityOfResidence,
     } = req.body;
 
-    if (!fullName || !phoneNumber || !employeeNumber || !cnic || !maritalStatus) {
-      return errorResponse(res, 'fullName, phoneNumber, employeeNumber, cnic and maritalStatus are required', 400);
+    if (!fullName || !phoneNumber || !employeeNumber || !cnic || !maritalStatus || isSmoker === undefined || isSmoker === null) {
+      return errorResponse(res, 'fullName, phoneNumber, employeeNumber, cnic, maritalStatus and isSmoker are required', 400);
     }
 
     const existingUser = await db.collection('users').doc(req.user.uid).get();
@@ -113,6 +114,14 @@ router.post('/register', verifyToken, async (req, res) => {
       phoneNumber,
       cnic,           // ← Day 14, Step C
       maritalStatus,  // ← Day 14, Step C
+      isSmoker:            isSmoker === true, // ← Day 14 fix #5
+      // Day 14, Fix #2 — set explicitly at signup, not left undefined.
+      // A married-at-signup employee needs this set to 'needs_update' so
+      // they actually show up in admin's flagged-employee query later
+      // (Firestore's 'in' filter never matches a field that's simply
+      // missing from the document).
+      familyDataStatus:    maritalStatus === 'married' ? 'needs_update' : 'not_applicable',
+      familyDataFlagNote:  null,
       isValidated:            false,
       createdAt:              nowISO(),
       townshipResidentWithFamily: townshipResidentWithFamily === true,
@@ -457,6 +466,10 @@ router.get('/all-users', verifyToken, verifyRole([ROLES.ADMIN_INCHARGE, ROLES.CM
         officialEmployeeNumber: empData.officialEmployeeNumber || '—',
         phoneNumber:            empData.phoneNumber || userData.phone || '—',
         employeeId:             empSnap.empty ? null : empSnap.docs[0].id,
+        // Day 14 fix #6 — surfaced here so Manage Users can flag it without
+        // an extra read per employee.
+        correctionRequested:    empData.correctionRequested || false,
+        correctionRequestNote:  empData.correctionRequestNote || null,
       };
     }));
 

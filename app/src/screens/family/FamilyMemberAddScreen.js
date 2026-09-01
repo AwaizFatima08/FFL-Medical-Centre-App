@@ -9,7 +9,7 @@ import {
 import { getAuth } from 'firebase/auth';
 import {
   getFirestore, collection, query, where,
-  getDocs, addDoc, Timestamp,
+  getDocs, addDoc, setDoc, doc, Timestamp,
 } from 'firebase/firestore';
 import {
   FAMILY_RELATIONS, BLOOD_GROUPS,
@@ -153,7 +153,7 @@ export default function FamilyMemberAddScreen({ navigation }) {
         else if (spouses.length > 1 && motherId) resolvedMotherId = motherId;
       }
 
-      await addDoc(collection(db, 'familyMembers'), {
+      const newMemberRef = await addDoc(collection(db, 'familyMembers'), {
         employeeId:       uid,
         name:             name.trim(),
         relation,
@@ -161,8 +161,9 @@ export default function FamilyMemberAddScreen({ navigation }) {
         cnic:             needsCnic ? cnic.trim() : null,
         nadraCardNumber:  (!needsCnic && nadraCard.trim()) ? nadraCard.trim() : null,
         bloodGroup:       bloodGroup || null,
-        // Day 14 fix #3 — only meaningful with a blood group on file
-        bloodDonorConsent: bloodGroup ? bloodDonorConsent : false,
+        // Day 14 fix — consent requires both a blood group on file AND the
+        // member being 18+. Minors can't meaningfully consent to donation.
+        bloodDonorConsent: (bloodGroup && needsCnic) ? bloodDonorConsent : false,
         differentlyAbled,
         maritalStatus:    isAdult ? maritalStatus : null,
         employmentStatus: isAdult ? employmentStatus : null,
@@ -174,6 +175,31 @@ export default function FamilyMemberAddScreen({ navigation }) {
         createdAt:        Timestamp.now(),
         updatedAt:        Timestamp.now(),
       });
+
+      // Day 14 fix — actually feed the Blood Donor Directory. The
+      // employee's own consent flow already creates a bloodDonorRegistry
+      // entry; family member consent never did, so it looked like it
+      // worked but the directory never saw it. Keyed `family_{memberId}`
+      // to guarantee no collision with employee-keyed entries. Family
+      // members have no phone/employee number of their own, so the
+      // sponsoring employee's contact details are used — that's who'd
+      // actually be called to reach this donor.
+      if (bloodGroup && needsCnic && bloodDonorConsent) {
+        const empQ = query(collection(db, 'employees'), where('userId', '==', uid));
+        const empSnap = await getDocs(empQ);
+        const empData = empSnap.empty ? {} : empSnap.docs[0].data();
+        await setDoc(doc(db, 'bloodDonorRegistry', `family_${newMemberRef.id}`), {
+          familyMemberId:         newMemberRef.id,
+          employeeId:             uid,
+          fullName:               name.trim(),
+          relation,
+          officialEmployeeNumber: empData.officialEmployeeNumber || null,
+          bloodGroup,
+          phoneNumber:            empData.phoneNumber || null,
+          consentGiven:           true,
+          consentUpdatedAt:       Timestamp.now(),
+        });
+      }
 
       webAlert('Submitted', 'Family member added successfully. Admin will review and validate the record.');
       navigation.goBack();
@@ -287,15 +313,20 @@ export default function FamilyMemberAddScreen({ navigation }) {
         />
 
         {/* Day 14 fix #3 — Blood Donor Consent, only shown once a blood
-            group is selected. */}
+            group is selected. Disabled (not hidden) for minors — consent
+            isn't meaningful under 18. */}
         {bloodGroup ? (
           <View style={styles.switchRow}>
-            <Text style={styles.label}>Consent to Blood Donor Directory ({bloodGroup})</Text>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.label}>Consent to Blood Donor Directory ({bloodGroup})</Text>
+              {!needsCnic && <Text style={styles.consentDisabledHint}>Not applicable under 18</Text>}
+            </View>
             <Switch
-              value={bloodDonorConsent}
+              value={needsCnic ? bloodDonorConsent : false}
               onValueChange={setBloodDonorConsent}
+              disabled={!needsCnic}
               trackColor={{ false: '#e2e8f0', true: '#93c5fd' }}
-              thumbColor={bloodDonorConsent ? '#3b82f6' : '#cbd5e0'}
+              thumbColor={(needsCnic && bloodDonorConsent) ? '#3b82f6' : '#cbd5e0'}
             />
           </View>
         ) : null}
@@ -406,6 +437,7 @@ const styles = StyleSheet.create({
     borderWidth: 1, borderColor: '#e2e8f0',
     paddingHorizontal: 14, paddingVertical: 10,
   },
+  consentDisabledHint: { fontSize: 11, color: '#a0aec0', marginTop: 2 },
   submitBtn: {
     backgroundColor: '#3b82f6', borderRadius: 10,
     paddingVertical: 15, alignItems: 'center', marginTop: 8,

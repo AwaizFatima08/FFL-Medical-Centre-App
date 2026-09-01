@@ -8,7 +8,8 @@ import {
 } from 'react-native';
 import { getAuth } from 'firebase/auth';
 import {
-  getFirestore, doc, getDoc, updateDoc, Timestamp,
+  getFirestore, doc, getDoc, updateDoc, setDoc, deleteDoc,
+  collection, query, where, getDocs, Timestamp,
 } from 'firebase/firestore';
 import {
   BLOOD_GROUPS, MARITAL_STATUSES, EMPLOYMENT_STATUSES,
@@ -221,6 +222,14 @@ export default function FamilyMemberEditScreen({ route, navigation }) {
   // Day 14 fix #3 — blood donor consent is a direct write, NOT routed
   // through pendingRevision/admin review. Mirrors the employee-level
   // consent's treatment (Phase 4 design: consent is always self-service).
+  //
+  // Day 14 fix: this previously only updated the flag on the family
+  // member's own record and never touched bloodDonorRegistry — the
+  // collection the Directory screen actually reads from. Consent looked
+  // like it worked but never surfaced anywhere. Fixed to mirror exactly
+  // what the employee's own consent flow does (see employeeRoutes.js
+  // PUT /:employeeId), keyed `family_{memberId}` so it can never collide
+  // with an employee-keyed entry.
   const handleToggleConsent = async (value) => {
     setBloodDonorConsent(value);
     try {
@@ -229,6 +238,26 @@ export default function FamilyMemberEditScreen({ route, navigation }) {
         updatedAt:         Timestamp.now(),
       });
       setLiveRecord(prev => ({ ...prev, bloodDonorConsent: value }));
+
+      const registryRef = doc(db, 'bloodDonorRegistry', `family_${memberId}`);
+      if (value && bloodGroup) {
+        const empQ = query(collection(db, 'employees'), where('userId', '==', auth.currentUser?.uid));
+        const empSnap = await getDocs(empQ);
+        const empData = empSnap.empty ? {} : empSnap.docs[0].data();
+        await setDoc(registryRef, {
+          familyMemberId:         memberId,
+          employeeId:             auth.currentUser?.uid,
+          fullName:               name.trim(),
+          relation:               liveRecord?.relation || null,
+          officialEmployeeNumber: empData.officialEmployeeNumber || null,
+          bloodGroup,
+          phoneNumber:            empData.phoneNumber || null,
+          consentGiven:           true,
+          consentUpdatedAt:       Timestamp.now(),
+        });
+      } else {
+        await deleteDoc(registryRef).catch(() => {}); // fine if it never existed
+      }
     } catch (err) {
       console.error('Update family member consent error:', err);
       webAlert('Error', 'Could not update consent. Please try again.');
@@ -345,15 +374,21 @@ export default function FamilyMemberEditScreen({ route, navigation }) {
           onSelect={setBloodGroup}
         />
 
-        {/* Day 14 fix #3 — Blood Donor Consent, direct write, no review */}
+        {/* Day 14 fix #3 — Blood Donor Consent, direct write, no review.
+            Disabled (not hidden) for minors — consent isn't meaningful
+            under 18. */}
         {bloodGroup ? (
           <View style={styles.switchRow}>
-            <Text style={styles.label}>Consent to Blood Donor Directory ({bloodGroup})</Text>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.label}>Consent to Blood Donor Directory ({bloodGroup})</Text>
+              {!needsCnic && <Text style={styles.consentDisabledHint}>Not applicable under 18</Text>}
+            </View>
             <Switch
-              value={bloodDonorConsent}
+              value={needsCnic ? bloodDonorConsent : false}
               onValueChange={handleToggleConsent}
+              disabled={!needsCnic}
               trackColor={{ false: '#e2e8f0', true: '#93c5fd' }}
-              thumbColor={bloodDonorConsent ? '#3b82f6' : '#cbd5e0'}
+              thumbColor={(needsCnic && bloodDonorConsent) ? '#3b82f6' : '#cbd5e0'}
             />
           </View>
         ) : null}
@@ -473,6 +508,7 @@ const styles = StyleSheet.create({
     borderWidth: 1, borderColor: '#e2e8f0',
     paddingHorizontal: 14, paddingVertical: 10,
   },
+  consentDisabledHint: { fontSize: 11, color: '#a0aec0', marginTop: 2 },
 
   revisionNotice: {
     backgroundColor: '#fef3c7', borderRadius: 8,

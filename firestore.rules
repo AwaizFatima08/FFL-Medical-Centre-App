@@ -212,10 +212,21 @@ service cloud.firestore {
     }
 
     // ─── BLOOD DONOR REGISTRY ────────────────────────────
-    match /bloodDonorRegistry/{employeeId} {
+    // Day 14 fix: entries for family members use doc ID `family_{memberId}`,
+    // which never equals the writer's own uid — the original rule only
+    // ever matched employee-keyed entries (doc ID == uid), so every family
+    // member consent write to this collection was silently rejected.
+    // Fixed by also allowing a write when the doc ID is a family-prefixed
+    // one AND the referenced familyMembers doc actually belongs to the
+    // caller (looked up by employeeId, same ownership check used
+    // elsewhere for that collection).
+    match /bloodDonorRegistry/{registryId} {
       allow read: if isAnyRole(['doctor', 'cmo', 'reception', 'nurse']);
       allow write: if isAuthenticated() &&
-                   (request.auth.uid == employeeId || isAdminIncharge());
+                   (request.auth.uid == registryId ||
+                    isAdminIncharge() ||
+                    (registryId.matches('^family_.*') &&
+                     get(/databases/$(database)/documents/familyMembers/$(registryId.split('_')[1])).data.employeeId == request.auth.uid));
     }
 
     // ─── WORKING HOURS ───────────────────────────────────

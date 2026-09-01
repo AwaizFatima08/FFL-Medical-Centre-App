@@ -353,6 +353,41 @@ export default function MyProfileScreen({ navigation }) {
               <FieldRow label="Blood Group"   value={employee.bloodGroup} />
             </View>
 
+            {/* Day 14 fix — someone whose data is wrong needs a way out
+                that isn't a false confirmation. Same mechanism as the
+                post-confirmation "Report Incorrect Data", shown here too. */}
+            {correctionRequested ? (
+              <View style={styles.correctionPendingBox}>
+                <Text style={styles.correctionPendingTitle}>⏳ Correction request sent</Text>
+                <Text style={styles.correctionPendingNote}>{correctionNote}</Text>
+                <Text style={styles.correctionPendingHint}>
+                  Admin has been notified. You can confirm once the data above is fixed.
+                </Text>
+              </View>
+            ) : (
+              <View style={styles.correctionBox}>
+                <Text style={styles.correctionTitle}>See something wrong above?</Text>
+                <TextInput
+                  style={styles.correctionInput}
+                  placeholder="e.g. My department should be Maintenance, not Production"
+                  placeholderTextColor="#a0aec0"
+                  value={correctionInput}
+                  onChangeText={setCorrectionInput}
+                  multiline
+                />
+                <TouchableOpacity
+                  style={[styles.correctionBtn, submittingCorrection && styles.submitBtnDisabled]}
+                  onPress={handleSubmitCorrection}
+                  disabled={submittingCorrection}
+                >
+                  {submittingCorrection
+                    ? <ActivityIndicator color="#ffffff" size="small" />
+                    : <Text style={styles.correctionBtnText}>Report Incorrect Data</Text>
+                  }
+                </TouchableOpacity>
+              </View>
+            )}
+
             <TouchableOpacity
               style={styles.checkRow}
               onPress={() => setDataConfirmed(!dataConfirmed)}

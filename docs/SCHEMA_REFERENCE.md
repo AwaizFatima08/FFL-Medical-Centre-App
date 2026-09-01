@@ -4,15 +4,17 @@ Generated from live production data review. This reflects the **actual** schema 
 
 **Day 13 revision note:** This file was last generated Day 10 and had drifted in several places after a 3-month gap in active work. This revision corrects it against fresh live Firestore screenshots (console, `config/dropdowns`, and sample documents from every top-level collection). Corrections from the Day 10 version are marked inline as **[Day 13 correction]**. All current data in every collection is **test data** and will be cleared before launch — this doc describes structure, not real production records.
 
+**Day 14 revision note:** Phase 4 (My Profile) shipped a large number of new fields across `employees`, `familyMembers`, and a brand-new `bloodDonorRegistry` collection, plus a new protected subcollection (`employees/{id}/private/medical`). This revision reflects all of that, marked inline as **[Day 14]**. **Basis for this revision differs from Day 13's:** this was refreshed from the code that shipped this session (authoritative for what gets written) plus the live Firestore screenshots reviewed during Phase 4's live testing — not a fresh full console export of every collection. Sections not touched this session (`ambulanceRequests`, `circulars`, `doctorAvailability`, `doctorDirectory`, `feedback`, `fitnessAppointments`, `mail`, `healthTips`, `notifications`, `tripBookings`, `users`, vaccination collections) are carried over unchanged from Day 13 and were not re-verified. A full fresh export, the way Day 13's was done, would still be worth doing at some point — this gets the doc back to trustworthy for what changed, not a ground-up re-verification of everything.
+
 ---
 
 ## Top-Level Collections
 
-`ambulanceRequests` · `circulars` · `config` · `doctorAvailability` · `doctorDirectory` · `employees` · `familyMembers` · `feedback` · `fitnessAppointments` · `healthTips` · `mail` · `notifications` · `tripBookings` · `users` · `vaccinationRecords` · `vaccinationReports` · `vaccineSchedule`
+`ambulanceRequests` · `bloodDonorRegistry` · `circulars` · `config` · `doctorAvailability` · `doctorDirectory` · `employees` · `familyMembers` · `feedback` · `fitnessAppointments` · `healthTips` · `mail` · `notifications` · `tripBookings` · `users` · `vaccinationRecords` · `vaccinationReports` · `vaccineSchedule`
 
 **[Day 13 correction]** `healthTips` added — this collection did not exist at Day 10; it was built Aug 29 and is confirmed live.
 
-**Note:** `bloodDonorRegistry` is referenced in `employeeRoutes.js` (written on blood donor consent) but does **not** currently appear in the live collection list — Firestore does not create a collection until it holds at least one document, and no test employee has given consent yet. This is expected, not a bug.
+**[Day 14 correction]** `bloodDonorRegistry` moved from "referenced but not yet created" to a confirmed live collection — Phase 4 added the employee confirmation flow and family member consent, both of which write here. See its own section below (new Day 14) for field shape — note there are now **two different document-ID schemes** in this one collection.
 
 ---
 
@@ -66,6 +68,7 @@ Single document holding shared dropdown option lists. Structure confirmed live, 
 - `bloodGroups[]` — A+, A-, B+, B-, AB+, AB-, O+, O-
 - `departments[]` — admin, maintenance, BD, DBN, AIM, HSEQT, EI, Production_S, Production_n, process_Engineering, project_Engineering, ESB, HO_IT, HO_HR, HO_Marketing, HO_Finance, HO_Internal_Audit, HO_SCF
   **[Day 13 correction]** Prior version listed `DSN, ASM, IT` — these were mis-transcribed; live values are `DBN, AIM, EI`. Note also the inconsistent internal casing (`Production_n` vs `Production_S`, `process_Engineering` vs `project_Engineering`) — this is a real casing inconsistency in live config itself, not a transcription issue, and matters for Phase 3 code alignment.
+  **[Day 14 update]** `constants.js` now matches this casing exactly, both frontend and backend (Phase 3, closed).
 - `employeeTypes[]` — management, non_management, **ESB** (capital, confirmed live)
   **[Day 13 correction]** Prior version said "CSD" — incorrect. Confirmed live value is `"ESB"`. Note the app code (`constants.js`) checks for lowercase `'esb'`, which does not match — this is the confirmed root cause of the empty-ESB-designation-dropdown bug (Phase 1).
 - `esbDesignations[]` — **separate top-level list**, not merged into nonManagementDesignations: Director, Principal, Vice_Principal, Head_Mistress, Senior_Teacher_I/II/III, Teacher_I/II/III, Trainee_Teacher, Contract_Teacher, Supervisor
@@ -75,8 +78,44 @@ Single document holding shared dropdown option lists. Structure confirmed live, 
   **[Day 13 correction]** Prior version listed `Sr_Sub_Engineer_I_M6` (doesn't exist live — real value is `Engineer_III_M6`) and `GTE_M0` (live value is `GTE_M5`). Also confirmed: live list includes **both** `Senior_Engineer_M9A` and `Senior_Engineer_M9` as separate entries — `constants.js`'s fallback list is currently missing the M9A variant (Phase 3 item).
 - `maritalStatuses[]` — married, **unmarried**, divorced, widowed
   **[Day 13 correction — confirmed real drift]** `constants.js`'s `MARITAL_STATUSES` fallback uses `'single'` instead of `'unmarried'`. This is not a doc error — it's a genuine app-code mismatch against live config (Phase 3 item).
+  **[Day 14 update]** Fixed, both frontend and backend (Phase 3, closed).
 - `units{}` — nested by department, lists equipment/machinery/section names
   **[Day 13 correction]** Prior version's example (`CIU_Equipment`, `CIU_Machinery`) does not match live data — real example under Maintenance is `OU_Equipment`, `OU_Machinery`, `NP_Equipment`, `Ammonia_Equipment`, etc. Live `units` keys also follow the same inconsistent casing as `departments[]` above (e.g. `admin` → `industrial_relations`, `horticulture`, `medical_centre`, `security`, `management_club`).
+  **[Day 14 update]** Both the key-casing mismatch against `departments[]` (4 keys renamed directly in the console) and the `constants.js` fallback values (several were factually wrong, not just mis-cased — see Command Board Phase 3) are fixed. A duplicate `"admin"` entry in the `admin` units array was also removed.
+  **[Day 14 — not stored in this doc]** Chronic disease options (Diabetes, Hypertension, Ischemic Heart Disease, Deranged Lipid Profile) are a **hardcoded constant** (`CHRONIC_DISEASE_OPTIONS` in `constants.js`), not fetched from `config/dropdowns` like the lists above. Worth knowing if a future review assumes every dropdown is config-driven — this one specifically isn't.
+
+## bloodDonorRegistry
+
+**[Day 14 — new section]** Confirmed live. Two different document-ID schemes coexist in this one collection, depending on whether the donor is an employee or a family member — this matters if you ever need to write a rule, route, or query against it.
+
+**Employee-keyed entries** — doc ID = the employee's own Auth UID:
+
+| Field | Type | Notes |
+|---|---|---|
+| employeeId | string | same as doc ID |
+| userId | string (uid) | same as doc ID, kept as an explicit field too |
+| fullName | string | |
+| officialEmployeeNumber | string | |
+| bloodGroup | string | |
+| phoneNumber | string | |
+| consentGiven | boolean | |
+| consentUpdatedAt | timestamp | |
+
+**Family-member-keyed entries** — doc ID = `family_{familyMemberId}`, never the writer's own uid. This distinction is why the Firestore rule for this collection needed an explicit ownership-lookup clause (Day 14 fix) — the original rule assumed doc ID always equals `request.auth.uid`, which only holds for the employee-keyed case.
+
+| Field | Type | Notes |
+|---|---|---|
+| familyMemberId | string | the `familyMembers` doc ID (also embedded in this doc's own ID after `family_`) |
+| employeeId | string (uid) | the **sponsoring** employee, not the donor themselves |
+| fullName | string | the family member's own name, not the employee's |
+| relation | string | "spouse" / "son" / "daughter" |
+| officialEmployeeNumber | string | the sponsoring employee's number — family members have no number of their own |
+| bloodGroup | string | |
+| phoneNumber | string | the sponsoring employee's phone — this is who'd actually be called to reach this donor |
+| consentGiven | boolean | |
+| consentUpdatedAt | timestamp | |
+
+Read access restricted to `doctor` / `cmo` / `reception` / `nurse` via Firestore rules — but in practice the Directory screen reads via the backend (`GET /blood-donors/:bloodGroup`), which uses the Admin SDK and bypasses this rule entirely. The rule matters for write access and for any future direct-client read.
 
 ## doctorAvailability
 
@@ -116,8 +155,41 @@ Subcollection: `statusLog` — **[Day 13 correction]** confirmed live (previousl
 | userId | string (uid) | links to `users` collection |
 | validatedAt | timestamp | |
 | validatedBy | string (uid) | |
+| cnic | string | **[Day 14]** captured at signup, locked afterward — admin-only edit |
+| maritalStatus | string | **[Day 14]** `married` / `unmarried` / `divorced` / `widowed`; captured at signup, self-editable anytime after |
+| isSmoker | boolean | **[Day 14]** captured at signup, self-editable anytime after |
+| employeeType | string | **[Day 14]** `management` / `non_management` / `ESB`; admin-entered at approval |
+| department | string | **[Day 14]** admin-entered at approval |
+| unit | string | **[Day 14]** admin-entered at approval, cascades from department |
+| designation | string | **[Day 14]** admin-entered at approval, cascades from employeeType |
+| bloodGroup | string | **[Day 14]** admin-entered at approval |
+| bloodDonorConsent | boolean | **[Day 14]** self-editable, feeds `bloodDonorRegistry` (employee-keyed entry) |
+| dataConfirmedByEmployee | boolean | **[Day 14]** set true once employee confirms admin-entered profile data |
+| dataConfirmedAt | timestamp | **[Day 14]** |
+| familyDataStatus | string | **[Day 14]** `not_applicable` / `needs_update` / `pending_admin_review` / `complete` — drives the Family tab alert badge |
+| familyDataFlagNote | string / null | **[Day 14]** admin's note when manually re-flagging |
+| correctionRequested | boolean | **[Day 14]** employee-reported data error, visible to admin |
+| correctionRequestNote | string / null | **[Day 14]** |
+| townshipResidentWithFamily | boolean | pre-existing (signup) |
+| townshipResidentBachelor | boolean | pre-existing (signup) |
+| residenceType | string / null | pre-existing (signup) |
+| houseNumber | string / null | pre-existing (signup) |
+| roomNumber | string / null | pre-existing (signup) |
+| cityOfResidence | string / null | pre-existing (signup) |
 
-**[Day 13 note]** Live sample documents confirm this collection currently holds **only these fields** — no `department`, `designation`, `bloodGroup`, `cnic`, `communityGroup`, `unit`, or any of the other fields the backend (`PUT /:employeeId`) is built to accept. This is expected: no frontend screen currently collects these fields from either employee or admin (Phase 4, My Profile, addresses this gap). Backend-accepted-but-unused fields per `employeeRoutes.js`: `cnic`, `designation`, `department`, `houseNumber`, `roomNumber`, `phoneNumber`, `emergencyPhoneNumber`, `landlineExtension`, `bloodGroup`, `bloodDonorConsent`, `maritalStatus`, `townshipResidentWithFamily`, `townshipResidentBachelor`, `residenceType`, `cityOfResidence`, `communityGroup` (admin-only, set during validation).
+**[Day 14 note — still likely unused]** `emergencyPhoneNumber`, `landlineExtension` are still accepted by `PUT /:employeeId` but no screen collects them yet, same as the Day 13 note originally flagged — Phase 4 didn't address these.
+
+**[Day 14 note — status unclear, worth checking]** `communityGroup` (admin-only) is set via a separate route, `POST /validate/:employeeId`, which predates Phase 4 and was **not** touched this session. Phase 4's new approval flow (`POST /approve-user` + the profile-data `PUT`) does not call this route. Unclear whether anything currently calls `/validate/:employeeId` at all — worth confirming during Phase 5+ rather than assuming it's still part of the live approval path.
+
+**[Day 14 — new subcollection]** `employees/{employeeId}/private/medical` — single document, doc ID always `medical`. Created specifically because Firestore rules can't hide one field within an otherwise openly-readable document (the `employees` collection's read rule is open to any authenticated user); chronic disease needed genuine structural isolation, not just a rule tweak.
+
+| Field | Type | Notes |
+|---|---|---|
+| chronicDisease | array&lt;string&gt; / null | multi-select from `CHRONIC_DISEASE_OPTIONS` (Diabetes, Hypertension, Ischemic Heart Disease, Deranged Lipid Profile) |
+| updatedAt | timestamp | |
+| updatedBy | string (uid) | admin/CMO who last edited |
+
+Read/write restricted to `admin_incharge` and `cmo` only, enforced at the Firestore rules layer.
 
 ## familyMembers
 
@@ -131,7 +203,7 @@ Subcollection: `statusLog` — **[Day 13 correction]** confirmed live (previousl
 | employeeId | string (uid) | |
 | employmentStatus | string / null | mandatory 25+ per design doc |
 | isActive | boolean | |
-| maritalStatus | string / null | mandatory 25+ per design doc — subject to same `'single'` vs `'unmarried'` drift as employees (Phase 3) |
+| maritalStatus | string / null | mandatory 25+ per design doc — subject to same `'single'` vs `'unmarried'` drift as employees (Phase 3, now closed both places) |
 | motherId | string / null | optional, supports multi-spouse scenarios |
 | nadraCardNumber | string / null | |
 | name | string | |
@@ -140,6 +212,10 @@ Subcollection: `statusLog` — **[Day 13 correction]** confirmed live (previousl
 | relation | string | "son" / "daughter" / "spouse" |
 | status | string | "validated" / "pending" / "rejected" |
 | updatedAt | timestamp | |
+| bloodDonorConsent | boolean | **[Day 14]** self-editable (no admin review), disabled for members under 18; feeds `bloodDonorRegistry` (family-keyed entry) |
+| disabledReason | string / null | **[Day 14]** `deceased` / `divorced` — spouse only; children only ever get `deceased`; set when admin disables the member |
+| disabledAt | timestamp / null | **[Day 14]** |
+| disabledBy | string (uid) / null | **[Day 14]** admin who disabled the record |
 
 ## feedback
 
@@ -328,4 +404,4 @@ Trigger collection for the email extension (Firebase Send Email pattern).
 
 ---
 
-*Generated Day 10, corrected Day 13 from live Firestore console screenshots reviewed in session. Update this file if the schema changes — treat as a living reference, not a locked spec.*
+*Generated Day 10, corrected Day 13 from live Firestore console screenshots reviewed in session, updated Day 14 from Phase 4 code + live testing screenshots (not a full fresh re-export — see Day 14 revision note above). Update this file if the schema changes — treat as a living reference, not a locked spec.*

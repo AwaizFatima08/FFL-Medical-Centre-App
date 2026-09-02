@@ -1,592 +1,767 @@
-//  FFL Medical Centre — authRoutes.js
-//  Path: functions/src/auth/authRoutes.js
-// ─────────────────────────────────────────────────────────────
+// functions/src/ambulance/ambulanceRoutes.js
 const express = require('express');
+const { getAuth } = require('firebase-admin/auth');
+const { getFirestore, Timestamp, FieldValue } = require('firebase-admin/firestore');
+const { ROLES, AMBULANCE_STATUS } = require('../constants');
+const { createNotification } = require('../notifications/notificationRoutes');
+
 const router = express.Router();
-const admin = require('firebase-admin');
-const { successResponse, errorResponse, nowISO } = require('../utils');
-const { ROLES } = require('../constants');
+const db = getFirestore();
 
-// ─── MIDDLEWARE — VERIFY TOKEN ───────────────────────────
-const verifyToken = async (req, res, next) => {
+// Helper: get user role
+async function getUserRole(uid) {
+  const userDoc = await db.collection('users').doc(uid).get();
+  if (!userDoc.exists) throw new Error('User not found');
+  return userDoc.data().role;
+}
+
+// Helper: get employee data
+async function getEmployeeData(uid) {
+  const empQuery = await db.collection('employees').where('userId', '==', uid).get();
+  if (empQuery.empty) throw new Error('Employee record not found');
+  return empQuery.docs[0].data();
+}
+
+// Helper: notify all active reception users
+async function notifyReception(title, body, referenceId) {
+  const snap = await db.collection('users')
+    .where('role', '==', 'reception')
+    .where('isActive', '==', true)
+    .get();
+  await Promise.all(snap.docs.map(doc =>
+    createNotification({
+      recipientUid:  doc.id,
+      recipientRole: 'reception',
+      title,
+      body,
+      type:          'ambulance',
+      referenceId,
+    })
+  ));
+}
+
+// Day 16 (Phase 5, Step 5.4, corrected) — statuses that hold the single
+// system-wide active-trip slot. Only ONE driver/vehicle can be physically
+// in motion at a time, so the lock starts at 'dispatched' — NOT at
+// 'accepted'. Multiple requests can sit 'accepted' simultaneously
+// (reception reviewing/triaging several at once); only actual dispatch is
+// exclusive. 'returned' still holds the slot because the trip isn't
+// administratively closed until 'completed'.
+const BLOCKING_STATUSES = [
+  AMBULANCE_STATUS.DISPATCHED,
+  AMBULANCE_STATUS.PICKED_UP,
+  AMBULANCE_STATUS.RETURNED,
+];
+
+// Helper: fetch every non-terminal request, sorted emergency-first then
+// oldest-first. This is the single system-wide queue order — used both to
+// compute a request's queue position and to check whether the active-trip
+// slot is currently held. NOTE: this subphase (5.4) only lets emergencies
+// jump ahead of other WAITING (pending) requests. It does not let an
+// emergency interrupt a trip that is already accepted/dispatched/picked_up/
+// returned — that mid-trip interrupt is Phase 5.7, not built yet.
+async function getActiveQueue() {
+  const snap = await db.collection('ambulanceRequests')
+    .where('status', 'not-in', [AMBULANCE_STATUS.COMPLETED, AMBULANCE_STATUS.CANCELLED])
+    .get();
+  const docs = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+  docs.sort((a, b) => {
+    const aEmergency = a.priorityFlag === 'emergency' ? 0 : 1;
+    const bEmergency = b.priorityFlag === 'emergency' ? 0 : 1;
+    if (aEmergency !== bEmergency) return aEmergency - bEmergency;
+    return new Date(a.createdAt) - new Date(b.createdAt);
+  });
+  return docs;
+}
+
+// GET /on-duty-driver - Current on-duty driver, for reception's info box
+// Day 16 (Phase 5, Step 5.6.1). Same field convention as GET /drivers above
+// (reads fullName off the users doc, falling back to email — a pre-existing
+// pattern in this file, not something introduced here).
+router.get("/on-duty-driver", async (req, res) => {
   try {
-    const authHeader = req.headers.authorization;
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
-      return errorResponse(res, 'Unauthorized — no token provided', 401);
+    const { uid } = req.user;
+    const userRole = await getUserRole(uid);
+    if (!["reception", "cmo", "admin_incharge"].includes(userRole)) {
+      return res.status(403).json({ success: false, message: "Access denied" });
     }
-    const token = authHeader.split('Bearer ')[1];
-    const decoded = await admin.auth().verifyIdToken(token);
-    req.user = decoded;
-    next();
+    const snapshot = await db.collection("users")
+      .where("role", "==", "driver")
+      .where("onDuty", "==", true)
+      .limit(1)
+      .get();
+    const onDutyDriver = snapshot.empty ? null : {
+      uid:      snapshot.docs[0].id,
+      email:    snapshot.docs[0].data().email,
+      fullName: snapshot.docs[0].data().fullName || snapshot.docs[0].data().email,
+    };
+    res.json({ success: true, data: onDutyDriver });
   } catch (error) {
-    return errorResponse(res, 'Unauthorized — invalid token', 401);
+    console.error("Fetch on-duty driver error:", error);
+    res.status(500).json({ success: false, message: "Failed to fetch on-duty driver", error: error.message });
   }
-};
+});
 
-// ─── MIDDLEWARE — VERIFY ROLE ────────────────────────────
-const verifyRole = (allowedRoles) => {
-  return async (req, res, next) => {
-    try {
-      const db = admin.firestore();
-      const userDoc = await db.collection('users').doc(req.user.uid).get();
-      if (!userDoc.exists) {
-        return errorResponse(res, 'User record not found', 404);
-      }
-      const userData = userDoc.data();
-      if (!allowedRoles.includes(userData.role)) {
-        return errorResponse(res, 'Forbidden — insufficient permissions', 403);
-      }
-      req.userRole = userData.role;
-      req.userRecord = userData;
-      next();
-    } catch (error) {
-      return errorResponse(res, 'Role verification failed', 500);
-    }
-  };
-};
-
-// ─── POST /register ──────────────────────────────────────
-// Day 14 (Phase 4, Step C): cnic and maritalStatus added — captured at
-// signup per PHASE4_DESIGN.md §3. Both required, same as the other
-// identity fields below. cnic is admin-owned after this point (see
-// employeeRoutes.js PUT /:employeeId, Step A) — this is the only place
-// it's ever self-entered. maritalStatus stays employee-editable later.
-router.post('/register', verifyToken, async (req, res) => {
+// POST /request - Submit new ambulance request (employee or reception)
+router.post('/request', async (req, res) => {
   try {
-    const db = admin.firestore();
+    const { uid } = req.user;
+    const userRole = await getUserRole(uid);
+
+    if (!['employee', 'reception'].includes(userRole)) {
+      return res.status(403).json({ success: false, message: 'Access denied' });
+    }
+
     const {
-      fullName,
-      phoneNumber,
-      employeeNumber,
-      cnic,           // ← Day 14, Step C
-      maritalStatus,  // ← Day 14, Step C
-      isSmoker,       // ← Day 14 fix #5
-      townshipResidentWithFamily,
-      townshipResidentBachelor,
-      residenceType,
-      houseNumber,
-      roomNumber,
-      cityOfResidence,
+      patientName, patientRelation, patientCondition, employeeNumber,
+      vehicleType, priorityFlag, tripType, purposeOfVisit,
+      pickupLocation, dropLocation, notes
     } = req.body;
 
-    if (!fullName || !phoneNumber || !employeeNumber || !cnic || !maritalStatus || isSmoker === undefined || isSmoker === null) {
-      return errorResponse(res, 'fullName, phoneNumber, employeeNumber, cnic, maritalStatus and isSmoker are required', 400);
+    if (!patientName?.trim()) {
+      return res.status(400).json({ success: false, message: 'Patient name is required' });
+    }
+    if (!patientCondition?.trim()) {
+      return res.status(400).json({ success: false, message: 'Patient condition is required' });
     }
 
-    const existingUser = await db.collection('users').doc(req.user.uid).get();
-    if (existingUser.exists) {
-      return errorResponse(res, 'User already registered', 409);
-    }
+    const isReception = userRole === 'reception';
+    const now = Timestamp.now().toDate().toISOString();
 
-    const empCheck = await db.collection('employees')
-      .where('officialEmployeeNumber', '==', employeeNumber)
-      .get();
-    if (!empCheck.empty) {
-      return errorResponse(res, 'Employee number already registered', 409);
-    }
-
-    // Day 14, Step C — CNIC is identity data, same duplicate-guard treatment
-    // as employee number above.
-    const cnicCheck = await db.collection('employees')
-      .where('cnic', '==', cnic)
-      .get();
-    if (!cnicCheck.empty) {
-      return errorResponse(res, 'This CNIC is already registered', 409);
-    }
-
-    const batch = db.batch();
-
-    const userRef = db.collection('users').doc(req.user.uid);
-    batch.set(userRef, {
-      email:       req.user.email || null,
-      phone:       phoneNumber,
-      role:        ROLES.EMPLOYEE,
-      isActive:    false,
-      approvedAt:  null,
-      createdAt:   nowISO(),
-      lastLoginAt: nowISO(),
-    });
-
-    const employeeData = {
-      userId:                 req.user.uid,
-      fullName,
-      officialEmployeeNumber: employeeNumber,
-      phoneNumber,
-      cnic,           // ← Day 14, Step C
-      maritalStatus,  // ← Day 14, Step C
-      isSmoker:            isSmoker === true, // ← Day 14 fix #5
-      // Day 14, Fix #2 — set explicitly at signup, not left undefined.
-      // A married-at-signup employee needs this set to 'needs_update' so
-      // they actually show up in admin's flagged-employee query later
-      // (Firestore's 'in' filter never matches a field that's simply
-      // missing from the document).
-      familyDataStatus:    maritalStatus === 'married' ? 'needs_update' : 'not_applicable',
-      familyDataFlagNote:  null,
-      isValidated:            false,
-      createdAt:              nowISO(),
-      townshipResidentWithFamily: townshipResidentWithFamily === true,
-      townshipResidentBachelor:   townshipResidentBachelor   === true,
-      residenceType:              residenceType   || null,
-      houseNumber:                houseNumber     || null,
-      roomNumber:                 roomNumber      || null,
-      cityOfResidence:            cityOfResidence || null,
-    };
-
-    const employeeRef = db.collection('employees').doc();
-    batch.set(employeeRef, employeeData);
-
-    await batch.commit();
-
-    try {
-      await db.collection('mail').add({
-        to:      'admin@ffl.com',
-        message: {
-          subject: '🔔 New Signup Request — FFL Medical Centre',
-          html: `
-            <p>A new employee has registered and is awaiting your approval.</p>
-            <table style="border-collapse:collapse;font-family:sans-serif;font-size:14px;">
-              <tr><td style="padding:6px 12px;color:#555;">Name</td>
-                  <td style="padding:6px 12px;font-weight:bold;">${fullName}</td></tr>
-              <tr><td style="padding:6px 12px;color:#555;">Employee No.</td>
-                  <td style="padding:6px 12px;font-weight:bold;">${employeeNumber}</td></tr>
-              <tr><td style="padding:6px 12px;color:#555;">Phone</td>
-                  <td style="padding:6px 12px;">${phoneNumber}</td></tr>
-              <tr><td style="padding:6px 12px;color:#555;">Email</td>
-                  <td style="padding:6px 12px;">${req.user.email || '—'}</td></tr>
-              <tr><td style="padding:6px 12px;color:#555;">Submitted</td>
-                  <td style="padding:6px 12px;">${nowISO()}</td></tr>
-            </table>
-            <br/>
-            <p>Please open the <strong>FFL Medical Centre Admin Dashboard</strong>
-               and go to <strong>User Approvals</strong> to review this request.</p>
-          `,
-        },
-      });
-    } catch (mailErr) {
-      console.warn('Admin email notification failed:', mailErr.message);
-    }
-
-    return successResponse(res, {
-      uid:        req.user.uid,
-      employeeId: employeeRef.id,
-    }, 'Registration successful. Awaiting admin validation.', 201);
-
-  } catch (error) {
-    console.error('Register error:', error);
-    return errorResponse(res, 'Registration failed', 500);
-  }
-});
-
-// ─── POST /confirm-profile ────────────────────────────────
-// Day 14 (Phase 4, Step B): repurposed from the old, unused /complete-profile
-// route. That route let an employee self-write cnic/designation/department/
-// bloodGroup/maritalStatus/houseNumber/etc in one unguarded call — but per
-// the Phase 4 design, admin enters that data (medical centre already holds
-// it), and the employee's only job post-approval is to CONFIRM it's correct
-// and set their blood donor consent. Nothing called the old route, so this
-// is a clean repurpose, not a breaking change.
-//
-// dataConfirmed must be explicitly true — this is the employee ticking
-// "I confirm the data above is correct" (see PHASE4_DESIGN.md §5).
-//
-// bloodDonorConsent write logic below intentionally mirrors employeeRoutes.js
-// PUT /:employeeId's blood donor registry handling — kept manually in sync
-// rather than extracted into a shared helper, to keep this file simple. If
-// you change one, check the other.
-router.post('/confirm-profile', verifyToken, async (req, res) => {
-  try {
-    const db = admin.firestore();
-    const { dataConfirmed, bloodDonorConsent } = req.body;
-
-    if (dataConfirmed !== true) {
-      return errorResponse(res, 'dataConfirmed must be true to submit this confirmation', 400);
-    }
-
-    const empQuery = await db.collection('employees')
-      .where('userId', '==', req.user.uid)
-      .get();
-
-    if (empQuery.empty) {
-      return errorResponse(res, 'Employee record not found', 404);
-    }
-
-    const empDoc = empQuery.docs[0];
-    const empData = empDoc.data();
-
-    const updates = {
-      dataConfirmedByEmployee: true,
-      dataConfirmedAt:         nowISO(),
-    };
-
-    if (bloodDonorConsent !== undefined) {
-      updates.bloodDonorConsent = bloodDonorConsent;
-
-      const donorRef = db.collection('bloodDonorRegistry').doc(empDoc.id);
-      if (bloodDonorConsent && empData.bloodGroup) {
-        await donorRef.set({
-          employeeId:             empDoc.id,
-          userId:                 req.user.uid,
-          fullName:               empData.fullName,
-          officialEmployeeNumber: empData.officialEmployeeNumber || null,
-          bloodGroup:             empData.bloodGroup,
-          phoneNumber:            empData.phoneNumber,
-          consentGiven:           true,
-          consentUpdatedAt:       nowISO(),
-        });
-      } else if (!bloodDonorConsent) {
-        await donorRef.delete();
+    // Day 16 (Phase 5, Step 5.5, hardened during audit) — identifies which
+    // employee/family this request belongs to, independent of who actually
+    // submitted it. For an employee's own submission, derive it server-side
+    // from their own uid rather than trusting the client-supplied value —
+    // reception's value legitimately stays client-supplied (it identifies
+    // whichever employee they searched for, which the server has no other
+    // way to know), but an employee submitting for themselves should not
+    // be able to submit under a different employee's number just by
+    // sending different JSON. Used below for the family-level duplicate
+    // block and for the employee's own GET /my-active lookup.
+    let resolvedEmployeeNumber = employeeNumber;
+    if (!isReception) {
+      try {
+        const ownEmployeeData = await getEmployeeData(uid);
+        resolvedEmployeeNumber = ownEmployeeData.officialEmployeeNumber;
+      } catch (e) {
+        return res.status(400).json({ success: false, message: 'Could not find your employee record.' });
       }
     }
-
-    await empDoc.ref.update(updates);
-
-    return successResponse(res, null, 'Profile confirmed successfully');
-
-  } catch (error) {
-    console.error('Confirm profile error:', error);
-    return errorResponse(res, 'Profile confirmation failed', 500);
-  }
-});
-
-// ─── GET /me ─────────────────────────────────────────────
-router.get('/me', verifyToken, async (req, res) => {
-  try {
-    const db = admin.firestore();
-
-    const userDoc = await db.collection('users').doc(req.user.uid).get();
-    if (!userDoc.exists) {
-      return errorResponse(res, 'User not found', 404);
+    if (!resolvedEmployeeNumber?.trim()) {
+      return res.status(400).json({ success: false, message: 'Employee number is required' });
     }
 
-    const empQuery = await db.collection('employees')
-      .where('userId', '==', req.user.uid)
-      .get();
-
-    const employeeData = empQuery.empty ? null : {
-      id: empQuery.docs[0].id,
-      ...empQuery.docs[0].data(),
-    };
-
-    if (employeeData) {
-      delete employeeData.communityGroup;
-    }
-
-    return successResponse(res, {
-      user:     { id: userDoc.id, ...userDoc.data() },
-      employee: employeeData,
-    });
-
-  } catch (error) {
-    console.error('Get me error:', error);
-    return errorResponse(res, 'Failed to fetch profile', 500);
-  }
-});
-
-// ─── POST /update-last-login ──────────────────────────────
-router.post('/update-last-login', verifyToken, async (req, res) => {
-  try {
-    const db = admin.firestore();
-    await db.collection('users').doc(req.user.uid).update({
-      lastLoginAt: nowISO(),
-    });
-    return successResponse(res, null, 'Last login updated');
-  } catch (error) {
-    return errorResponse(res, 'Failed to update login time', 500);
-  }
-});
-
-// ─── GET /pending-users ───────────────────────────────────
-router.get('/pending-users', verifyToken, verifyRole([ROLES.ADMIN_INCHARGE, ROLES.CMO]), async (req, res) => {
-  try {
-    const db = admin.firestore();
-
-    const usersSnap = await db.collection('users')
-      .where('isActive', '==', false)
-      .get();
-
-    if (usersSnap.empty) {
-      return successResponse(res, [], 'No pending users');
-    }
-
-    const neverApprovedDocs = usersSnap.docs.filter(doc => !doc.data().approvedAt);
-
-    const pending = await Promise.all(neverApprovedDocs.map(async (userDoc) => {
-      const userData = userDoc.data();
-      const empSnap = await db.collection('employees')
-        .where('userId', '==', userDoc.id)
-        .limit(1)
-        .get();
-      const empData = empSnap.empty ? {} : empSnap.docs[0].data();
-
-      return {
-        uid:                    userDoc.id,
-        email:                  userData.email || null,
-        phone:                  userData.phone || null,
-        role:                   userData.role,
-        createdAt:              userData.createdAt,
-        fullName:               empData.fullName               || '—',
-        officialEmployeeNumber: empData.officialEmployeeNumber || '—',
-        phoneNumber:            empData.phoneNumber || userData.phone || '—',
-        employeeId:             empSnap.empty ? null : empSnap.docs[0].id,
-      };
-    }));
-
-    pending.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
-
-    return successResponse(res, pending, 'Pending users fetched');
-  } catch (error) {
-    console.error('Pending users error:', error);
-    return errorResponse(res, 'Failed to fetch pending users', 500);
-  }
-});
-
-// ─── POST /approve-user ───────────────────────────────────
-router.post('/approve-user', verifyToken, verifyRole([ROLES.ADMIN_INCHARGE]), async (req, res) => {
-  try {
-    const db = admin.firestore();
-    const { uid, role } = req.body;
-
-    if (!uid || !role) {
-      return errorResponse(res, 'uid and role are required', 400);
-    }
-
-    const validRoles = Object.values(ROLES);
-    if (!validRoles.includes(role)) {
-      return errorResponse(res, `Invalid role. Valid roles: ${validRoles.join(', ')}`, 400);
-    }
-
-    const userDoc = await db.collection('users').doc(uid).get();
-    if (!userDoc.exists) {
-      return errorResponse(res, 'User not found', 404);
-    }
-    if (userDoc.data().isActive) {
-      return errorResponse(res, 'User is already active', 409);
-    }
-
-    await db.collection('users').doc(uid).update({
-      isActive:   true,
-      role:       role,
-      approvedBy: req.user.uid,
-      approvedAt: nowISO(),
-    });
-
-    const empSnap = await db.collection('employees')
-      .where('userId', '==', uid)
+    // Day 16 (Phase 5, Step 5.5) — block a second active request for the
+    // same family while one is already open, regardless of which specific
+    // family member it's for. "Active" = anything not yet completed or
+    // cancelled. Applies equally whether this new submission is from the
+    // employee themselves or from reception on their behalf.
+    const dupSnap = await db.collection('ambulanceRequests')
+      .where('employeeNumber', '==', resolvedEmployeeNumber.trim())
+      .where('status', 'not-in', [AMBULANCE_STATUS.COMPLETED, AMBULANCE_STATUS.CANCELLED])
       .limit(1)
       .get();
-    if (!empSnap.empty) {
-      await empSnap.docs[0].ref.update({
-        isValidated: true,
-        validatedAt: nowISO(),
-        validatedBy: req.user.uid,
+    if (!dupSnap.empty) {
+      const existing = dupSnap.docs[0].data();
+      return res.status(400).json({
+        success: false,
+        message: `An ambulance request is already active for your family (${existing.patientName}, status: ${existing.status}). Please wait until it is completed or cancelled before submitting a new one.`,
       });
     }
 
-    try {
-      await admin.auth().generateEmailVerificationLink(
-        userDoc.data().email,
-        { url: 'https://ffl-medical-centre-app.firebaseapp.com' }
-      );
-      console.log('Verification link generated for:', userDoc.data().email);
-    } catch (emailErr) {
-      console.warn('Email verification link failed:', emailErr.message);
-    }
-
-    return successResponse(res, { uid, role }, 'User approved and activated successfully');
-  } catch (error) {
-    console.error('Approve user error:', error);
-    return errorResponse(res, 'Failed to approve user', 500);
-  }
-});
-
-// ─── POST /reject-user ────────────────────────────────────
-router.post('/reject-user', verifyToken, verifyRole([ROLES.ADMIN_INCHARGE]), async (req, res) => {
-  try {
-    const db = admin.firestore();
-    const { uid, reason } = req.body;
-
-    if (!uid) {
-      return errorResponse(res, 'uid is required', 400);
-    }
-
-    const userDoc = await db.collection('users').doc(uid).get();
-    if (!userDoc.exists) {
-      return errorResponse(res, 'User not found', 404);
-    }
-    if (userDoc.data().isActive) {
-      return errorResponse(res, 'Cannot reject an already active user', 409);
-    }
-    if (userDoc.data().approvedAt) {
-      return errorResponse(res, 'This user was previously approved — use Disable instead of Reject to avoid permanently deleting their account.', 409);
-    }
-
-    await admin.auth().deleteUser(uid);
-    await db.collection('users').doc(uid).delete();
-
-    const empSnap = await db.collection('employees')
-      .where('userId', '==', uid)
+    // Day 16 (Phase 5, Step 5.4) — reception's on-behalf-of requests were
+    // previously ALWAYS auto-accepted, which let reception bypass the
+    // single-active-trip lock just by using their own screen. Now: only
+    // auto-accept if the slot is actually free; otherwise this request
+    // joins the queue as 'pending', same as an employee submission.
+    const blockingSnap = await db.collection('ambulanceRequests')
+      .where('status', 'in', BLOCKING_STATUSES)
       .limit(1)
       .get();
-    if (!empSnap.empty) {
-      await empSnap.docs[0].ref.delete();
+    const slotFree = blockingSnap.empty;
+    const autoAccept = isReception && slotFree;
+
+    const requestData = {
+      requestedBy:      uid,
+      requestedByType:  userRole,
+      employeeNumber:   resolvedEmployeeNumber.trim(),
+      patientName:      patientName.trim(),
+      patientRelation:  patientRelation?.trim() || 'Self',
+      patientCondition: patientCondition.trim(),
+      purposeOfVisit:   purposeOfVisit || null,
+      vehicleType:      vehicleType || 'mini',
+      priorityFlag:     priorityFlag || 'routine',
+      tripType:         tripType || 'intra_township',
+      pickupLocation:   pickupLocation?.trim() || null,
+      dropLocation:     dropLocation?.trim() || null,
+      status:           autoAccept ? AMBULANCE_STATUS.ACCEPTED : AMBULANCE_STATUS.PENDING,
+      assignedDriver:   null,
+      vehicleAssigned:  vehicleType || 'mini',
+      doctorObserver:   null,
+      overriddenBy:     null,
+      dispatchedAt:     null,
+      pickedUpAt:       null,
+      returnedAt:       null,
+      completedAt:      null,
+      acceptedAt:       autoAccept ? now : null,
+      acceptedBy:       autoAccept ? uid : null,
+      cancelledBy:      null,
+      cancelledAt:      null,
+      cancelReason:     null,
+      notes:            notes?.trim() || null,
+      createdAt:        now,
+    };
+
+    const docRef = await db.collection('ambulanceRequests').add(requestData);
+
+    // ── Notifications ─────────────────────────────────────────────────────────
+    if (!autoAccept) {
+      // Not auto-accepted — either an employee request, or a reception
+      // request that had to join the queue because the slot was held.
+      await notifyReception(
+        'New Ambulance Request',
+        `${requestData.patientName} — ${requestData.patientCondition}. Pickup: ${requestData.pickupLocation || 'Not specified'}.`,
+        docRef.id
+      );
     }
 
-    return successResponse(res, { uid }, 'User rejected and removed successfully');
-  } catch (error) {
-    console.error('Reject user error:', error);
-    return errorResponse(res, 'Failed to reject user', 500);
-  }
-});
-
-// ─── GET /all-users ────────────────────────────────────────
-router.get('/all-users', verifyToken, verifyRole([ROLES.ADMIN_INCHARGE, ROLES.CMO]), async (req, res) => {
-  try {
-    const db = admin.firestore();
-
-    const usersSnap = await db.collection('users').get();
-    const approvedDocs = usersSnap.docs.filter(doc => !!doc.data().approvedAt);
-
-    const allUsers = await Promise.all(approvedDocs.map(async (userDoc) => {
-      const userData = userDoc.data();
-      const empSnap = await db.collection('employees')
-        .where('userId', '==', userDoc.id)
-        .limit(1)
-        .get();
-      const empData = empSnap.empty ? {} : empSnap.docs[0].data();
-
-      return {
-        uid:                    userDoc.id,
-        email:                  userData.email || null,
-        phone:                  userData.phone || null,
-        role:                   userData.role,
-        isActive:               userData.isActive,
-        approvedAt:             userData.approvedAt || null,
-        disabledAt:             userData.disabledAt || null,
-        fullName:               empData.fullName               || '—',
-        officialEmployeeNumber: empData.officialEmployeeNumber || '—',
-        phoneNumber:            empData.phoneNumber || userData.phone || '—',
-        employeeId:             empSnap.empty ? null : empSnap.docs[0].id,
-        // Day 14 fix #6 — surfaced here so Manage Users can flag it without
-        // an extra read per employee.
-        correctionRequested:    empData.correctionRequested || false,
-        correctionRequestNote:  empData.correctionRequestNote || null,
-      };
-    }));
-
-    allUsers.sort((a, b) => a.fullName.localeCompare(b.fullName));
-
-    return successResponse(res, allUsers, 'All users fetched');
-  } catch (error) {
-    console.error('All users error:', error);
-    return errorResponse(res, 'Failed to fetch users', 500);
-  }
-});
-
-// ─── POST /disable-user ───────────────────────────────────
-router.post('/disable-user', verifyToken, verifyRole([ROLES.ADMIN_INCHARGE]), async (req, res) => {
-  try {
-    const db = admin.firestore();
-    const { uid } = req.body;
-
-    if (!uid) {
-      return errorResponse(res, 'uid is required', 400);
+    // Day 16 (Phase 5, Step 5.4) — queue position, shown to the requester
+    // at submission time. No ETA (deliberately dropped per design doc §1)
+    // — just an honest position number.
+    let message;
+    if (autoAccept) {
+      message = 'Request created and auto-approved. Ready for dispatch.';
+    } else {
+      const queue = await getActiveQueue();
+      const position = queue.findIndex(r => r.id === docRef.id) + 1;
+      message = slotFree
+        ? `Ambulance request submitted. You are #${position} in queue.`
+        : `Ambulance request submitted. An ambulance is currently on another trip. You are #${position} in queue.`;
     }
 
-    const userDoc = await db.collection('users').doc(uid).get();
-    if (!userDoc.exists) {
-      return errorResponse(res, 'User not found', 404);
-    }
-    if (!userDoc.data().approvedAt) {
-      return errorResponse(res, 'This user was never approved — use Reject instead.', 409);
-    }
-    if (!userDoc.data().isActive) {
-      return errorResponse(res, 'User is already disabled', 409);
-    }
-
-    await db.collection('users').doc(uid).update({
-      isActive:    false,
-      disabledBy:  req.user.uid,
-      disabledAt:  nowISO(),
+    res.json({
+      success: true,
+      message,
+      data: { id: docRef.id, ...requestData }
     });
 
-    return successResponse(res, { uid }, 'User disabled successfully');
   } catch (error) {
-    console.error('Disable user error:', error);
-    return errorResponse(res, 'Failed to disable user', 500);
+    console.error('Submit request error:', error);
+    res.status(500).json({ success: false, message: 'Failed to submit request', error: error.message });
   }
 });
 
-// ─── POST /enable-user ─────────────────────────────────────
-router.post('/enable-user', verifyToken, verifyRole([ROLES.ADMIN_INCHARGE]), async (req, res) => {
+// GET /active - Get all active (non-completed/cancelled) requests
+router.get('/active', async (req, res) => {
   try {
-    const db = admin.firestore();
-    const { uid } = req.body;
+    const { uid } = req.user;
+    const userRole = await getUserRole(uid);
 
-    if (!uid) {
-      return errorResponse(res, 'uid is required', 400);
-    }
-
-    const userDoc = await db.collection('users').doc(uid).get();
-    if (!userDoc.exists) {
-      return errorResponse(res, 'User not found', 404);
-    }
-    if (!userDoc.data().approvedAt) {
-      return errorResponse(res, 'This user was never approved — use Pending Approvals instead.', 409);
-    }
-    if (userDoc.data().isActive) {
-      return errorResponse(res, 'User is already active', 409);
+    if (!['reception', 'cmo', 'admin_incharge'].includes(userRole)) {
+      return res.status(403).json({ success: false, message: 'Access denied' });
     }
 
-    await db.collection('users').doc(uid).update({
-      isActive:      true,
-      reEnabledBy:   req.user.uid,
-      reEnabledAt:   nowISO(),
+    const snapshot = await db.collection('ambulanceRequests')
+      .where('status', 'not-in', [AMBULANCE_STATUS.COMPLETED, AMBULANCE_STATUS.CANCELLED])
+      .orderBy('createdAt', 'desc')
+      .get();
+
+    const requests = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+
+    // Day 16 (Phase 5, Step 5.4) — attach each request's true queue
+    // position (emergency-first, then oldest-first) without changing the
+    // display order above (kept newest-first for reception's browsing
+    // convenience — that's unrelated to actual dispatch priority).
+    const queue = await getActiveQueue();
+    const positionById = new Map(queue.map((r, i) => [r.id, i + 1]));
+    requests.forEach(r => { r.queuePosition = positionById.get(r.id) || null; });
+
+    res.json({ success: true, message: 'Success', data: requests });
+
+  } catch (error) {
+    console.error('Fetch active requests error:', error);
+    res.status(500).json({ success: false, message: 'Failed to fetch active requests', error: error.message });
+  }
+});
+
+// GET /my-active - Get the calling employee's own family's current active
+// request, if any. Day 16 (Phase 5, Step 5.5). Purpose-built rather than
+// opening up GET /:id to the employee role: this endpoint inherently can
+// only ever return the caller's own family's request (matched by
+// employeeNumber), so there's no separate ownership check to get wrong.
+// Matches by employeeNumber, not requestedBy, so this correctly finds a
+// request even if reception submitted it on the employee's behalf.
+router.get('/my-active', async (req, res) => {
+  try {
+    const { uid } = req.user;
+    const userRole = await getUserRole(uid);
+
+    if (userRole !== 'employee') {
+      return res.status(403).json({ success: false, message: 'Employee access only' });
+    }
+
+    const employeeData = await getEmployeeData(uid);
+    const employeeNumber = employeeData.officialEmployeeNumber;
+    if (!employeeNumber) {
+      return res.json({ success: true, data: null });
+    }
+
+    const snapshot = await db.collection('ambulanceRequests')
+      .where('employeeNumber', '==', employeeNumber)
+      .where('status', 'not-in', [AMBULANCE_STATUS.COMPLETED, AMBULANCE_STATUS.CANCELLED])
+      .orderBy('createdAt', 'desc')
+      .limit(1)
+      .get();
+
+    if (snapshot.empty) {
+      return res.json({ success: true, data: null });
+    }
+
+    const doc = snapshot.docs[0];
+    const requestOut = { id: doc.id, ...doc.data() };
+
+    // Day 16 (Phase 5, Step 5.5) — same queue-position computation as
+    // GET /active, so the employee sees their real position when checking
+    // status, not just at the moment of submission.
+    const queue = await getActiveQueue();
+    const position = queue.findIndex(r => r.id === doc.id);
+    requestOut.queuePosition = position === -1 ? null : position + 1;
+
+    res.json({ success: true, data: requestOut });
+
+  } catch (error) {
+    console.error('Fetch my-active request error:', error);
+    res.status(500).json({ success: false, message: 'Failed to fetch your active request', error: error.message });
+  }
+});
+
+// GET /:id - Get specific request details
+router.get('/:id', async (req, res) => {
+  try {
+    const { uid } = req.user;
+    const userRole = await getUserRole(uid);
+    const { id } = req.params;
+
+    if (!['reception', 'driver', 'cmo', 'admin_incharge'].includes(userRole)) {
+      return res.status(403).json({ success: false, message: 'Access denied' });
+    }
+
+    const doc = await db.collection('ambulanceRequests').doc(id).get();
+    if (!doc.exists) {
+      return res.status(404).json({ success: false, message: 'Request not found' });
+    }
+
+    res.json({ success: true, data: { id: doc.id, ...doc.data() } });
+
+  } catch (error) {
+    console.error('Fetch request error:', error);
+    res.status(500).json({ success: false, message: 'Failed to fetch request', error: error.message });
+  }
+});
+
+// POST /:id/accept - Accept a pending request (reception workflow)
+router.post('/:id/accept', async (req, res) => {
+  try {
+    const { uid } = req.user;
+    const userRole = await getUserRole(uid);
+    const { id } = req.params;
+
+    if (!['reception', 'cmo'].includes(userRole)) {
+      return res.status(403).json({ success: false, message: 'Only reception and CMO can accept requests' });
+    }
+
+    const docRef = db.collection('ambulanceRequests').doc(id);
+    const doc = await docRef.get();
+
+    if (!doc.exists) {
+      return res.status(404).json({ success: false, message: 'Request not found' });
+    }
+
+    const data = doc.data();
+    if (data.status !== AMBULANCE_STATUS.PENDING) {
+      return res.status(400).json({ success: false, message: `Cannot accept request with status: ${data.status}` });
+    }
+
+    await docRef.update({
+      status:     AMBULANCE_STATUS.ACCEPTED,
+      acceptedBy: uid,
+      acceptedAt: Timestamp.now().toDate().toISOString(),
     });
 
-    return successResponse(res, { uid }, 'User re-enabled successfully');
-  } catch (error) {
-    console.error('Enable user error:', error);
-    return errorResponse(res, 'Failed to enable user', 500);
-  }
-});
-
-// ─── POST /change-role ─────────────────────────────────────
-router.post('/change-role', verifyToken, verifyRole([ROLES.ADMIN_INCHARGE]), async (req, res) => {
-  try {
-    const db = admin.firestore();
-    const { uid, role } = req.body;
-
-    if (!uid || !role) {
-      return errorResponse(res, 'uid and role are required', 400);
-    }
-
-    const validRoles = Object.values(ROLES);
-    if (!validRoles.includes(role)) {
-      return errorResponse(res, `Invalid role. Valid roles: ${validRoles.join(', ')}`, 400);
-    }
-
-    const userDoc = await db.collection('users').doc(uid).get();
-    if (!userDoc.exists) {
-      return errorResponse(res, 'User not found', 404);
-    }
-    if (!userDoc.data().approvedAt) {
-      return errorResponse(res, 'This user was never approved — use Pending Approvals instead.', 409);
-    }
-
-    await db.collection('users').doc(uid).update({
-      role,
-      roleChangedBy: req.user.uid,
-      roleChangedAt: nowISO(),
+    // ── Notification: inform employee their request was accepted ──────────────
+    await createNotification({
+      recipientUid:  data.requestedBy,
+      recipientRole: data.requestedByType,
+      title:         'Ambulance Request Accepted',
+      body:          `Your ambulance request for ${data.patientName} has been accepted by reception. A driver will be assigned shortly.`,
+      type:          'ambulance',
+      referenceId:   id,
     });
 
-    return successResponse(res, { uid, role }, 'Role updated successfully');
+    res.json({ success: true, message: 'Request accepted successfully' });
+
   } catch (error) {
-    console.error('Change role error:', error);
-    return errorResponse(res, 'Failed to change role', 500);
+    console.error('Accept request error:', error);
+    res.status(500).json({ success: false, message: 'Failed to accept request', error: error.message });
   }
 });
 
-// ─── Export verifyToken & verifyRole for use in other routes
+// POST /:id/assign - Assign driver and vehicle
+router.post('/:id/assign', async (req, res) => {
+  try {
+    const { uid } = req.user;
+    const userRole = await getUserRole(uid);
+    const { id } = req.params;
+    const { driverUid, vehicleType } = req.body;
+
+    if (!['reception', 'cmo'].includes(userRole)) {
+      return res.status(403).json({ success: false, message: 'Access denied' });
+    }
+
+    if (!driverUid?.trim()) {
+      return res.status(400).json({ success: false, message: 'Driver UID is required' });
+    }
+
+    const driverDoc = await db.collection('users').doc(driverUid.trim()).get();
+    if (!driverDoc.exists || driverDoc.data().role !== 'driver') {
+      return res.status(400).json({ success: false, message: 'Invalid driver UID' });
+    }
+
+    const docRef = db.collection('ambulanceRequests').doc(id);
+    const doc = await docRef.get();
+
+    if (!doc.exists) {
+      return res.status(404).json({ success: false, message: 'Request not found' });
+    }
+
+    const data = doc.data();
+    if (data.status !== AMBULANCE_STATUS.ACCEPTED) {
+      return res.status(400).json({ success: false, message: `Cannot assign driver to request with status: ${data.status}. Request must be accepted first.` });
+    }
+
+    await docRef.update({
+      assignedDriver:  driverUid.trim(),
+      vehicleAssigned: vehicleType || data.vehicleType || 'mini',
+    });
+
+    res.json({ success: true, message: 'Driver assigned successfully' });
+
+  } catch (error) {
+    console.error('Assign driver error:', error);
+    res.status(500).json({ success: false, message: 'Failed to assign driver', error: error.message });
+  }
+});
+
+// POST /:id/dispatch - Dispatch ambulance
+router.post('/:id/dispatch', async (req, res) => {
+  try {
+    const { uid } = req.user;
+    const userRole = await getUserRole(uid);
+    const { id } = req.params;
+
+    if (!['reception', 'cmo'].includes(userRole)) {
+      return res.status(403).json({ success: false, message: 'Access denied' });
+    }
+
+    const docRef = db.collection('ambulanceRequests').doc(id);
+    const doc = await docRef.get();
+
+    if (!doc.exists) {
+      return res.status(404).json({ success: false, message: 'Request not found' });
+    }
+
+    const data = doc.data();
+    if (data.status !== AMBULANCE_STATUS.ACCEPTED || !data.assignedDriver) {
+      return res.status(400).json({ success: false, message: 'Cannot dispatch. Request must be accepted and have assigned driver.' });
+    }
+
+    // Day 16 (Phase 5, Step 5.4) — single system-wide active-trip lock.
+    // Only one driver/vehicle exists, so only one request may be
+    // dispatched at a time. Multiple requests can be 'accepted' at once
+    // (reception triage) — the lock applies only here, at actual dispatch,
+    // and releases when the blocking trip reaches 'completed'. This does
+    // NOT let an emergency interrupt a trip already in motion — that
+    // mid-trip interrupt is Phase 5.7, not built yet.
+    const blockingSnap = await db.collection('ambulanceRequests')
+      .where('status', 'in', BLOCKING_STATUSES)
+      .limit(1)
+      .get();
+    if (!blockingSnap.empty) {
+      const blocking = blockingSnap.docs[0].data();
+      return res.status(400).json({
+        success: false,
+        message: `Cannot dispatch — an ambulance is currently on another trip (${blocking.patientName}, status: ${blocking.status}). This request can be dispatched once that trip is completed.`,
+      });
+    }
+
+    await docRef.update({
+      status:      AMBULANCE_STATUS.DISPATCHED,
+      dispatchedAt: Timestamp.now().toDate().toISOString(),
+    });
+
+    // ── Notifications: employee told ambulance is on the way ──────────────────
+    await createNotification({
+      recipientUid:  data.requestedBy,
+      recipientRole: data.requestedByType,
+      title:         'Ambulance Dispatched',
+      body:          `The ambulance is on its way for ${data.patientName}. Please be ready at the pickup point.`,
+      type:          'ambulance',
+      referenceId:   id,
+    });
+
+    res.json({ success: true, message: 'Ambulance dispatched successfully' });
+
+  } catch (error) {
+    console.error('Dispatch error:', error);
+    res.status(500).json({ success: false, message: 'Failed to dispatch ambulance', error: error.message });
+  }
+});
+
+// POST /:id/pickup - Driver marks arrived at pickup (patient picked up)
+router.post('/:id/pickup', async (req, res) => {
+  try {
+    const { uid } = req.user;
+    const userRole = await getUserRole(uid);
+    const { id } = req.params;
+
+    if (userRole !== 'driver') {
+      return res.status(403).json({ success: false, message: 'Only drivers can mark pickup' });
+    }
+
+    const docRef = db.collection('ambulanceRequests').doc(id);
+    const doc = await docRef.get();
+
+    if (!doc.exists) {
+      return res.status(404).json({ success: false, message: 'Request not found' });
+    }
+
+    const data = doc.data();
+    if (data.assignedDriver !== uid) {
+      return res.status(403).json({ success: false, message: 'Not assigned to this request' });
+    }
+    if (data.status !== AMBULANCE_STATUS.DISPATCHED) {
+      return res.status(400).json({ success: false, message: `Cannot pickup from status: ${data.status}` });
+    }
+
+    await docRef.update({
+      status:     AMBULANCE_STATUS.PICKED_UP,
+      pickedUpAt: Timestamp.now().toDate().toISOString(),
+    });
+
+    // ── Notification: reception told driver arrived at pickup ─────────────────
+    await notifyReception(
+      'Ambulance Arrived at Pickup',
+      `Driver has arrived at pickup point for ${data.patientName}. Patient being transported.`,
+      id
+    );
+
+    res.json({ success: true, message: 'Patient picked up successfully' });
+
+  } catch (error) {
+    console.error('Pickup error:', error);
+    res.status(500).json({ success: false, message: 'Failed to update pickup status', error: error.message });
+  }
+});
+
+// POST /:id/return - Driver marks returned to medical centre
+router.post('/:id/return', async (req, res) => {
+  try {
+    const { uid } = req.user;
+    const userRole = await getUserRole(uid);
+    const { id } = req.params;
+
+    if (userRole !== 'driver') {
+      return res.status(403).json({ success: false, message: 'Only drivers can mark return' });
+    }
+
+    const docRef = db.collection('ambulanceRequests').doc(id);
+    const doc = await docRef.get();
+
+    if (!doc.exists) {
+      return res.status(404).json({ success: false, message: 'Request not found' });
+    }
+
+    const data = doc.data();
+    if (data.assignedDriver !== uid) {
+      return res.status(403).json({ success: false, message: 'Not assigned to this request' });
+    }
+    if (data.status !== AMBULANCE_STATUS.PICKED_UP) {
+      return res.status(400).json({ success: false, message: `Cannot return from status: ${data.status}` });
+    }
+
+    await docRef.update({
+      status:     AMBULANCE_STATUS.RETURNED,
+      returnedAt: Timestamp.now().toDate().toISOString(),
+    });
+
+    // ── Notification: reception told ambulance has returned ───────────────────
+    await notifyReception(
+      'Ambulance Returned to Medical Centre',
+      `Ambulance has returned to the medical centre with ${data.patientName}. Please complete the request.`,
+      id
+    );
+
+    res.json({ success: true, message: 'Returned to medical center successfully' });
+
+  } catch (error) {
+    console.error('Return error:', error);
+    res.status(500).json({ success: false, message: 'Failed to update return status', error: error.message });
+  }
+});
+
+// POST /:id/complete - Mark request as completed (reception only)
+router.post('/:id/complete', async (req, res) => {
+  try {
+    const { uid } = req.user;
+    const userRole = await getUserRole(uid);
+    const { id } = req.params;
+
+    if (!['reception', 'cmo'].includes(userRole)) {
+      return res.status(403).json({ success: false, message: 'Only reception and CMO can complete requests' });
+    }
+
+    const docRef = db.collection('ambulanceRequests').doc(id);
+    const doc = await docRef.get();
+
+    if (!doc.exists) {
+      return res.status(404).json({ success: false, message: 'Request not found' });
+    }
+
+    const data = doc.data();
+    if (data.status !== AMBULANCE_STATUS.RETURNED) {
+      return res.status(400).json({ success: false, message: `Cannot complete from status: ${data.status}` });
+    }
+
+    await docRef.update({
+      status:      AMBULANCE_STATUS.COMPLETED,
+      completedAt: Timestamp.now().toDate().toISOString(),
+    });
+
+    // ── Notification: inform employee trip is fully completed ─────────────────
+    await createNotification({
+      recipientUid:  data.requestedBy,
+      recipientRole: data.requestedByType,
+      title:         'Ambulance Trip Completed',
+      body:          `Your ambulance trip for ${data.patientName} has been completed and closed.`,
+      type:          'ambulance',
+      referenceId:   id,
+    });
+
+    res.json({ success: true, message: 'Request completed successfully' });
+
+  } catch (error) {
+    console.error('Complete error:', error);
+    res.status(500).json({ success: false, message: 'Failed to complete request', error: error.message });
+  }
+});
+
+// POST /:id/cancel - Cancel request
+router.post('/:id/cancel', async (req, res) => {
+  try {
+    const { uid } = req.user;
+    const userRole = await getUserRole(uid);
+    const { id } = req.params;
+    const { reason } = req.body;
+
+    const docRef = db.collection('ambulanceRequests').doc(id);
+    const doc = await docRef.get();
+
+    if (!doc.exists) {
+      return res.status(404).json({ success: false, message: 'Request not found' });
+    }
+
+    const data = doc.data();
+
+    // Permission checks
+    if (userRole === 'reception' || userRole === 'cmo') {
+      // Can cancel at any stage
+    } else if (userRole === 'driver' && data.assignedDriver === uid) {
+      if (!['dispatched', 'picked_up'].includes(data.status)) {
+        return res.status(403).json({ success: false, message: 'Drivers can only cancel during dispatch or pickup phases' });
+      }
+    } else if (userRole === 'employee') {
+      // Day 16 (Phase 5, Step 5.5) — the employee's own family can cancel
+      // their own request, but only while still pending (before reception
+      // has acted on it). Matched by employeeNumber, not requestedBy — a
+      // request reception submitted on the employee's behalf still belongs
+      // to that employee for cancellation purposes.
+      let employeeNumber;
+      try {
+        const employeeData = await getEmployeeData(uid);
+        employeeNumber = employeeData.officialEmployeeNumber;
+      } catch (e) {
+        employeeNumber = null;
+      }
+      if (!employeeNumber || data.employeeNumber !== employeeNumber) {
+        return res.status(403).json({ success: false, message: 'Access denied' });
+      }
+      if (data.status !== AMBULANCE_STATUS.PENDING) {
+        return res.status(403).json({ success: false, message: 'This request has already been accepted by reception and can no longer be cancelled directly. Please contact reception.' });
+      }
+    } else {
+      return res.status(403).json({ success: false, message: 'Access denied' });
+    }
+
+    if (['completed', 'cancelled'].includes(data.status)) {
+      return res.status(400).json({ success: false, message: `Cannot cancel ${data.status} request` });
+    }
+
+    await docRef.update({
+      status:      AMBULANCE_STATUS.CANCELLED,
+      cancelledBy: uid,
+      cancelledAt: Timestamp.now().toDate().toISOString(),
+      cancelReason: reason?.trim() || 'No reason provided',
+    });
+
+    // ── Notification: inform employee of cancellation ─────────────────────────
+    // Only notify if it wasn't cancelled by the employee themselves
+    if (data.requestedBy !== uid) {
+      await createNotification({
+        recipientUid:  data.requestedBy,
+        recipientRole: data.requestedByType,
+        title:         'Ambulance Request Cancelled',
+        body:          `Your ambulance request for ${data.patientName} has been cancelled.${reason ? ` Reason: ${reason.trim()}` : ''}`,
+        type:          'ambulance',
+        referenceId:   id,
+      });
+    }
+
+    res.json({ success: true, message: 'Request cancelled successfully' });
+
+  } catch (error) {
+    console.error('Cancel error:', error);
+    res.status(500).json({ success: false, message: 'Failed to cancel request', error: error.message });
+  }
+});
+
+// GET /driver/active - Get active trip for current driver
+router.get('/driver/active', async (req, res) => {
+  try {
+    const { uid } = req.user;
+    const userRole = await getUserRole(uid);
+
+    if (userRole !== 'driver') {
+      return res.status(403).json({ success: false, message: 'Driver access only' });
+    }
+
+    const snapshot = await db.collection('ambulanceRequests')
+      .where('assignedDriver', '==', uid)
+      .where('status', 'in', [AMBULANCE_STATUS.DISPATCHED, AMBULANCE_STATUS.PICKED_UP])
+      .orderBy('dispatchedAt', 'desc')
+      .limit(1)
+      .get();
+
+    const activeTrip = snapshot.empty ? null : {
+      id: snapshot.docs[0].id,
+      ...snapshot.docs[0].data()
+    };
+
+    res.json({ success: true, data: activeTrip });
+
+  } catch (error) {
+    console.error('Driver active trip error:', error);
+    res.status(500).json({ success: false, message: 'Failed to fetch active trip', error: error.message });
+  }
+});
+
 module.exports = router;
-module.exports.verifyToken = verifyToken;
-module.exports.verifyRole  = verifyRole;

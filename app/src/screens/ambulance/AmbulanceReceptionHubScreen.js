@@ -4,6 +4,12 @@ import { View, Text, StyleSheet, TouchableOpacity, ScrollView, ActivityIndicator
 import { getAuth } from 'firebase/auth';
 import { useFocusEffect } from '@react-navigation/native';
 import { API } from '../../config/api';
+import { PURPOSE_OF_VISIT_OPTIONS } from '../../constants';
+
+// Day 16 (Phase 5, Step 5.2 fix) — display-label lookup for purposeOfVisit
+const PURPOSE_LABELS = Object.fromEntries(
+  PURPOSE_OF_VISIT_OPTIONS.map(opt => [opt.value, opt.label])
+);
 
 const STATUS_LABELS = {
   pending: { label: 'Pending Review', color: '#d69e2e', bg: '#fefcbf', icon: '⏳' },
@@ -109,12 +115,24 @@ export default function AmbulanceReceptionHubScreen({ navigation }) {
               {item.patientRelation} • {requestedBy}
             </Text>
           </View>
+          {item.queuePosition && (
+            <View style={styles.queueBadge}>
+              <Text style={styles.queueBadgeText}>
+                {item.queuePosition === 1 ? 'Now' : `#${item.queuePosition}`}
+              </Text>
+            </View>
+          )}
           <Text style={styles.timeStamp}>{timeAgo}</Text>
         </View>
 
         <Text style={styles.condition} numberOfLines={2}>
           {item.patientCondition}
         </Text>
+        {item.purposeOfVisit && PURPOSE_LABELS[item.purposeOfVisit] && (
+          <Text style={styles.purposeText}>
+            {PURPOSE_LABELS[item.purposeOfVisit]}
+          </Text>
+        )}
 
         <View style={styles.locationInfo}>
           <Text style={styles.locationText} numberOfLines={1}>
@@ -272,10 +290,18 @@ const styles = StyleSheet.create({
   patientName: { fontSize: 18, fontWeight: 'bold', color: '#2d3748' },
   patientRelation: { fontSize: 14, color: '#4a5568', marginTop: 2 },
   timeStamp: { fontSize: 12, color: '#718096', marginLeft: 12 },
+  queueBadge: {
+    backgroundColor: '#edf2f7', borderRadius: 12,
+    paddingHorizontal: 10, paddingVertical: 4, marginLeft: 8,
+  },
+  queueBadgeText: { fontSize: 12, fontWeight: '700', color: '#4a5568' },
   
   condition: {
     fontSize: 14, color: '#4a5568', marginBottom: 12,
     fontStyle: 'italic', lineHeight: 20,
+  },
+  purposeText: {
+    fontSize: 12, color: '#718096', marginTop: -8, marginBottom: 12,
   },
   
   locationInfo: {

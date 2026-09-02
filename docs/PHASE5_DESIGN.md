@@ -112,6 +112,8 @@ Build sequence and live status tracking live in `COMMAND_BOARD.md`, Phase 5 subp
 
 ## Still Open — Needs a Decision Before or During Build
 
+- **Day 16, raised during 5.4 build:** A scheduled job to auto-cancel any request still sitting in `pending` at 4 AM daily, as a standing safety net against stale data locking the queue (distinct from the one-time cleanup already done before 5.4 deployed). Logged for later analysis — not built, may be dropped after review. Would need its own design pass (a Cloud Scheduler + Function, not touched by anything in 5.1–5.8) before being added to the sequence.
+
 - **§1:** Confirm the queue-position number counts *all* pending requests system-wide, or only those for the same vehicle type the request would eventually need (given §0, it should be the former — but state it explicitly in the backend logic comment when built).
 - **§2:** Confirm no other change is needed to the reception on-behalf-of search flow beyond adding the dropdown once an employee is found.
 - **§7:** CMO/Doctor dashboard scope (live vs. historical vs. both) — pick one before wireframing.

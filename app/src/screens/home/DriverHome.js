@@ -53,6 +53,21 @@ export default function DriverHome({ navigation }) {
       'Logout',
       'Are you sure you want to logout?',
       async () => {
+        // Day 16 (Phase 5, Step 5.6.1) — mark off duty before signing out,
+        // so the on-duty flag doesn't stay stuck true if the app is force-
+        // quit later without a proper logout. Must happen BEFORE signOut,
+        // since a valid token is needed to call the endpoint. Non-blocking,
+        // same pattern LoginScreen.js already uses for update-last-login —
+        // logout should still proceed even if this call fails.
+        try {
+          const token = await auth.currentUser.getIdToken();
+          await fetch(`${API.auth}/set-off-duty`, {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${token}` },
+          });
+        } catch (e) {
+          console.warn('set-off-duty failed (non-critical):', e.message);
+        }
         try { await signOut(auth); }
         catch { webAlert('Error', 'Failed to logout. Please try again.'); }
       },

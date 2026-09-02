@@ -5,6 +5,18 @@ import { View, Text, StyleSheet, TouchableOpacity, ScrollView, ActivityIndicator
 import { getAuth } from 'firebase/auth';
 import { useFocusEffect } from '@react-navigation/native';
 import { API } from '../../config/api';
+import { PURPOSE_OF_VISIT_OPTIONS, DROP_OFF_OUTCOMES } from '../../constants';
+
+// Day 16 (Phase 5, Step 5.2 fix) — display-label lookup for purposeOfVisit,
+// same pattern already used for STATUS_LABELS/VEHICLE_OPTIONS in this file.
+const PURPOSE_LABELS = Object.fromEntries(
+  PURPOSE_OF_VISIT_OPTIONS.map(opt => [opt.value, opt.label])
+);
+
+// Day 16 (Phase 5, Step 5.6.3) — same pattern, for dropOffOutcome
+const DROP_OFF_LABELS = Object.fromEntries(
+  DROP_OFF_OUTCOMES.map(opt => [opt.value, opt.label])
+);
 
 const STATUS_LABELS = {
   pending: { label: 'Pending Review', color: '#d69e2e', bg: '#fefcbf' },
@@ -12,6 +24,9 @@ const STATUS_LABELS = {
   dispatched: { label: 'Dispatched', color: '#6b46c1', bg: '#faf5ff' },
   picked_up: { label: 'Picked Up', color: '#276749', bg: '#f0fff4' },
   returned: { label: 'Returned', color: '#c05621', bg: '#fffaf0' },
+  // Day 16 (Phase 5, Step 5.6.3) — patient back at Medical Centre, vehicle
+  // free, drop-off leg still open
+  arrived: { label: 'Arrived — Drop Off Pending', color: '#805ad5', bg: '#faf5ff' },
   completed: { label: 'Completed', color: '#22543d', bg: '#c6f6d5' },
   cancelled: { label: 'Cancelled', color: '#742a2a', bg: '#fff5f5' },
 };
@@ -28,12 +43,16 @@ export default function AmbulanceRequestDetailScreen({ route, navigation }) {
   const [actionLoading, setActionLoading] = useState(false);
   const [vehicleType, setVehicleType] = useState('mini');
   const [showCancelForm, setShowCancelForm] = useState(false);
+  // Day 16 (Phase 5, Step 5.6.3) — mirrors showCancelForm's toggle pattern
+  const [showDropOffReasons, setShowDropOffReasons] = useState(false);
   const [cancelReason, setCancelReason] = useState('');
 
-  // Driver picker state
-  const [drivers, setDrivers] = useState([]);
-  const [selectedDriver, setSelectedDriver] = useState(null);
-  const [driversLoading, setDriversLoading] = useState(false);
+  // Day 16 (Phase 5, Step 5.6.2) — driver picker removed. The backend now
+  // auto-assigns whoever is on duty; this screen only needs to show that
+  // driver (for reception's visibility) and know whether one exists at
+  // all, to enable/disable the dispatch button.
+  const [onDutyDriver, setOnDutyDriver] = useState(null);
+  const [onDutyLoading, setOnDutyLoading] = useState(false);
 
   const getToken = async () => {
     const auth = getAuth();
@@ -59,22 +78,23 @@ export default function AmbulanceRequestDetailScreen({ route, navigation }) {
     }
   };
 
-  // Fetch available drivers when request is accepted (ready for assignment)
-  const fetchDrivers = async () => {
-    setDriversLoading(true);
+  // Day 16 (Phase 5, Step 5.6.1) — who's currently on duty. Now the actual
+  // source of truth for who gets assigned (5.6.2), not just an info box.
+  const fetchOnDutyDriver = async () => {
+    setOnDutyLoading(true);
     try {
       const token = await getToken();
-      const response = await fetch(`${API.ambulance}/drivers`, {
+      const response = await fetch(`${API.ambulance}/on-duty-driver`, {
         headers: { 'Authorization': `Bearer ${token}` }
       });
       const data = await response.json();
       if (response.ok) {
-        setDrivers(data.data || []);
+        setOnDutyDriver(data.data || null);
       }
     } catch (error) {
-      console.log('Failed to load drivers');
+      console.log('Failed to load on-duty driver');
     } finally {
-      setDriversLoading(false);
+      setOnDutyLoading(false);
     }
   };
 
@@ -83,10 +103,10 @@ export default function AmbulanceRequestDetailScreen({ route, navigation }) {
     fetchRequest();
   }, [requestId]));
 
-  // Load drivers when request status is accepted
+  // Load on-duty driver when request status is accepted
   useEffect(() => {
     if (request?.status === 'accepted') {
-      fetchDrivers();
+      fetchOnDutyDriver();
     }
   }, [request?.status]);
 
@@ -127,25 +147,31 @@ export default function AmbulanceRequestDetailScreen({ route, navigation }) {
   };
 
   const handleAssignAndDispatch = async () => {
-    if (!selectedDriver) {
-      alert('Please select a driver.');
+    if (!onDutyDriver) {
+      alert('No driver is currently on duty. Cannot dispatch.');
       return;
     }
-    const assigned = await callEndpoint('assign', {
-      driverUid: selectedDriver.uid,
-      vehicleType
-    });
+    const assigned = await callEndpoint('assign', { vehicleType });
     if (assigned) {
       await callEndpoint('dispatch');
     }
   };
 
-  const handleComplete = async () => {
+  // Day 16 (Phase 5, Step 5.6.3) — renamed from handleComplete. This now
+  // only confirms arrival back at the Medical Centre, not final closure.
+  const handleConfirmArrival = async () => {
     const confirmed = Platform.OS === 'web'
       ? window.confirm('Confirm patient has been physically received?')
       : true;
     if (!confirmed) return;
-    await callEndpoint('complete');
+    await callEndpoint('arrive');
+  };
+
+  // Day 16 (Phase 5, Step 5.6.3) — closes the drop-off leg. Single click,
+  // no in-transit tracking of the return trip itself (deliberately not
+  // engineered further, per Homi's Day 16 decision).
+  const handleDropOff = async (outcome) => {
+    await callEndpoint('dropoff', { outcome });
   };
 
   const handleCancel = async () => {
@@ -189,7 +215,9 @@ export default function AmbulanceRequestDetailScreen({ route, navigation }) {
   const isActive = !['completed', 'cancelled'].includes(request.status);
   const canAccept = request.status === 'pending';
   const canAssign = request.status === 'accepted';
-  const canComplete = request.status === 'returned';
+  const canConfirmArrival = request.status === 'returned';
+  // Day 16 (Phase 5, Step 5.6.3)
+  const canDropOff = request.status === 'arrived';
   const isEmergency = request.priorityFlag === 'emergency';
 
   return (
@@ -218,6 +246,7 @@ export default function AmbulanceRequestDetailScreen({ route, navigation }) {
         {renderField('Patient Name', request.patientName)}
         {renderField('Relation', request.patientRelation)}
         {renderField('Condition/Complaint', request.patientCondition)}
+        {renderField('Purpose of Visit', PURPOSE_LABELS[request.purposeOfVisit] || '—')}
         {renderField('Priority', request.priorityFlag === 'emergency' ? '🚨 Emergency' : 'Routine')}
       </View>
 
@@ -240,6 +269,9 @@ export default function AmbulanceRequestDetailScreen({ route, navigation }) {
         {request.dispatchedAt && renderField('Dispatched At', new Date(request.dispatchedAt).toLocaleString())}
         {request.pickedUpAt && renderField('Picked Up At', new Date(request.pickedUpAt).toLocaleString())}
         {request.returnedAt && renderField('Returned At', new Date(request.returnedAt).toLocaleString())}
+        {request.arrivedAt && renderField('Arrived At', new Date(request.arrivedAt).toLocaleString())}
+        {request.dropOffTriggeredAt && renderField('Drop Off Resolved At', new Date(request.dropOffTriggeredAt).toLocaleString())}
+        {request.dropOffOutcome && renderField('Drop Off Outcome', DROP_OFF_LABELS[request.dropOffOutcome] || request.dropOffOutcome)}
         {request.completedAt && renderField('Completed At', new Date(request.completedAt).toLocaleString())}
       </View>
 
@@ -264,39 +296,19 @@ export default function AmbulanceRequestDetailScreen({ route, navigation }) {
           {/* Assign & Dispatch - For accepted requests */}
           {canAssign && (
             <View style={styles.assignForm}>
-              <Text style={styles.formLabel}>Select Driver</Text>
-              {driversLoading ? (
-                <ActivityIndicator size="small" color="#3182ce" style={{ marginBottom: 12 }} />
-              ) : drivers.length === 0 ? (
-                <Text style={styles.noDriversText}>No active drivers available</Text>
-              ) : (
-                <View style={styles.driverList}>
-                  {drivers.map(driver => (
-                    <TouchableOpacity
-                      key={driver.uid}
-                      style={[
-                        styles.driverOption,
-                        selectedDriver?.uid === driver.uid && styles.driverOptionSelected
-                      ]}
-                      onPress={() => setSelectedDriver(driver)}
-                      disabled={actionLoading}
-                    >
-                      <Text style={[
-                        styles.driverOptionText,
-                        selectedDriver?.uid === driver.uid && styles.driverOptionTextSelected
-                      ]}>
-                        👤 {driver.fullName}
-                      </Text>
-                      <Text style={[
-                        styles.driverEmail,
-                        selectedDriver?.uid === driver.uid && styles.driverEmailSelected
-                      ]}>
-                        {driver.email}
-                      </Text>
-                    </TouchableOpacity>
-                  ))}
-                </View>
-              )}
+              {/* Day 16 (Phase 5, Step 5.6.2) — driver picker removed.
+                  Whoever is on duty is auto-assigned server-side; this box
+                  is now the actual assignment, not just an info aside. */}
+              <Text style={styles.formLabel}>Driver (auto-assigned)</Text>
+              <View style={styles.onDutyBox}>
+                {onDutyLoading ? (
+                  <ActivityIndicator size="small" color="#3182ce" />
+                ) : onDutyDriver ? (
+                  <Text style={styles.onDutyName}>🟢 {onDutyDriver.fullName}</Text>
+                ) : (
+                  <Text style={styles.onDutyNone}>⚠️ No driver currently on duty</Text>
+                )}
+              </View>
 
               <Text style={styles.formLabel}>Vehicle Type</Text>
               <View style={styles.vehicleOptions}>
@@ -321,9 +333,9 @@ export default function AmbulanceRequestDetailScreen({ route, navigation }) {
               </View>
 
               <TouchableOpacity
-                style={[styles.actionBtn, styles.assignBtn, !selectedDriver && styles.disabledBtn]}
+                style={[styles.actionBtn, styles.assignBtn, !onDutyDriver && styles.disabledBtn]}
                 onPress={handleAssignAndDispatch}
-                disabled={actionLoading || !selectedDriver}
+                disabled={actionLoading || !onDutyDriver}
               >
                 <Text style={styles.actionBtnText}>
                   {actionLoading ? 'Processing...' : '🚀 Assign & Dispatch'}
@@ -332,17 +344,70 @@ export default function AmbulanceRequestDetailScreen({ route, navigation }) {
             </View>
           )}
 
-          {/* Complete Button - Only for returned status */}
-          {canComplete && (
+          {/* Confirm Arrival - Only for returned status */}
+          {/* Day 16 (Phase 5, Step 5.6.3) — renamed from Complete Request.
+              No longer the final step; frees the vehicle but leaves the
+              request open until drop-off is resolved below. */}
+          {canConfirmArrival && (
             <TouchableOpacity
               style={[styles.actionBtn, styles.completeBtn]}
-              onPress={handleComplete}
+              onPress={handleConfirmArrival}
               disabled={actionLoading}
             >
               <Text style={styles.actionBtnText}>
-                {actionLoading ? 'Processing...' : '✅ Complete Request'}
+                {actionLoading ? 'Processing...' : '🏥 Confirm Arrival'}
               </Text>
             </TouchableOpacity>
+          )}
+
+          {/* Drop Off - Only for arrived status */}
+          {/* Day 16 (Phase 5, Step 5.6.3) — single click, no in-transit
+              tracking of the return trip itself (deliberately kept
+              simple). "Not Required" reveals the two fixed reasons,
+              mirroring the Cancel form's toggle pattern below. */}
+          {canDropOff && !showDropOffReasons && (
+            <>
+              <TouchableOpacity
+                style={[styles.actionBtn, styles.completeBtn]}
+                onPress={() => handleDropOff('dropped_off')}
+                disabled={actionLoading}
+              >
+                <Text style={styles.actionBtnText}>
+                  {actionLoading ? 'Processing...' : '🏠 Drop Off'}
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.actionBtn, styles.cancelBtn]}
+                onPress={() => setShowDropOffReasons(true)}
+                disabled={actionLoading}
+              >
+                <Text style={styles.cancelBtnText}>Drop Off Not Required</Text>
+              </TouchableOpacity>
+            </>
+          )}
+          {canDropOff && showDropOffReasons && (
+            <View style={styles.cancelForm}>
+              <Text style={styles.formLabel}>Reason</Text>
+              {DROP_OFF_OUTCOMES.filter(o => o.value !== 'dropped_off').map(option => (
+                <TouchableOpacity
+                  key={option.value}
+                  style={[styles.actionBtn, styles.assignBtn]}
+                  onPress={() => handleDropOff(option.value)}
+                  disabled={actionLoading}
+                >
+                  <Text style={styles.actionBtnText}>
+                    {actionLoading ? 'Processing...' : option.label}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+              <TouchableOpacity
+                style={[styles.actionBtn, { backgroundColor: '#e2e8f0' }]}
+                onPress={() => setShowDropOffReasons(false)}
+                disabled={actionLoading}
+              >
+                <Text style={{ color: '#4a5568', fontSize: 16, fontWeight: '600' }}>Back</Text>
+              </TouchableOpacity>
+            </View>
           )}
 
           {/* Cancel Button */}
@@ -427,19 +492,17 @@ const styles = StyleSheet.create({
   assignForm: { marginBottom: 16 },
   formLabel: { fontSize: 14, fontWeight: '600', color: '#4a5568', marginBottom: 8 },
 
-  // Driver picker styles
-  driverList: { marginBottom: 16 },
-  driverOption: {
-    borderWidth: 1, borderColor: '#cbd5e0', borderRadius: 8,
-    paddingVertical: 12, paddingHorizontal: 14, marginBottom: 8,
-    backgroundColor: '#ffffff',
+  // Day 16 (Phase 5, Step 5.6.1) — on-duty driver info box
+  onDutyBox: {
+    backgroundColor: '#f0fff4', borderWidth: 1, borderColor: '#c6f6d5',
+    borderRadius: 8, padding: 12, marginBottom: 16,
   },
-  driverOptionSelected: { backgroundColor: '#3182ce', borderColor: '#3182ce' },
-  driverOptionText: { color: '#2d3748', fontSize: 15, fontWeight: '600' },
-  driverOptionTextSelected: { color: '#ffffff' },
-  driverEmail: { color: '#718096', fontSize: 12, marginTop: 2 },
-  driverEmailSelected: { color: '#ebf8ff' },
-  noDriversText: { color: '#e53e3e', fontSize: 14, marginBottom: 12, fontStyle: 'italic' },
+  onDutyName: { fontSize: 15, fontWeight: '600', color: '#2d3748' },
+  onDutyNone: { fontSize: 13, color: '#c53030', fontStyle: 'italic' },
+
+  // Driver picker styles
+  // Day 16 (Phase 5, Step 5.6.2) — driver picker styles removed along with
+  // the picker itself (driverList, driverOption*, driverEmail*, noDriversText)
 
   // Vehicle picker
   vehicleOptions: { flexDirection: 'row', marginBottom: 16 },

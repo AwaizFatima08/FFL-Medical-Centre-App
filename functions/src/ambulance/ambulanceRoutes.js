@@ -40,8 +40,45 @@ async function notifyReception(title, body, referenceId) {
   ));
 }
 
-// GET /drivers - Get list of available drivers (for reception dropdown)
-router.get("/drivers", async (req, res) => {
+// Day 16 (Phase 5, Step 5.4, corrected) — statuses that hold the single
+// system-wide active-trip slot. Only ONE driver/vehicle can be physically
+// in motion at a time, so the lock starts at 'dispatched' — NOT at
+// 'accepted'. Multiple requests can sit 'accepted' simultaneously
+// (reception reviewing/triaging several at once); only actual dispatch is
+// exclusive. 'returned' still holds the slot because the trip isn't
+// administratively closed until 'completed'.
+const BLOCKING_STATUSES = [
+  AMBULANCE_STATUS.DISPATCHED,
+  AMBULANCE_STATUS.PICKED_UP,
+  AMBULANCE_STATUS.RETURNED,
+];
+
+// Helper: fetch every non-terminal request, sorted emergency-first then
+// oldest-first. This is the single system-wide queue order — used both to
+// compute a request's queue position and to check whether the active-trip
+// slot is currently held. NOTE: this subphase (5.4) only lets emergencies
+// jump ahead of other WAITING (pending) requests. It does not let an
+// emergency interrupt a trip that is already accepted/dispatched/picked_up/
+// returned — that mid-trip interrupt is Phase 5.7, not built yet.
+async function getActiveQueue() {
+  const snap = await db.collection('ambulanceRequests')
+    .where('status', 'not-in', [AMBULANCE_STATUS.COMPLETED, AMBULANCE_STATUS.CANCELLED])
+    .get();
+  const docs = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+  docs.sort((a, b) => {
+    const aEmergency = a.priorityFlag === 'emergency' ? 0 : 1;
+    const bEmergency = b.priorityFlag === 'emergency' ? 0 : 1;
+    if (aEmergency !== bEmergency) return aEmergency - bEmergency;
+    return new Date(a.createdAt) - new Date(b.createdAt);
+  });
+  return docs;
+}
+
+// GET /on-duty-driver - Current on-duty driver, for reception's info box
+// Day 16 (Phase 5, Step 5.6.1). Same field convention as GET /drivers above
+// (reads fullName off the users doc, falling back to email — a pre-existing
+// pattern in this file, not something introduced here).
+router.get("/on-duty-driver", async (req, res) => {
   try {
     const { uid } = req.user;
     const userRole = await getUserRole(uid);
@@ -50,17 +87,18 @@ router.get("/drivers", async (req, res) => {
     }
     const snapshot = await db.collection("users")
       .where("role", "==", "driver")
-      .where("isActive", "==", true)
+      .where("onDuty", "==", true)
+      .limit(1)
       .get();
-    const drivers = snapshot.docs.map(doc => ({
-      uid:      doc.id,
-      email:    doc.data().email,
-      fullName: doc.data().fullName || doc.data().email
-    }));
-    res.json({ success: true, data: drivers });
+    const onDutyDriver = snapshot.empty ? null : {
+      uid:      snapshot.docs[0].id,
+      email:    snapshot.docs[0].data().email,
+      fullName: snapshot.docs[0].data().fullName || snapshot.docs[0].data().email,
+    };
+    res.json({ success: true, data: onDutyDriver });
   } catch (error) {
-    console.error("Fetch drivers error:", error);
-    res.status(500).json({ success: false, message: "Failed to fetch drivers", error: error.message });
+    console.error("Fetch on-duty driver error:", error);
+    res.status(500).json({ success: false, message: "Failed to fetch on-duty driver", error: error.message });
   }
 });
 
@@ -75,8 +113,8 @@ router.post('/request', async (req, res) => {
     }
 
     const {
-      patientName, patientRelation, patientCondition,
-      vehicleType, priorityFlag, tripType,
+      patientName, patientRelation, patientCondition, employeeNumber,
+      vehicleType, priorityFlag, tripType, purposeOfVisit,
       pickupLocation, dropLocation, notes
     } = req.body;
 
@@ -90,18 +128,73 @@ router.post('/request', async (req, res) => {
     const isReception = userRole === 'reception';
     const now = Timestamp.now().toDate().toISOString();
 
+    // Day 16 (Phase 5, Step 5.5, hardened during audit) — identifies which
+    // employee/family this request belongs to, independent of who actually
+    // submitted it. For an employee's own submission, derive it server-side
+    // from their own uid rather than trusting the client-supplied value —
+    // reception's value legitimately stays client-supplied (it identifies
+    // whichever employee they searched for, which the server has no other
+    // way to know), but an employee submitting for themselves should not
+    // be able to submit under a different employee's number just by
+    // sending different JSON. Used below for the family-level duplicate
+    // block and for the employee's own GET /my-active lookup.
+    let resolvedEmployeeNumber = employeeNumber;
+    if (!isReception) {
+      try {
+        const ownEmployeeData = await getEmployeeData(uid);
+        resolvedEmployeeNumber = ownEmployeeData.officialEmployeeNumber;
+      } catch (e) {
+        return res.status(400).json({ success: false, message: 'Could not find your employee record.' });
+      }
+    }
+    if (!resolvedEmployeeNumber?.trim()) {
+      return res.status(400).json({ success: false, message: 'Employee number is required' });
+    }
+
+    // Day 16 (Phase 5, Step 5.5) — block a second active request for the
+    // same family while one is already open, regardless of which specific
+    // family member it's for. "Active" = anything not yet completed or
+    // cancelled. Applies equally whether this new submission is from the
+    // employee themselves or from reception on their behalf.
+    const dupSnap = await db.collection('ambulanceRequests')
+      .where('employeeNumber', '==', resolvedEmployeeNumber.trim())
+      .where('status', 'not-in', [AMBULANCE_STATUS.COMPLETED, AMBULANCE_STATUS.CANCELLED])
+      .limit(1)
+      .get();
+    if (!dupSnap.empty) {
+      const existing = dupSnap.docs[0].data();
+      return res.status(400).json({
+        success: false,
+        message: `An ambulance request is already active for your family (${existing.patientName}, status: ${existing.status}). Please wait until it is completed or cancelled before submitting a new one.`,
+      });
+    }
+
+    // Day 16 (Phase 5, Step 5.4) — reception's on-behalf-of requests were
+    // previously ALWAYS auto-accepted, which let reception bypass the
+    // single-active-trip lock just by using their own screen. Now: only
+    // auto-accept if the slot is actually free; otherwise this request
+    // joins the queue as 'pending', same as an employee submission.
+    const blockingSnap = await db.collection('ambulanceRequests')
+      .where('status', 'in', BLOCKING_STATUSES)
+      .limit(1)
+      .get();
+    const slotFree = blockingSnap.empty;
+    const autoAccept = isReception && slotFree;
+
     const requestData = {
       requestedBy:      uid,
       requestedByType:  userRole,
+      employeeNumber:   resolvedEmployeeNumber.trim(),
       patientName:      patientName.trim(),
       patientRelation:  patientRelation?.trim() || 'Self',
       patientCondition: patientCondition.trim(),
+      purposeOfVisit:   purposeOfVisit || null,
       vehicleType:      vehicleType || 'mini',
       priorityFlag:     priorityFlag || 'routine',
       tripType:         tripType || 'intra_township',
       pickupLocation:   pickupLocation?.trim() || null,
       dropLocation:     dropLocation?.trim() || null,
-      status:           isReception ? AMBULANCE_STATUS.ACCEPTED : AMBULANCE_STATUS.PENDING,
+      status:           autoAccept ? AMBULANCE_STATUS.ACCEPTED : AMBULANCE_STATUS.PENDING,
       assignedDriver:   null,
       vehicleAssigned:  vehicleType || 'mini',
       doctorObserver:   null,
@@ -110,8 +203,8 @@ router.post('/request', async (req, res) => {
       pickedUpAt:       null,
       returnedAt:       null,
       completedAt:      null,
-      acceptedAt:       isReception ? now : null,
-      acceptedBy:       isReception ? uid : null,
+      acceptedAt:       autoAccept ? now : null,
+      acceptedBy:       autoAccept ? uid : null,
       cancelledBy:      null,
       cancelledAt:      null,
       cancelReason:     null,
@@ -122,21 +215,43 @@ router.post('/request', async (req, res) => {
     const docRef = await db.collection('ambulanceRequests').add(requestData);
 
     // ── Notifications ─────────────────────────────────────────────────────────
-    if (!isReception) {
-      // Employee request — notify all reception staff
+    if (!autoAccept) {
+      // Not auto-accepted — either an employee request, or a reception
+      // request that had to join the queue because the slot was held.
       await notifyReception(
         'New Ambulance Request',
         `${requestData.patientName} — ${requestData.patientCondition}. Pickup: ${requestData.pickupLocation || 'Not specified'}.`,
         docRef.id
       );
     }
-    // Reception-created requests are auto-accepted — no inbound notification needed
+
+    // Day 16 (Phase 5, Step 5.4) — queue position, shown to the requester
+    // at submission time. No ETA (deliberately dropped per design doc §1)
+    // — just an honest position number.
+    let message;
+    if (autoAccept) {
+      message = 'Request created and auto-approved. Ready for dispatch.';
+    } else {
+      const queue = await getActiveQueue();
+      const position = queue.findIndex(r => r.id === docRef.id) + 1;
+      if (slotFree) {
+        message = `Ambulance request submitted. You are #${position} in queue.`;
+      } else {
+        // Day 16 (Phase 5, Step 5.6.3) — an intercity trip (e.g. referral
+        // to Sadiqabad/RYK) takes the vehicle away for longer than a
+        // routine within-township trip. Told plainly rather than left to
+        // guess, since there's no ETA to give them either way.
+        const blockingData = blockingSnap.docs[0]?.data();
+        const awayNote = blockingData?.tripType === 'intercity'
+          ? ' An ambulance is currently away on an intercity trip. Please call the medical centre directly to check on the expected delay.'
+          : ' An ambulance is currently on another trip.';
+        message = `Ambulance request submitted.${awayNote} You are #${position} in queue.`;
+      }
+    }
 
     res.json({
       success: true,
-      message: isReception
-        ? 'Request created and auto-approved. Ready for dispatch.'
-        : 'Ambulance request submitted. Awaiting reception approval.',
+      message,
       data: { id: docRef.id, ...requestData }
     });
 
@@ -162,11 +277,71 @@ router.get('/active', async (req, res) => {
       .get();
 
     const requests = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+
+    // Day 16 (Phase 5, Step 5.4) — attach each request's true queue
+    // position (emergency-first, then oldest-first) without changing the
+    // display order above (kept newest-first for reception's browsing
+    // convenience — that's unrelated to actual dispatch priority).
+    const queue = await getActiveQueue();
+    const positionById = new Map(queue.map((r, i) => [r.id, i + 1]));
+    requests.forEach(r => { r.queuePosition = positionById.get(r.id) || null; });
+
     res.json({ success: true, message: 'Success', data: requests });
 
   } catch (error) {
     console.error('Fetch active requests error:', error);
     res.status(500).json({ success: false, message: 'Failed to fetch active requests', error: error.message });
+  }
+});
+
+// GET /my-active - Get the calling employee's own family's current active
+// request, if any. Day 16 (Phase 5, Step 5.5). Purpose-built rather than
+// opening up GET /:id to the employee role: this endpoint inherently can
+// only ever return the caller's own family's request (matched by
+// employeeNumber), so there's no separate ownership check to get wrong.
+// Matches by employeeNumber, not requestedBy, so this correctly finds a
+// request even if reception submitted it on the employee's behalf.
+router.get('/my-active', async (req, res) => {
+  try {
+    const { uid } = req.user;
+    const userRole = await getUserRole(uid);
+
+    if (userRole !== 'employee') {
+      return res.status(403).json({ success: false, message: 'Employee access only' });
+    }
+
+    const employeeData = await getEmployeeData(uid);
+    const employeeNumber = employeeData.officialEmployeeNumber;
+    if (!employeeNumber) {
+      return res.json({ success: true, data: null });
+    }
+
+    const snapshot = await db.collection('ambulanceRequests')
+      .where('employeeNumber', '==', employeeNumber)
+      .where('status', 'not-in', [AMBULANCE_STATUS.COMPLETED, AMBULANCE_STATUS.CANCELLED])
+      .orderBy('createdAt', 'desc')
+      .limit(1)
+      .get();
+
+    if (snapshot.empty) {
+      return res.json({ success: true, data: null });
+    }
+
+    const doc = snapshot.docs[0];
+    const requestOut = { id: doc.id, ...doc.data() };
+
+    // Day 16 (Phase 5, Step 5.5) — same queue-position computation as
+    // GET /active, so the employee sees their real position when checking
+    // status, not just at the moment of submission.
+    const queue = await getActiveQueue();
+    const position = queue.findIndex(r => r.id === doc.id);
+    requestOut.queuePosition = position === -1 ? null : position + 1;
+
+    res.json({ success: true, data: requestOut });
+
+  } catch (error) {
+    console.error('Fetch my-active request error:', error);
+    res.status(500).json({ success: false, message: 'Failed to fetch your active request', error: error.message });
   }
 });
 
@@ -247,20 +422,25 @@ router.post('/:id/assign', async (req, res) => {
     const { uid } = req.user;
     const userRole = await getUserRole(uid);
     const { id } = req.params;
-    const { driverUid, vehicleType } = req.body;
+    const { vehicleType } = req.body;
 
     if (!['reception', 'cmo'].includes(userRole)) {
       return res.status(403).json({ success: false, message: 'Access denied' });
     }
 
-    if (!driverUid?.trim()) {
-      return res.status(400).json({ success: false, message: 'Driver UID is required' });
+    // Day 16 (Phase 5, Step 5.6.2) — driver is no longer picked by
+    // reception. Auto-assign whoever is currently on duty (set at login/
+    // logout, see authRoutes.js), derived server-side rather than trusted
+    // from the client — same reasoning as employeeNumber in Step 5.5.
+    const onDutySnap = await db.collection('users')
+      .where('role', '==', 'driver')
+      .where('onDuty', '==', true)
+      .limit(1)
+      .get();
+    if (onDutySnap.empty) {
+      return res.status(400).json({ success: false, message: 'No driver is currently on duty. Cannot dispatch.' });
     }
-
-    const driverDoc = await db.collection('users').doc(driverUid.trim()).get();
-    if (!driverDoc.exists || driverDoc.data().role !== 'driver') {
-      return res.status(400).json({ success: false, message: 'Invalid driver UID' });
-    }
+    const driverUid = onDutySnap.docs[0].id;
 
     const docRef = db.collection('ambulanceRequests').doc(id);
     const doc = await docRef.get();
@@ -275,7 +455,7 @@ router.post('/:id/assign', async (req, res) => {
     }
 
     await docRef.update({
-      assignedDriver:  driverUid.trim(),
+      assignedDriver:  driverUid,
       vehicleAssigned: vehicleType || data.vehicleType || 'mini',
     });
 
@@ -308,6 +488,25 @@ router.post('/:id/dispatch', async (req, res) => {
     const data = doc.data();
     if (data.status !== AMBULANCE_STATUS.ACCEPTED || !data.assignedDriver) {
       return res.status(400).json({ success: false, message: 'Cannot dispatch. Request must be accepted and have assigned driver.' });
+    }
+
+    // Day 16 (Phase 5, Step 5.4) — single system-wide active-trip lock.
+    // Only one driver/vehicle exists, so only one request may be
+    // dispatched at a time. Multiple requests can be 'accepted' at once
+    // (reception triage) — the lock applies only here, at actual dispatch,
+    // and releases when the blocking trip reaches 'completed'. This does
+    // NOT let an emergency interrupt a trip already in motion — that
+    // mid-trip interrupt is Phase 5.7, not built yet.
+    const blockingSnap = await db.collection('ambulanceRequests')
+      .where('status', 'in', BLOCKING_STATUSES)
+      .limit(1)
+      .get();
+    if (!blockingSnap.empty) {
+      const blocking = blockingSnap.docs[0].data();
+      return res.status(400).json({
+        success: false,
+        message: `Cannot dispatch — an ambulance is currently on another trip (${blocking.patientName}, status: ${blocking.status}). This request can be dispatched once that trip is completed.`,
+      });
     }
 
     await docRef.update({
@@ -413,7 +612,7 @@ router.post('/:id/return', async (req, res) => {
     // ── Notification: reception told ambulance has returned ───────────────────
     await notifyReception(
       'Ambulance Returned to Medical Centre',
-      `Ambulance has returned to the medical centre with ${data.patientName}. Please complete the request.`,
+      `Ambulance has returned to the medical centre with ${data.patientName}. Please confirm arrival.`,
       id
     );
 
@@ -425,15 +624,22 @@ router.post('/:id/return', async (req, res) => {
   }
 });
 
-// POST /:id/complete - Mark request as completed (reception only)
-router.post('/:id/complete', async (req, res) => {
+// Day 16 (Phase 5, Step 5.6.3) — renamed from /complete. This step now
+// only confirms the patient has physically arrived back at the Medical
+// Centre — it frees the vehicle for a new dispatch (ARRIVED is not in
+// BLOCKING_STATUSES) but does NOT fully close the request, since the
+// return-home leg (Drop Off / Drop Off Not Required, below) is still
+// outstanding. The request keeps blocking a duplicate request from the
+// same family until that leg is resolved (ARRIVED is not in the
+// [COMPLETED, CANCELLED] terminal set used throughout this file).
+router.post('/:id/arrive', async (req, res) => {
   try {
     const { uid } = req.user;
     const userRole = await getUserRole(uid);
     const { id } = req.params;
 
     if (!['reception', 'cmo'].includes(userRole)) {
-      return res.status(403).json({ success: false, message: 'Only reception and CMO can complete requests' });
+      return res.status(403).json({ success: false, message: 'Only reception and CMO can confirm arrival' });
     }
 
     const docRef = db.collection('ambulanceRequests').doc(id);
@@ -445,15 +651,78 @@ router.post('/:id/complete', async (req, res) => {
 
     const data = doc.data();
     if (data.status !== AMBULANCE_STATUS.RETURNED) {
-      return res.status(400).json({ success: false, message: `Cannot complete from status: ${data.status}` });
+      return res.status(400).json({ success: false, message: `Cannot confirm arrival from status: ${data.status}` });
     }
 
     await docRef.update({
-      status:      AMBULANCE_STATUS.COMPLETED,
-      completedAt: Timestamp.now().toDate().toISOString(),
+      status:    AMBULANCE_STATUS.ARRIVED,
+      arrivedAt: Timestamp.now().toDate().toISOString(),
     });
 
-    // ── Notification: inform employee trip is fully completed ─────────────────
+    // ── Notification: patient has arrived — trip is not yet fully closed ──────
+    await createNotification({
+      recipientUid:  data.requestedBy,
+      recipientRole: data.requestedByType,
+      title:         'Patient Arrived at Medical Centre',
+      body:          `${data.patientName} has arrived at the Medical Centre.`,
+      type:          'ambulance',
+      referenceId:   id,
+    });
+
+    res.json({ success: true, message: 'Arrival confirmed. Awaiting drop off.' });
+
+  } catch (error) {
+    console.error('Arrive error:', error);
+    res.status(500).json({ success: false, message: 'Failed to confirm arrival', error: error.message });
+  }
+});
+
+// Day 16 (Phase 5, Step 5.6.3) — the actual final close-out. Single click,
+// no in-transit tracking for the return leg itself (deliberately not
+// engineered further — same driver, same vehicle, no new pickup to
+// coordinate). outcome is one of three fixed values:
+//   'dropped_off'      — patient actually taken home
+//   'referred_outside' — referred to an outside facility (Sadiqabad/RYK) —
+//                        reception separately raises a new, ordinary
+//                        request for that transport; nothing special here
+//   'patient_declined' — patient opted to return home on their own
+router.post('/:id/dropoff', async (req, res) => {
+  try {
+    const { uid } = req.user;
+    const userRole = await getUserRole(uid);
+    const { id } = req.params;
+    const { outcome } = req.body;
+
+    if (!['reception', 'cmo'].includes(userRole)) {
+      return res.status(403).json({ success: false, message: 'Only reception and CMO can close the drop-off' });
+    }
+
+    const validOutcomes = ['dropped_off', 'referred_outside', 'patient_declined'];
+    if (!validOutcomes.includes(outcome)) {
+      return res.status(400).json({ success: false, message: `outcome must be one of: ${validOutcomes.join(', ')}` });
+    }
+
+    const docRef = db.collection('ambulanceRequests').doc(id);
+    const doc = await docRef.get();
+
+    if (!doc.exists) {
+      return res.status(404).json({ success: false, message: 'Request not found' });
+    }
+
+    const data = doc.data();
+    if (data.status !== AMBULANCE_STATUS.ARRIVED) {
+      return res.status(400).json({ success: false, message: `Cannot close drop-off from status: ${data.status}` });
+    }
+
+    const now = Timestamp.now().toDate().toISOString();
+    await docRef.update({
+      status:            AMBULANCE_STATUS.COMPLETED,
+      dropOffOutcome:    outcome,
+      dropOffTriggeredAt: now,
+      completedAt:        now,
+    });
+
+    // ── Notification: trip is now genuinely, fully closed ──────────────────────
     await createNotification({
       recipientUid:  data.requestedBy,
       recipientRole: data.requestedByType,
@@ -466,8 +735,8 @@ router.post('/:id/complete', async (req, res) => {
     res.json({ success: true, message: 'Request completed successfully' });
 
   } catch (error) {
-    console.error('Complete error:', error);
-    res.status(500).json({ success: false, message: 'Failed to complete request', error: error.message });
+    console.error('Dropoff error:', error);
+    res.status(500).json({ success: false, message: 'Failed to close drop-off', error: error.message });
   }
 });
 
@@ -494,6 +763,25 @@ router.post('/:id/cancel', async (req, res) => {
     } else if (userRole === 'driver' && data.assignedDriver === uid) {
       if (!['dispatched', 'picked_up'].includes(data.status)) {
         return res.status(403).json({ success: false, message: 'Drivers can only cancel during dispatch or pickup phases' });
+      }
+    } else if (userRole === 'employee') {
+      // Day 16 (Phase 5, Step 5.5) — the employee's own family can cancel
+      // their own request, but only while still pending (before reception
+      // has acted on it). Matched by employeeNumber, not requestedBy — a
+      // request reception submitted on the employee's behalf still belongs
+      // to that employee for cancellation purposes.
+      let employeeNumber;
+      try {
+        const employeeData = await getEmployeeData(uid);
+        employeeNumber = employeeData.officialEmployeeNumber;
+      } catch (e) {
+        employeeNumber = null;
+      }
+      if (!employeeNumber || data.employeeNumber !== employeeNumber) {
+        return res.status(403).json({ success: false, message: 'Access denied' });
+      }
+      if (data.status !== AMBULANCE_STATUS.PENDING) {
+        return res.status(403).json({ success: false, message: 'This request has already been accepted by reception and can no longer be cancelled directly. Please contact reception.' });
       }
     } else {
       return res.status(403).json({ success: false, message: 'Access denied' });

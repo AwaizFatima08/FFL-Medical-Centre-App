@@ -19,6 +19,7 @@ import AmbulanceRequestScreen          from '../screens/ambulance/AmbulanceReque
 import AmbulanceRequestReceptionScreen from '../screens/ambulance/AmbulanceRequestReceptionScreen';
 import AmbulanceReceptionHubScreen     from '../screens/ambulance/AmbulanceReceptionHubScreen';
 import AmbulanceRequestDetailScreen    from '../screens/ambulance/AmbulanceRequestDetailScreen';
+import MyAmbulanceRequestScreen        from '../screens/ambulance/MyAmbulanceRequestScreen';
 
 // ─── Notification flow ────────────────────────────────────────────────────────
 import NotificationScreen from '../screens/notifications/NotificationScreen';
@@ -114,6 +115,7 @@ export default function AppNavigator({ userRole }) {
       <Stack.Screen name="AmbulanceRequestReception" component={AmbulanceRequestReceptionScreen} />
       <Stack.Screen name="AmbulanceReceptionHub"     component={AmbulanceReceptionHubScreen} />
       <Stack.Screen name="AmbulanceRequestDetail"    component={AmbulanceRequestDetailScreen} />
+      <Stack.Screen name="MyAmbulanceRequest"        component={MyAmbulanceRequestScreen} />
 
       {/* Notification flow */}
       <Stack.Screen name="Notifications" component={NotificationScreen} />

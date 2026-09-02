@@ -113,11 +113,29 @@ service cloud.firestore {
     }
 
     // ─── AMBULANCE REQUESTS ──────────────────────────────
+    // Day 16 (Phase 5, Step 5.1 fix): previously any employee could write
+    // ANY field to ANY ambulance request via direct client SDK, bypassing
+    // every role/state check the Express backend enforces (accept, assign,
+    // dispatch, pickup, return, complete, cancel all live in
+    // ambulanceRoutes.js, not here). Read was also fully open to any
+    // authenticated user, exposing patientCondition and other request
+    // details beyond who the backend itself would show them to.
+    //
+    // Every create/update/delete the app performs already goes through
+    // ambulanceRoutes.js using the Admin SDK, which is NOT subject to these
+    // rules — so locking direct client writes to false here does not
+    // remove any functionality the app actually uses. It only closes the
+    // direct-Firestore side door. Read is narrowed to match the same role
+    // list the backend's own GET /:id and GET /active endpoints allow.
+    //
+    // If a future subphase adds a legitimate direct-client write (e.g.
+    // employee self-service in Phase 5.5), that specific case should be
+    // added explicitly here — not by reopening this block broadly.
     match /ambulanceRequests/{requestId} {
-      allow read: if isAuthenticated();
-      allow create: if isAuthenticated();
-      allow update: if isAnyRole(['reception', 'driver', 'doctor', 'cmo', 'employee']);
-      allow delete: if isAnyRole(['reception', 'cmo']);
+      allow read:   if isAnyRole(['reception', 'driver', 'cmo', 'admin_incharge']);
+      allow create: if false;
+      allow update: if false;
+      allow delete: if false;
     }
 
     // ─── MEDICAL TRIPS ───────────────────────────────────

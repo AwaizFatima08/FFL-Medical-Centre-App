@@ -171,15 +171,40 @@ export const getDesignationsByType = (employeeType) => {
 export const VEHICLE_TYPES    = { MINI: 'mini', BLS: 'BLS' };
 export const PRIORITY_FLAGS   = { ROUTINE: 'routine', EMERGENCY: 'emergency' };
 export const TRIP_TYPES       = { INTRA_TOWNSHIP: 'intra_township', INTERCITY: 'intercity' };
+
+// Day 16 (Phase 5, Step 5.2 fix) — was duplicated identically in
+// AmbulanceRequestScreen.js and AmbulanceRequestReceptionScreen.js;
+// consolidated here as the single source of truth now that the field is
+// actually persisted and needs a display-label lookup too.
+export const PURPOSE_OF_VISIT_OPTIONS = [
+  { label: '🚨 Emergency',              value: 'emergency' },
+  { label: '🩺 Routine Consultation',   value: 'routine_consultation' },
+  { label: '🦿 Physiotherapy Visit',    value: 'physiotherapy' },
+  { label: '🦷 Dental Treatment Visit', value: 'dental' },
+  { label: '🧪 Laboratory Sample',      value: 'lab_sample' },
+];
 export const AMBULANCE_STATUS = {
   PENDING:    'pending',
   ACCEPTED:   'accepted',
   DISPATCHED: 'dispatched',
   PICKED_UP:  'picked_up',
   RETURNED:   'returned',
-  COMPLETED:  'completed',   // ← NEW: reception marks patient formally received
+  // Day 16 (Phase 5, Step 5.6.3) — patient physically back at the Medical
+  // Centre; vehicle is free for a new dispatch, but the request stays
+  // open (still blocks a duplicate request from the same family) until
+  // Drop Off or Drop Off Not Required is resolved.
+  ARRIVED:    'arrived',
+  COMPLETED:  'completed',   // ← reception marks patient formally received
   CANCELLED:  'cancelled',
 };
+
+// Day 16 (Phase 5, Step 5.6.3) — fixed outcomes for closing the drop-off
+// leg. Deliberately no free-text reason field — locked to these three.
+export const DROP_OFF_OUTCOMES = [
+  { label: '🏠 Dropped Off',              value: 'dropped_off' },
+  { label: '🏥 Referred to Outside Facility', value: 'referred_outside' },
+  { label: '🚶 Patient Opted to Return on Own', value: 'patient_declined' },
+];
 
 // ─── MEDICAL TRIP ─────────────────────────────────────────────────────────────
 export const MEDICAL_TRIP_DAYS          = ['monday', 'wednesday', 'saturday'];

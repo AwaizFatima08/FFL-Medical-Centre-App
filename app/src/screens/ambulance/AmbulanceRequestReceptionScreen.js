@@ -9,16 +9,13 @@ import {
 import { getAuth } from 'firebase/auth';
 import { getFirestore, collection, query, where, getDocs } from 'firebase/firestore';
 import { API } from '../../config/api';
+import { PURPOSE_OF_VISIT_OPTIONS } from '../../constants';
 
 const VEHICLE_TYPES  = [{ label: 'Mini Ambulance', value: 'mini' }, { label: 'BLS Ambulance', value: 'BLS' }];
-const PURPOSE_OPTIONS = [
-  { label: '🚨 Emergency',              value: 'emergency' },
-  { label: '🩺 Routine Consultation',   value: 'routine_consultation' },
-  { label: '🦿 Physiotherapy Visit',    value: 'physiotherapy' },
-  { label: '🦷 Dental Treatment Visit', value: 'dental' },
-  { label: '🧪 Laboratory Sample',      value: 'lab_sample' },
-];
 const TRIP_TYPES = [{ label: 'Within Township', value: 'intra_township' }, { label: 'Intercity', value: 'intercity' }];
+
+// Day 16 (Phase 5, Step 5.3) — display labels for family relation values
+const RELATION_LABELS = { spouse: 'Spouse', son: 'Son', daughter: 'Daughter' };
 
 function SegmentedControl({ options, selected, onSelect }) {
   return (
@@ -57,6 +54,30 @@ function RadioGroup({ options, selected, onSelect }) {
   );
 }
 
+function PatientPicker({ options, selectedId, onSelect }) {
+  return (
+    <View style={radio.wrapper}>
+      {options.map((opt) => (
+        <TouchableOpacity
+          key={opt.id}
+          style={[radio.row, selectedId === opt.id && radio.rowActive]}
+          onPress={() => onSelect(opt.id)}
+        >
+          <View style={[radio.circle, selectedId === opt.id && radio.circleActive]}>
+            {selectedId === opt.id && <View style={radio.dot} />}
+          </View>
+          <View>
+            <Text style={[radio.label, selectedId === opt.id && radio.labelActive]}>
+              {opt.name}
+            </Text>
+            <Text style={styles.patientRelationSub}>{opt.relationLabel}</Text>
+          </View>
+        </TouchableOpacity>
+      ))}
+    </View>
+  );
+}
+
 function ReadOnlyField({ label, value }) {
   return (
     <View style={styles.readOnlyWrapper}>
@@ -74,8 +95,8 @@ export default function AmbulanceRequestReceptionScreen({ navigation }) {
   const [employeeDoc, setEmployeeDoc] = useState(null);
   const [searchError, setSearchError] = useState('');
 
-  const [patientName, setPatientName]           = useState('');
-  const [patientRelation, setPatientRelation]   = useState('Self');
+  const [familyMembers, setFamilyMembers]         = useState([]);
+  const [selectedPatientId, setSelectedPatientId] = useState('self');
   const [patientCondition, setPatientCondition] = useState('');
   const [vehicleType, setVehicleType]           = useState('mini');
   const [purposeOfVisit, setPurposeOfVisit]     = useState('routine_consultation');
@@ -85,10 +106,22 @@ export default function AmbulanceRequestReceptionScreen({ navigation }) {
   const [notes, setNotes]                       = useState('');
   const [submitting, setSubmitting]             = useState(false);
 
+  const patientOptions = employeeDoc ? [
+    { id: 'self', name: employeeDoc.fullName || 'Employee', relation: 'Self', relationLabel: 'Self' },
+    ...familyMembers.map(m => ({
+      id: m.id,
+      name: m.name,
+      relation: RELATION_LABELS[m.relation] || m.relation,
+      relationLabel: RELATION_LABELS[m.relation] || m.relation,
+    })),
+  ] : [];
+  const selectedPatient = patientOptions.find(p => p.id === selectedPatientId) || patientOptions[0];
+
   const handleSearch = async () => {
     const trimmed = empNumber.trim();
     if (!trimmed) { setSearchError('Please enter an employee number.'); return; }
-    setSearching(true); setSearchError(''); setEmployeeDoc(null); setPatientName('');
+    setSearching(true); setSearchError(''); setEmployeeDoc(null);
+    setFamilyMembers([]); setSelectedPatientId('self');
     try {
       const db = getFirestore();
       const q  = query(collection(db, 'employees'), where('officialEmployeeNumber', '==', trimmed));
@@ -98,8 +131,20 @@ export default function AmbulanceRequestReceptionScreen({ navigation }) {
       } else {
         const data = snapshot.docs[0].data();
         setEmployeeDoc(data);
-        setPatientName(data.fullName || '');
         setPickupLocation('');
+
+        // Day 16 (Phase 5, Step 5.3) — active family members for the found
+        // employee, same query shape as the employee-side request screen.
+        // Pending-review members included by design (see AmbulanceRequestScreen).
+        if (data.userId) {
+          const familyQuery = query(
+            collection(db, 'familyMembers'),
+            where('employeeId', '==', data.userId),
+            where('isActive', '==', true),
+          );
+          const familySnap = await getDocs(familyQuery);
+          setFamilyMembers(familySnap.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+        }
       }
     } catch (error) {
       setSearchError('Search failed. Please check your connection.');
@@ -110,7 +155,6 @@ export default function AmbulanceRequestReceptionScreen({ navigation }) {
 
   const handleSubmit = async () => {
     if (!employeeDoc) { alert('Please search for an employee first.'); return; }
-    if (!patientName.trim()) { alert('Patient name is required.'); return; }
     if (!patientCondition.trim()) { alert('Condition / Complaint is required.'); return; }
     setSubmitting(true);
     try {
@@ -120,9 +164,10 @@ export default function AmbulanceRequestReceptionScreen({ navigation }) {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
         body: JSON.stringify({
-          patientName:      patientName.trim(),
-          patientRelation:  patientRelation.trim() || null,
+          patientName:      selectedPatient.name,
+          patientRelation:  selectedPatient.relation,
           patientCondition: patientCondition.trim(),
+          employeeNumber:   employeeDoc.officialEmployeeNumber,
           vehicleType,
           purposeOfVisit,
           priorityFlag:     purposeOfVisit === 'emergency' ? 'emergency' : 'routine',
@@ -134,7 +179,7 @@ export default function AmbulanceRequestReceptionScreen({ navigation }) {
       });
       const data = await response.json();
       if (response.ok) {
-        alert('Ambulance request submitted successfully.');
+        alert(data.message || 'Ambulance request submitted successfully.');
         navigation.goBack();
       } else {
         alert(data.message || 'Request failed. Please try again.');
@@ -192,10 +237,12 @@ export default function AmbulanceRequestReceptionScreen({ navigation }) {
         {employeeDoc && (
           <>
             <Text style={styles.sectionLabel}>Step 2 — Patient Information</Text>
-            <Text style={styles.fieldLabel}>Patient Name *</Text>
-            <TextInput style={styles.input} placeholder="Full name of patient" value={patientName} onChangeText={setPatientName} />
-            <Text style={styles.fieldLabel}>Relation to Employee</Text>
-            <TextInput style={styles.input} placeholder="e.g. Self, Spouse, Child" value={patientRelation} onChangeText={setPatientRelation} />
+            <Text style={styles.fieldLabel}>Patient *</Text>
+            <PatientPicker
+              options={patientOptions}
+              selectedId={selectedPatientId}
+              onSelect={setSelectedPatientId}
+            />
             <Text style={styles.fieldLabel}>Condition / Complaint *</Text>
             <TextInput style={[styles.input, styles.multiline]} placeholder="Briefly describe the condition" value={patientCondition} onChangeText={setPatientCondition} multiline numberOfLines={3} />
 
@@ -204,7 +251,7 @@ export default function AmbulanceRequestReceptionScreen({ navigation }) {
 
             <Text style={styles.sectionLabel}>Purpose of Visit</Text>
             <RadioGroup
-              options={PURPOSE_OPTIONS}
+              options={PURPOSE_OF_VISIT_OPTIONS}
               selected={purposeOfVisit}
               onSelect={setPurposeOfVisit}
             />
@@ -270,6 +317,7 @@ const styles = StyleSheet.create({
   readOnlyText: { fontSize: 14, color: '#4a5568' },
   emergencyWarning: { fontSize: 12, color: '#c53030', backgroundColor: '#fff5f5', borderRadius: 6, padding: 10, marginTop: 8 },
   hintText: { fontSize: 11, color: '#a0aec0', marginTop: 4, marginLeft: 2 },
+  patientRelationSub: { fontSize: 12, color: '#718096', marginTop: 2 },
   submitBtn: { backgroundColor: '#3182ce', borderRadius: 8, paddingVertical: 14, alignItems: 'center', marginTop: 32 },
   submitBtnDisabled: { backgroundColor: '#90cdf4' },
   submitText: { color: '#ffffff', fontSize: 15, fontWeight: '700' },

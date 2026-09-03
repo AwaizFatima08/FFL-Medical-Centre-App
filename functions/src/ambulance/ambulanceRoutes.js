@@ -40,6 +40,30 @@ async function notifyReception(title, body, referenceId) {
   ));
 }
 
+// Helper: notify all active CMO users. Day 21 (Phase 5.8.3) — separate
+// from notifyReception above rather than generalizing that function, to
+// avoid touching an already-verified-working helper for a single new
+// caller. CMO-only for now (false-emergency flag is treated as an
+// administrative/disciplinary follow-up, not routine operational
+// coverage) — if Doctor should also receive this, this is the one place
+// to widen the role filter below.
+async function notifyCMO(title, body, referenceId) {
+  const snap = await db.collection('users')
+    .where('role', '==', 'cmo')
+    .where('isActive', '==', true)
+    .get();
+  await Promise.all(snap.docs.map(doc =>
+    createNotification({
+      recipientUid:  doc.id,
+      recipientRole: 'cmo',
+      title,
+      body,
+      type:          'ambulance',
+      referenceId,
+    })
+  ));
+}
+
 // Day 16 (Phase 5, Step 5.4, corrected) — statuses that hold the single
 // system-wide active-trip slot. Only ONE driver/vehicle can be physically
 // in motion at a time, so the lock starts at 'dispatched' — NOT at
@@ -59,7 +83,9 @@ const BLOCKING_STATUSES = [
 // slot is currently held. NOTE: this subphase (5.4) only lets emergencies
 // jump ahead of other WAITING (pending) requests. It does not let an
 // emergency interrupt a trip that is already accepted/dispatched/picked_up/
-// returned — that mid-trip interrupt is Phase 5.7, not built yet.
+// returned — that mid-trip interrupt (Phase 5.7) was discussed and
+// deliberately not built (Day 18) — see cancel/:id notes below for the
+// accepted workaround (driver cancels, emergency dispatches next).
 async function getActiveQueue() {
   const snap = await db.collection('ambulanceRequests')
     .where('status', 'not-in', [AMBULANCE_STATUS.COMPLETED, AMBULANCE_STATUS.CANCELLED])
@@ -82,7 +108,8 @@ router.get("/on-duty-driver", async (req, res) => {
   try {
     const { uid } = req.user;
     const userRole = await getUserRole(uid);
-    if (!["reception", "cmo", "admin_incharge"].includes(userRole)) {
+    // Day 20 (Phase 5.8.1) — doctor added for CMO/Doctor dashboard parity
+    if (!["reception", "cmo", "doctor", "admin_incharge"].includes(userRole)) {
       return res.status(403).json({ success: false, message: "Access denied" });
     }
     const snapshot = await db.collection("users")
@@ -267,7 +294,10 @@ router.get('/active', async (req, res) => {
     const { uid } = req.user;
     const userRole = await getUserRole(uid);
 
-    if (!['reception', 'cmo', 'admin_incharge'].includes(userRole)) {
+    // Day 20 (Phase 5.8.1) — doctor added for full CMO/Doctor dashboard
+    // parity (Doctor can cover the same ambulance operations as CMO,
+    // e.g. while CMO is on leave).
+    if (!['reception', 'cmo', 'doctor', 'admin_incharge'].includes(userRole)) {
       return res.status(403).json({ success: false, message: 'Access denied' });
     }
 
@@ -337,6 +367,32 @@ router.get('/my-active', async (req, res) => {
     const position = queue.findIndex(r => r.id === doc.id);
     requestOut.queuePosition = position === -1 ? null : position + 1;
 
+    // Day 18 (Phase 5, small fixes) — let the employee know, alongside
+    // their queue position, when the reason they're waiting is that the
+    // ambulance is away on an intercity trip (uncertain return time) —
+    // not just "on another trip." This is the same information already
+    // sent once, at submission time, in POST /request's response message
+    // (Step 5.6.3) — this makes it persist on the status screen too, so
+    // it isn't lost the moment the employee dismisses that one-time alert.
+    // Only relevant while still waiting (pending/accepted); once the
+    // employee's own request is the one dispatched, the note no longer
+    // applies to them. Excludes their own request from the "blocking"
+    // check — if their own request IS the one currently dispatched, it
+    // isn't blocking itself.
+    requestOut.awayOnIntercity = false;
+    if ([AMBULANCE_STATUS.PENDING, AMBULANCE_STATUS.ACCEPTED].includes(requestOut.status)) {
+      const blockingSnap = await db.collection('ambulanceRequests')
+        .where('status', 'in', BLOCKING_STATUSES)
+        .limit(1)
+        .get();
+      if (!blockingSnap.empty && blockingSnap.docs[0].id !== doc.id) {
+        const blockingData = blockingSnap.docs[0].data();
+        if (blockingData.tripType === 'intercity') {
+          requestOut.awayOnIntercity = true;
+        }
+      }
+    }
+
     res.json({ success: true, data: requestOut });
 
   } catch (error) {
@@ -352,7 +408,10 @@ router.get('/:id', async (req, res) => {
     const userRole = await getUserRole(uid);
     const { id } = req.params;
 
-    if (!['reception', 'driver', 'cmo', 'admin_incharge'].includes(userRole)) {
+    // Day 20 (Phase 5.8.1) — doctor added; this route previously excluded
+    // doctor entirely, which would have silently blocked the dashboard's
+    // detail view for that role even after the write routes below allow it.
+    if (!['reception', 'driver', 'cmo', 'doctor', 'admin_incharge'].includes(userRole)) {
       return res.status(403).json({ success: false, message: 'Access denied' });
     }
 
@@ -376,8 +435,10 @@ router.post('/:id/accept', async (req, res) => {
     const userRole = await getUserRole(uid);
     const { id } = req.params;
 
-    if (!['reception', 'cmo'].includes(userRole)) {
-      return res.status(403).json({ success: false, message: 'Only reception and CMO can accept requests' });
+    // Day 20 (Phase 5.8.1) — doctor added for full write parity with CMO
+    // (e.g. covering ambulance operations while CMO is on leave).
+    if (!['reception', 'cmo', 'doctor'].includes(userRole)) {
+      return res.status(403).json({ success: false, message: 'Only reception, CMO, and Doctor can accept requests' });
     }
 
     const docRef = db.collection('ambulanceRequests').doc(id);
@@ -390,6 +451,31 @@ router.post('/:id/accept', async (req, res) => {
     const data = doc.data();
     if (data.status !== AMBULANCE_STATUS.PENDING) {
       return res.status(400).json({ success: false, message: `Cannot accept request with status: ${data.status}` });
+    }
+
+    // Day 18 (Phase 5, small fixes) — emergency requests are now a hard
+    // priority at Accept time. Reception/CMO cannot accept a routine
+    // request while any emergency request is still sitting pending (not
+    // yet accepted) — locked as the rule after live testing showed a
+    // routine request ("Q3") being accepted ahead of an already-pending
+    // emergency (Day 17). Reordering AMONG routine requests themselves
+    // stays entirely at reception's discretion — this block only fires
+    // when the request being skipped ahead of is an emergency. Applies
+    // uniformly regardless of who is clicking Accept (reception or CMO) —
+    // no role is exempt from this rule.
+    if (data.priorityFlag !== 'emergency') {
+      const pendingEmergencySnap = await db.collection('ambulanceRequests')
+        .where('status', '==', AMBULANCE_STATUS.PENDING)
+        .where('priorityFlag', '==', 'emergency')
+        .limit(1)
+        .get();
+      if (!pendingEmergencySnap.empty) {
+        const emergencyReq = pendingEmergencySnap.docs[0].data();
+        return res.status(400).json({
+          success: false,
+          message: `Cannot accept — an emergency request is waiting (${emergencyReq.patientName}). Please accept the emergency request first.`,
+        });
+      }
     }
 
     await docRef.update({
@@ -424,7 +510,8 @@ router.post('/:id/assign', async (req, res) => {
     const { id } = req.params;
     const { vehicleType } = req.body;
 
-    if (!['reception', 'cmo'].includes(userRole)) {
+    // Day 20 (Phase 5.8.1) — doctor added for full write parity with CMO.
+    if (!['reception', 'cmo', 'doctor'].includes(userRole)) {
       return res.status(403).json({ success: false, message: 'Access denied' });
     }
 
@@ -474,7 +561,8 @@ router.post('/:id/dispatch', async (req, res) => {
     const userRole = await getUserRole(uid);
     const { id } = req.params;
 
-    if (!['reception', 'cmo'].includes(userRole)) {
+    // Day 20 (Phase 5.8.1) — doctor added for full write parity with CMO.
+    if (!['reception', 'cmo', 'doctor'].includes(userRole)) {
       return res.status(403).json({ success: false, message: 'Access denied' });
     }
 
@@ -496,7 +584,10 @@ router.post('/:id/dispatch', async (req, res) => {
     // (reception triage) — the lock applies only here, at actual dispatch,
     // and releases when the blocking trip reaches 'completed'. This does
     // NOT let an emergency interrupt a trip already in motion — that
-    // mid-trip interrupt is Phase 5.7, not built yet.
+    // mid-trip interrupt (Phase 5.7) was discussed and deliberately not
+    // built (Day 18); the accepted workaround for this scenario is the
+    // driver cancelling their current trip (fixed reason, see /:id/cancel)
+    // so the emergency can then be dispatched into the now-free slot.
     const blockingSnap = await db.collection('ambulanceRequests')
       .where('status', 'in', BLOCKING_STATUSES)
       .limit(1)
@@ -638,8 +729,9 @@ router.post('/:id/arrive', async (req, res) => {
     const userRole = await getUserRole(uid);
     const { id } = req.params;
 
-    if (!['reception', 'cmo'].includes(userRole)) {
-      return res.status(403).json({ success: false, message: 'Only reception and CMO can confirm arrival' });
+    // Day 20 (Phase 5.8.1) — doctor added for full write parity with CMO.
+    if (!['reception', 'cmo', 'doctor'].includes(userRole)) {
+      return res.status(403).json({ success: false, message: 'Only reception, CMO, and Doctor can confirm arrival' });
     }
 
     const docRef = db.collection('ambulanceRequests').doc(id);
@@ -691,10 +783,11 @@ router.post('/:id/dropoff', async (req, res) => {
     const { uid } = req.user;
     const userRole = await getUserRole(uid);
     const { id } = req.params;
-    const { outcome } = req.body;
+    const { outcome, falseEmergency } = req.body;
 
-    if (!['reception', 'cmo'].includes(userRole)) {
-      return res.status(403).json({ success: false, message: 'Only reception and CMO can close the drop-off' });
+    // Day 20 (Phase 5.8.1) — doctor added for full write parity with CMO.
+    if (!['reception', 'cmo', 'doctor'].includes(userRole)) {
+      return res.status(403).json({ success: false, message: 'Only reception, CMO, and Doctor can close the drop-off' });
     }
 
     const validOutcomes = ['dropped_off', 'referred_outside', 'patient_declined'];
@@ -715,12 +808,29 @@ router.post('/:id/dropoff', async (req, res) => {
     }
 
     const now = Timestamp.now().toDate().toISOString();
-    await docRef.update({
+    const updates = {
       status:            AMBULANCE_STATUS.COMPLETED,
       dropOffOutcome:    outcome,
       dropOffTriggeredAt: now,
       completedAt:        now,
-    });
+    };
+
+    // Day 21 (Phase 5.8.3) — false-emergency flag, captured at closure per
+    // Homi's design call (can't be judged before the patient arrives, and
+    // shouldn't be risked on instinct mid-trip). Only meaningful for
+    // requests that were actually flagged emergency at request time —
+    // silently ignored otherwise (a routine request has nothing to
+    // "falsely" claim), rather than erroring, so a stray true from the
+    // client never blocks a legitimate completion.
+    let flaggedFalseEmergency = false;
+    if (data.priorityFlag === 'emergency' && falseEmergency === true) {
+      updates.falseEmergencyFlag      = true;
+      updates.falseEmergencyFlaggedBy = uid;
+      updates.falseEmergencyFlaggedAt = now;
+      flaggedFalseEmergency = true;
+    }
+
+    await docRef.update(updates);
 
     // ── Notification: trip is now genuinely, fully closed ──────────────────────
     await createNotification({
@@ -731,6 +841,18 @@ router.post('/:id/dropoff', async (req, res) => {
       type:          'ambulance',
       referenceId:   id,
     });
+
+    // Day 21 (Phase 5.8.3) — separate notification to CMO for
+    // administrative handling, per the locked design. Does not go to the
+    // requester or to Doctor (see notifyCMO's notes above — one-line
+    // change there if Doctor should also receive this).
+    if (flaggedFalseEmergency) {
+      await notifyCMO(
+        'False Emergency Flagged',
+        `${data.patientName}'s request (Employee #${data.employeeNumber}) was flagged as a false emergency alarm at closure. Review for administrative follow-up.`,
+        id
+      );
+    }
 
     res.json({ success: true, message: 'Request completed successfully' });
 
@@ -758,7 +880,8 @@ router.post('/:id/cancel', async (req, res) => {
     const data = doc.data();
 
     // Permission checks
-    if (userRole === 'reception' || userRole === 'cmo') {
+    // Day 20 (Phase 5.8.1) — doctor added for full write parity with CMO.
+    if (userRole === 'reception' || userRole === 'cmo' || userRole === 'doctor') {
       // Can cancel at any stage
     } else if (userRole === 'driver' && data.assignedDriver === uid) {
       if (!['dispatched', 'picked_up'].includes(data.status)) {
@@ -801,11 +924,24 @@ router.post('/:id/cancel', async (req, res) => {
     // ── Notification: inform employee of cancellation ─────────────────────────
     // Only notify if it wasn't cancelled by the employee themselves
     if (data.requestedBy !== uid) {
+      // Day 18 (Phase 5, small fixes) — a driver cancellation only ever
+      // happens for one reason in practice: mid-route diversion to
+      // another emergency call. Drivers have no free-text input on their
+      // dashboard by design (zero-typing, graphical UI — see DriverHome.js)
+      // and now send a fixed reason string. Use a complete, purpose-built
+      // sentence here instead of the generic "Reason: <text>" template,
+      // which would otherwise read as an awkward stitched-together
+      // fragment. All other cancellers (reception/CMO/employee) keep the
+      // existing generic template, unchanged.
+      const body = userRole === 'driver'
+        ? `Your ambulance request for ${data.patientName} was cancelled — the vehicle was diverted for another emergency. Reception will contact you shortly.`
+        : `Your ambulance request for ${data.patientName} has been cancelled.${reason ? ` Reason: ${reason.trim()}` : ''}`;
+
       await createNotification({
         recipientUid:  data.requestedBy,
         recipientRole: data.requestedByType,
         title:         'Ambulance Request Cancelled',
-        body:          `Your ambulance request for ${data.patientName} has been cancelled.${reason ? ` Reason: ${reason.trim()}` : ''}`,
+        body,
         type:          'ambulance',
         referenceId:   id,
       });

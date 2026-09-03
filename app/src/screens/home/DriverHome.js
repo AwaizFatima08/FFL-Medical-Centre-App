@@ -94,10 +94,16 @@ export default function DriverHome({ navigation }) {
   const handlePickedUp = () => callEndpoint('pickup');
   const handleReturned = () => callEndpoint('return');
   const handleCancel   = () => {
+    // Day 18 (Phase 5, small fixes) — the only reason a driver ever
+    // cancels a trip is being diverted mid-route for another emergency
+    // call (confirmed — drivers don't cancel for any other reason in
+    // practice). Fixed confirm message and fixed reason string; no free
+    // text, matching the driver dashboard's zero-typing, graphical design
+    // (drivers are not comfortable reading/typing English).
     webConfirm(
       'Cancel Trip',
-      'Cancel this trip? This cannot be undone.',
-      () => callEndpoint('cancel', { reason: 'Cancelled by driver' }),
+      'This trip is being cancelled — the ambulance is being diverted for another emergency call. Continue?',
+      () => callEndpoint('cancel', { reason: 'Diverted for another emergency call' }),
       true, 'Cancel Trip'
     );
   };

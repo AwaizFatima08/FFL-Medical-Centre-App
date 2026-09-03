@@ -168,6 +168,23 @@ export default function MyAmbulanceRequestScreen({ navigation }) {
               )}
             </View>
 
+            {/* Day 18 (Phase 5, small fixes) — shown alongside the queue
+                position above (not replacing it) whenever the reason the
+                employee is waiting is that the ambulance is away on an
+                intercity trip with an uncertain return time — not just
+                "on another trip." Purely informational; does not block
+                anything the employee can already do on this screen (e.g.
+                Cancel Request below, if still pending). Derived from
+                GET /my-active's awayOnIntercity flag — see
+                ambulanceRoutes.js for the source-of-truth logic. */}
+            {request.awayOnIntercity && (
+              <View style={styles.intercityBanner}>
+                <Text style={styles.intercityText}>
+                  🛣️ Ambulance is away on an intercity trip — return time is uncertain. Call the Medical Centre if this is urgent.
+                </Text>
+              </View>
+            )}
+
             <View style={styles.section}>
               <Text style={styles.sectionTitle}>Patient</Text>
               {renderField('Patient Name', request.patientName)}
@@ -266,6 +283,12 @@ const styles = StyleSheet.create({
     borderLeftWidth: 4, borderLeftColor: '#e53e3e', marginBottom: 16,
   },
   emergencyText: { color: '#c53030', fontSize: 15, fontWeight: 'bold', textAlign: 'center' },
+
+  intercityBanner: {
+    backgroundColor: '#fffaf0', padding: 12, borderRadius: 8,
+    borderLeftWidth: 4, borderLeftColor: '#dd6b20', marginBottom: 16,
+  },
+  intercityText: { color: '#9c4221', fontSize: 13, fontWeight: '600', textAlign: 'center' },
 
   statusCard: {
     backgroundColor: '#ffffff', borderRadius: 12, padding: 16,

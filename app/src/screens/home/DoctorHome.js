@@ -6,6 +6,13 @@ import LogoutButton     from '../../components/LogoutButton';
 import NotificationBell from '../../components/NotificationBell';
 
 const TILES = [
+  // Day 20 (Phase 5.8.1) — reuses the same AmbulanceReceptionHub screen
+  // reception already uses; backend now grants Doctor the same write
+  // authority as CMO on every ambulance action route (parity, so Doctor
+  // can cover ambulance operations while CMO is on leave), so this is
+  // real operational access, not a view-only window onto it.
+  { id: 'ambulance',    label: 'Ambulance Dispatch',  icon: '🚑', screen: 'AmbulanceReceptionHub', active: true },
+  { id: 'ambulanceHist', label: 'Ambulance History',  icon: '📊', screen: 'AmbulanceCMOHistory',   active: true },
   { id: 'availability', label: 'Doctor Availability', icon: '🩺', screen: 'DoctorAvailability', active: true },
   { id: 'trip',         label: 'Medical Trip',        icon: '🚌', screen: 'TripView',           active: true },
   { id: 'directory',    label: 'Doctors Directory',   icon: '🏥', screen: 'DirectoryList',      active: true },

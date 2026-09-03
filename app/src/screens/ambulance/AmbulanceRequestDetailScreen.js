@@ -1,4 +1,3 @@
-AmbulanceRequestDetailScreen.js
 // app/src/screens/ambulance/AmbulanceRequestDetailScreen.js
 import React, { useState, useCallback, useEffect } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, ScrollView, ActivityIndicator, TextInput, Platform } from 'react-native';
@@ -46,6 +45,14 @@ export default function AmbulanceRequestDetailScreen({ route, navigation }) {
   // Day 16 (Phase 5, Step 5.6.3) — mirrors showCancelForm's toggle pattern
   const [showDropOffReasons, setShowDropOffReasons] = useState(false);
   const [cancelReason, setCancelReason] = useState('');
+
+  // Day 21 (Phase 5.8.3) — false-emergency flag, checked at Drop Off
+  // closure per the locked design (can't be judged before the patient
+  // arrives, shouldn't be risked on instinct mid-trip). Only rendered for
+  // emergency-flagged requests (see canDropOff/isEmergency below) — a
+  // routine request has nothing to "falsely" claim. Reset per request
+  // load, same as showCancelForm/showDropOffReasons.
+  const [falseEmergencyChecked, setFalseEmergencyChecked] = useState(false);
 
   // Day 16 (Phase 5, Step 5.6.2) — driver picker removed. The backend now
   // auto-assigns whoever is on duty; this screen only needs to show that
@@ -100,6 +107,7 @@ export default function AmbulanceRequestDetailScreen({ route, navigation }) {
 
   useFocusEffect(useCallback(() => {
     setLoading(true);
+    setFalseEmergencyChecked(false);
     fetchRequest();
   }, [requestId]));
 
@@ -170,8 +178,18 @@ export default function AmbulanceRequestDetailScreen({ route, navigation }) {
   // Day 16 (Phase 5, Step 5.6.3) — closes the drop-off leg. Single click,
   // no in-transit tracking of the return trip itself (deliberately not
   // engineered further, per Homi's Day 16 decision).
+  // Day 21 (Phase 5.8.3) — carries the false-emergency flag along
+  // regardless of which outcome is chosen (Dropped Off, Referred Outside,
+  // or Patient Declined) — the flag is about whether the original alarm
+  // was genuine, independent of how the trip actually closed out. Backend
+  // silently ignores it on non-emergency requests, so this is safe to
+  // always include for isEmergency requests without a separate guard here.
   const handleDropOff = async (outcome) => {
-    await callEndpoint('dropoff', { outcome });
+    const body = { outcome };
+    if (isEmergency && falseEmergencyChecked) {
+      body.falseEmergency = true;
+    }
+    await callEndpoint('dropoff', body);
   };
 
   const handleCancel = async () => {
@@ -239,6 +257,11 @@ export default function AmbulanceRequestDetailScreen({ route, navigation }) {
             <Text style={styles.emergencyText}>🚨 EMERGENCY REQUEST</Text>
           </View>
         )}
+        {request.falseEmergencyFlag === true && (
+          <View style={styles.flaggedBanner}>
+            <Text style={styles.flaggedText}>⚠️ Flagged as False Emergency at Closure</Text>
+          </View>
+        )}
       </View>
 
       <View style={styles.section}>
@@ -273,6 +296,7 @@ export default function AmbulanceRequestDetailScreen({ route, navigation }) {
         {request.dropOffTriggeredAt && renderField('Drop Off Resolved At', new Date(request.dropOffTriggeredAt).toLocaleString())}
         {request.dropOffOutcome && renderField('Drop Off Outcome', DROP_OFF_LABELS[request.dropOffOutcome] || request.dropOffOutcome)}
         {request.completedAt && renderField('Completed At', new Date(request.completedAt).toLocaleString())}
+        {request.falseEmergencyFlaggedAt && renderField('False Emergency Flagged At', new Date(request.falseEmergencyFlaggedAt).toLocaleString())}
       </View>
 
       {/* Action Buttons Section */}
@@ -356,6 +380,29 @@ export default function AmbulanceRequestDetailScreen({ route, navigation }) {
             >
               <Text style={styles.actionBtnText}>
                 {actionLoading ? 'Processing...' : '🏥 Confirm Arrival'}
+              </Text>
+            </TouchableOpacity>
+          )}
+
+          {/* Day 21 (Phase 5.8.3) — false-emergency checkbox. Rendered once,
+              above whichever Drop Off sub-view is showing (the two direct
+              buttons, or the "Not Required" reasons list) — so its state
+              persists regardless of which path the user takes to close
+              the request, and applies to any of the three outcomes.
+              Emergency-only: a routine request has nothing to "falsely"
+              claim, so this simply doesn't render for one. */}
+          {canDropOff && isEmergency && (
+            <TouchableOpacity
+              style={styles.falseEmergencyRow}
+              onPress={() => setFalseEmergencyChecked(prev => !prev)}
+              disabled={actionLoading}
+              activeOpacity={0.7}
+            >
+              <View style={[styles.checkbox, falseEmergencyChecked && styles.checkboxChecked]}>
+                {falseEmergencyChecked && <Text style={styles.checkmark}>✓</Text>}
+              </View>
+              <Text style={styles.falseEmergencyLabel}>
+                This was flagged as an emergency but was not a genuine emergency. Checking this notifies the CMO for administrative review.
               </Text>
             </TouchableOpacity>
           )}
@@ -472,6 +519,8 @@ const styles = StyleSheet.create({
   statusText: { fontSize: 14, fontWeight: '600' },
   emergencyBanner: { marginTop: 12, backgroundColor: '#fed7d7', padding: 12, borderRadius: 8, borderLeftWidth: 4, borderLeftColor: '#e53e3e' },
   emergencyText: { color: '#c53030', fontSize: 16, fontWeight: 'bold', textAlign: 'center' },
+  flaggedBanner: { marginTop: 12, backgroundColor: '#fffaf0', padding: 12, borderRadius: 8, borderLeftWidth: 4, borderLeftColor: '#dd6b20' },
+  flaggedText: { color: '#9c4221', fontSize: 14, fontWeight: 'bold', textAlign: 'center' },
 
   section: { marginBottom: 20, backgroundColor: '#ffffff', borderRadius: 12, padding: 16, shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.1, shadowRadius: 4, elevation: 3 },
   sectionTitle: { fontSize: 18, fontWeight: 'bold', color: '#2d3748', marginBottom: 12, borderBottomWidth: 1, borderBottomColor: '#e2e8f0', paddingBottom: 8 },
@@ -510,6 +559,20 @@ const styles = StyleSheet.create({
   vehicleOptionSelected: { backgroundColor: '#3182ce', borderColor: '#3182ce' },
   vehicleOptionText: { color: '#4a5568', fontSize: 14, fontWeight: '600' },
   vehicleOptionTextSelected: { color: '#ffffff' },
+
+  // Day 21 (Phase 5.8.3) — false-emergency checkbox
+  falseEmergencyRow: {
+    flexDirection: 'row', alignItems: 'flex-start', gap: 10,
+    backgroundColor: '#fffaf0', borderWidth: 1, borderColor: '#feebc8',
+    borderRadius: 8, padding: 12, marginBottom: 12,
+  },
+  checkbox: {
+    width: 22, height: 22, borderRadius: 4, borderWidth: 2, borderColor: '#dd6b20',
+    alignItems: 'center', justifyContent: 'center', marginTop: 1, backgroundColor: '#ffffff',
+  },
+  checkboxChecked: { backgroundColor: '#dd6b20' },
+  checkmark: { color: '#ffffff', fontSize: 14, fontWeight: '900' },
+  falseEmergencyLabel: { flex: 1, fontSize: 13, color: '#9c4221', lineHeight: 18 },
 
   input: { borderWidth: 1, borderColor: '#cbd5e0', borderRadius: 8, paddingHorizontal: 12, paddingVertical: 10, fontSize: 16, backgroundColor: '#ffffff', marginBottom: 12 },
   textArea: { height: 80, textAlignVertical: 'top' },

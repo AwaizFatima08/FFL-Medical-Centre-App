@@ -209,6 +209,16 @@ export default function AmbulanceReceptionHubScreen({ navigation }) {
         <Text style={styles.newRequestText}>+ Raise New Request</Text>
       </TouchableOpacity>
 
+      {/* Day 19 (Phase 5.9) — entry point to the reception-only completed/
+          cancelled history screen. Secondary (outline) styling to keep
+          "+ Raise New Request" as the clear primary action on this hub. */}
+      <TouchableOpacity
+        style={styles.historyBtn}
+        onPress={() => navigation.navigate('AmbulanceHistory')}
+      >
+        <Text style={styles.historyBtnText}>📋 View History</Text>
+      </TouchableOpacity>
+
       {loading ? (
         <View style={styles.centered}>
           <ActivityIndicator size="large" color="#3182ce" />
@@ -252,10 +262,17 @@ const styles = StyleSheet.create({
   statLabel: { fontSize: 12, color: '#4a5568', marginTop: 2 },
   
   newRequestBtn: {
-    margin: 16, backgroundColor: '#3182ce', borderRadius: 8,
+    marginHorizontal: 16, marginTop: 16, backgroundColor: '#3182ce', borderRadius: 8,
     paddingVertical: 12, alignItems: 'center',
   },
   newRequestText: { color: '#ffffff', fontSize: 16, fontWeight: '600' },
+
+  historyBtn: {
+    marginHorizontal: 16, marginTop: 10, marginBottom: 6,
+    backgroundColor: '#ffffff', borderWidth: 1.5, borderColor: '#3182ce',
+    borderRadius: 8, paddingVertical: 11, alignItems: 'center',
+  },
+  historyBtnText: { color: '#3182ce', fontSize: 15, fontWeight: '600' },
   
   centered: { flex: 1, justifyContent: 'center', alignItems: 'center' },
   loadingText: { marginTop: 12, color: '#4a5568', fontSize: 16 },

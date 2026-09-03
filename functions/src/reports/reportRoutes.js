@@ -64,6 +64,22 @@ const getHospitalMap = async (db, doctorIds) => {
   return map;
 };
 
+// ─── HELPER — BATCH USER NAME LOOKUP (Day 19, Phase 5.9) ─
+// Resolves uids (e.g. an ambulance request's acceptedBy field) to a
+// display name, once per unique uid — same batched-lookup pattern as
+// getHospitalMap above, not once per row. Falls back to email if
+// fullName isn't set, matching the convention already used in
+// ambulanceRoutes.js's GET /on-duty-driver.
+const getUserNameMap = async (db, uids) => {
+  const uniqueIds = [...new Set(uids.filter(Boolean))];
+  const map = {};
+  await Promise.all(uniqueIds.map(async (id) => {
+    const doc = await db.collection('users').doc(id).get();
+    map[id] = doc.exists ? (doc.data().fullName || doc.data().email || '—') : '—';
+  }));
+  return map;
+};
+
 // ─── HELPER — DAY OF WEEK FROM YYYY-MM-DD ────────────────
 // tripBookings has no stored dayOfWeek field — derived from tripDate.
 const dayOfWeekFrom = (tripDate) => {
@@ -77,18 +93,62 @@ const dayOfWeekFrom = (tripDate) => {
 // ─────────────────────────────────────────────────────────
 
 // ─── GET /ambulance ───────────────────────────────────────
+// Day 19 (Phase 5.9) — extended, not forked. This route already covered
+// most of what reception's new history screen needs (date range,
+// priority filter, full request list, role gating that already includes
+// reception) — per PHASE5_DESIGN.md's own note to check this route before
+// building fresh. Added: optional `status` filter (comma-separated,
+// e.g. "completed,cancelled"), optional `employeeSearch` (name/number
+// substring match), and `acceptedByName` resolved onto every row. All
+// three are additive/optional — a caller that doesn't pass them gets
+// exactly the previous behavior, so this stays safe for any other future
+// consumer (e.g. Phase 5.8's CMO historical view) to reuse with its own
+// query params.
 router.get('/ambulance', verifyToken, verifyRole([
   ROLES.CMO, ROLES.DOCTOR, ROLES.RECEPTION, ROLES.ADMIN_INCHARGE,
 ]), async (req, res) => {
   try {
     const db = admin.firestore();
-    const { fromDate, toDate, priorityFlag, vehicleType } = req.query;
+    const { fromDate, toDate, priorityFlag, vehicleType, status, employeeSearch, falseEmergencyOnly } = req.query;
     const snapshot = await db.collection('ambulanceRequests')
       .orderBy('createdAt', 'desc').get();
     let requests = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
     requests = requests.filter(r => inDateRange(r.createdAt, fromDate, toDate));
     if (priorityFlag) requests = requests.filter(r => r.priorityFlag === priorityFlag);
     if (vehicleType)  requests = requests.filter(r => r.vehicleAssigned === vehicleType);
+
+    // Day 21 (Phase 5.8.3) — filter to only requests flagged as a false
+    // emergency at closure. Optional; unrelated to any other filter here.
+    if (falseEmergencyOnly === 'true') {
+      requests = requests.filter(r => r.falseEmergencyFlag === true);
+    }
+
+    // Day 19 (Phase 5.9) — optional status filter, comma-separated.
+    // Reception's history screen calls this with status=completed,cancelled.
+    if (status) {
+      const statusList = status.split(',').map(s => s.trim()).filter(Boolean);
+      if (statusList.length) requests = requests.filter(r => statusList.includes(r.status));
+    }
+
+    // Day 19 (Phase 5.9) — free-text search against patient name or
+    // employee number, case-insensitive substring match.
+    if (employeeSearch) {
+      const term = employeeSearch.trim().toLowerCase();
+      requests = requests.filter(r =>
+        (r.patientName || '').toLowerCase().includes(term) ||
+        (r.employeeNumber || '').toLowerCase().includes(term)
+      );
+    }
+
+    // Day 19 (Phase 5.9) — resolve acceptedBy uid to a display name.
+    // Requests that were cancelled while still pending (never accepted)
+    // simply have no acceptedBy, so they get null here, not a lookup.
+    const acceptedByIds = requests.map(r => r.acceptedBy).filter(Boolean);
+    const acceptedByMap = await getUserNameMap(db, acceptedByIds);
+    requests.forEach(r => {
+      r.acceptedByName = r.acceptedBy ? (acceptedByMap[r.acceptedBy] || '—') : null;
+    });
+
     const summary = { total: requests.length, byStatus: {}, byVehicle: {}, byPriority: {}, byTripType: {} };
     requests.forEach(r => {
       summary.byStatus[r.status]          = (summary.byStatus[r.status]          || 0) + 1;
@@ -451,13 +511,14 @@ router.get('/trips/monthly', verifyToken, verifyRole([
 
 // ─── GET /ambulance/kpis ──────────────────────────────────
 // Ambulance KPI report: response times from 4 timestamps
-// Daily and monthly — CMO only
+// Daily and monthly — CMO and Doctor (Day 20, Phase 5.8.2 — doctor added
+// for dashboard parity with CMO).
 router.get('/ambulance/kpis', verifyToken, verifyRole([
-  ROLES.CMO,
+  ROLES.CMO, ROLES.DOCTOR,
 ]), async (req, res) => {
   try {
     const db    = admin.firestore();
-    const { date, month, year } = req.query;
+    const { date, month, year, fromDate, toDate } = req.query;
 
     const snapshot = await db.collection('ambulanceRequests')
       .orderBy('createdAt', 'desc')
@@ -465,7 +526,15 @@ router.get('/ambulance/kpis', verifyToken, verifyRole([
 
     let requests = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
 
-    if (date) {
+    // Day 20 (Phase 5.8.2) — fromDate/toDate added alongside the existing
+    // date/month/year options, using the same inDateRange helper the
+    // sibling GET /ambulance route already uses, so the CMO/Doctor
+    // dashboard's request list and KPI panel can share one date filter
+    // instead of two inconsistent ones. Existing date/month/year callers
+    // are unaffected — this is purely additive.
+    if (fromDate || toDate) {
+      requests = requests.filter(r => inDateRange(r.createdAt, fromDate, toDate));
+    } else if (date) {
       requests = requests.filter(r => r.createdAt && r.createdAt.startsWith(date));
     } else if (month && year) {
       const monthStr = String(parseInt(month)).padStart(2, '0');

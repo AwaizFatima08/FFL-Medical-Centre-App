@@ -6,6 +6,8 @@ Generated from live production data review. This reflects the **actual** schema 
 
 **Day 14 revision note:** Phase 4 (My Profile) shipped a large number of new fields across `employees`, `familyMembers`, and a brand-new `bloodDonorRegistry` collection, plus a new protected subcollection (`employees/{id}/private/medical`). This revision reflects all of that, marked inline as **[Day 14]**. **Basis for this revision differs from Day 13's:** this was refreshed from the code that shipped this session (authoritative for what gets written) plus the live Firestore screenshots reviewed during Phase 4's live testing — not a fresh full console export of every collection. Sections not touched this session (`ambulanceRequests`, `circulars`, `doctorAvailability`, `doctorDirectory`, `feedback`, `fitnessAppointments`, `mail`, `healthTips`, `notifications`, `tripBookings`, `users`, vaccination collections) are carried over unchanged from Day 13 and were not re-verified. A full fresh export, the way Day 13's was done, would still be worth doing at some point — this gets the doc back to trustworthy for what changed, not a ground-up re-verification of everything.
 
+**Day 16–17 revision note:** `ambulanceRequests` and `users` updated, marked inline as **[Day 16–17]**. Same basis as Day 14's approach — refreshed directly from `ambulanceRoutes.js` and `authRoutes.js` as they stand after Phase 5 subphases 5.1–5.6.3, not a fresh console export. `ambulanceRequests` specifically had been flagged as unverified since Day 13 (see the note above) — this is its first real re-verification, not just an incremental update on top of an already-shaky baseline. All other sections remain exactly as they were at Day 14 and are still unverified past that point.
+
 ---
 
 ## Top-Level Collections
@@ -20,30 +22,39 @@ Generated from live production data review. This reflects the **actual** schema 
 
 ## ambulanceRequests
 
+**[Day 16–17 revision]** Fully re-verified this session — every field below is confirmed directly against `ambulanceRoutes.js` as it stands after Phase 5 (subphases 5.1–5.6.3), not carried over from Day 13's unverified snapshot. `queuePosition` is **not** a stored field — it's computed at read time in `GET /active` and `GET /my-active` and attached to the response, never written to Firestore.
+
 | Field | Type | Notes |
 |---|---|---|
-| assignedDriver | string / null | |
-| cancelReason | string | e.g. "not required" |
+| acceptedAt | timestamp / null | |
+| acceptedBy | string (uid) / null | |
+| arrivedAt | timestamp / null | **[Day 16–17, new]** set when reception confirms arrival at the Medical Centre — the request stays open past this point until drop-off is resolved (5.6.3) |
+| assignedDriver | string (uid) / null | since 5.6.2, always the on-duty driver — never client-supplied |
+| cancelReason | string / null | e.g. "not required" |
 | cancelledAt | timestamp / null | |
 | cancelledBy | string (uid) / null | |
-| completedAt | timestamp / null | |
+| completedAt | timestamp / null | now also set by the drop-off flow (5.6.3), not only the old single-step complete |
 | createdAt | timestamp | |
 | dispatchedAt | timestamp / null | |
-| doctorObserver | string / null | |
+| doctorObserver | string / null | initialized on every request but never set by any route — likely vestigial |
 | dropLocation | string / null | |
+| dropOffOutcome | string / null | **[Day 16–17, new]** one of `"dropped_off"` / `"referred_outside"` / `"patient_declined"` — set when the drop-off leg is resolved (5.6.3) |
+| dropOffTriggeredAt | timestamp / null | **[Day 16–17, new]** set at the same moment as `dropOffOutcome` (5.6.3) |
+| employeeNumber | string | **[Day 16–17, new]** identifies which employee/family the request belongs to, independent of who actually submitted it (employee self, or reception on their behalf) — the actual duplicate-request dedup key (5.5) |
 | notes | string / null | |
-| overriddenBy | string / null | |
+| overriddenBy | string / null | initialized on every request but never set by any route — likely vestigial |
 | patientCondition | string | e.g. "chest pain" |
 | patientName | string | |
 | patientRelation | string | e.g. "Self" |
 | pickedUpAt | timestamp / null | |
-| pickupLocation | string | house number |
+| pickupLocation | string / null | **[Day 16–17 correction]** nullable, not required — Day 13's doc listed this as plain `string` |
 | priorityFlag | string | "routine" / "emergency" |
+| purposeOfVisit | string / null | **[Day 16–17, corrected]** "emergency" / "routine_consultation" / "physiotherapy" / "dental" / "lab_sample" — captured by both request screens since before this session, but the backend silently dropped it until the 5.2 fix; genuinely absent from any request document created before that fix went live |
 | requestedBy | string (uid) | |
 | requestedByType | string | "reception" / "employee" |
 | returnedAt | timestamp / null | |
-| status | string | "cancelled" / "completed" / etc. |
-| tripType | string | "intra_township" |
+| status | string | **[Day 16–17]** full set: "pending" / "accepted" / "dispatched" / "picked_up" / "returned" / "arrived" / "completed" / "cancelled" — "arrived" is new (5.6.3), sits between "returned" and "completed" |
+| tripType | string | "intra_township" / "intercity" |
 | vehicleAssigned | string | e.g. "mini" |
 | vehicleType | string | e.g. "mini" |
 
@@ -339,16 +350,25 @@ Trigger collection for the email extension (Firebase Send Email pattern).
 
 ## users
 
+**[Day 16–17 revision]** `onDuty` is new this session (5.6.1). The other additions below are pre-existing fields, confirmed directly against `authRoutes.js` while reading it in full this session for an unrelated reason — not new, just previously undocumented.
+
 | Field | Type | Notes |
 |---|---|---|
 | approvedAt | timestamp | |
 | approvedBy | string (uid) | |
 | createdAt | timestamp | |
+| disabledAt | timestamp / null | set by `POST /disable-user` (admin only) |
+| disabledBy | string (uid) / null | |
 | email | string | |
 | isActive | boolean | |
 | lastLoginAt | timestamp | |
+| onDuty | boolean | **[Day 16–17, new]** driver role only — set `true` on login, `false` on logout (`/update-last-login`, `/set-off-duty` in `authRoutes.js`). Powers ambulance auto-assign on dispatch (5.6.2) and the on-duty info box shown to reception |
 | phone | string | |
+| reEnabledAt | timestamp / null | set by `POST /enable-user` (admin only) |
+| reEnabledBy | string (uid) / null | |
 | role | string | "employee" / "reception" / etc. |
+| roleChangedAt | timestamp / null | set by `POST /change-role` (admin only) |
+| roleChangedBy | string (uid) / null | |
 
 ## vaccinationRecords
 

@@ -20,6 +20,8 @@ import AmbulanceRequestReceptionScreen from '../screens/ambulance/AmbulanceReque
 import AmbulanceReceptionHubScreen     from '../screens/ambulance/AmbulanceReceptionHubScreen';
 import AmbulanceRequestDetailScreen    from '../screens/ambulance/AmbulanceRequestDetailScreen';
 import MyAmbulanceRequestScreen        from '../screens/ambulance/MyAmbulanceRequestScreen';
+import AmbulanceHistoryScreen          from '../screens/ambulance/AmbulanceHistoryScreen';
+import AmbulanceCMOHistoryScreen       from '../screens/ambulance/AmbulanceCMOHistoryScreen';
 
 // ─── Notification flow ────────────────────────────────────────────────────────
 import NotificationScreen from '../screens/notifications/NotificationScreen';
@@ -116,6 +118,10 @@ export default function AppNavigator({ userRole }) {
       <Stack.Screen name="AmbulanceReceptionHub"     component={AmbulanceReceptionHubScreen} />
       <Stack.Screen name="AmbulanceRequestDetail"    component={AmbulanceRequestDetailScreen} />
       <Stack.Screen name="MyAmbulanceRequest"        component={MyAmbulanceRequestScreen} />
+      {/* Day 19 (Phase 5.9) — reception-only completed/cancelled history */}
+      <Stack.Screen name="AmbulanceHistory"          component={AmbulanceHistoryScreen} />
+      {/* Day 20 (Phase 5.8.2) — CMO/Doctor full-status history + KPIs */}
+      <Stack.Screen name="AmbulanceCMOHistory"       component={AmbulanceCMOHistoryScreen} />
 
       {/* Notification flow */}
       <Stack.Screen name="Notifications" component={NotificationScreen} />

@@ -266,8 +266,8 @@ export default function AmbulanceCMOHistoryScreen({ navigation }) {
         <View style={styles.kpiCard}>
           <Text style={styles.kpiCardTitle}>Response Time KPIs (selected date range)</Text>
           <View style={styles.kpiGrid}>
-            <KpiTile label="Total Requests" value={kpis.total ?? kpis.totalRequests ?? 0} />
-            <KpiTile label="Completed" value={kpis.byStatus?.completed ?? 0} />
+            <KpiTile label="Total Requests" value={kpis.totalRequests ?? 0} />
+            <KpiTile label="Completed" value={kpis.completed ?? 0} />
             <KpiTile label="Avg Response" value={kpis.avgResponseTime} unit=" min" />
             <KpiTile label="Avg Arrival" value={kpis.avgArrivalTime} unit=" min" />
             <KpiTile label="Avg Return" value={kpis.avgReturnTime} unit=" min" />

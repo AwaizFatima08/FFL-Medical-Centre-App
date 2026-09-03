@@ -6,6 +6,8 @@ Quick reference for daily work. For locked flow status, architecture, and decisi
 
 **Note on this revision (Day 15):** Phase 5 (Ambulance) grew the same way Phase 4 did — started as a gap/bug audit, ended as a near-total redesign after live testing surfaced real bugs and a full design discussion reshaped the operational model. Design is locked in `docs/PHASE5_DESIGN.md`, build sequence is broken into subphases 5.1–5.8 below. Locked but flexible — on-the-go improvements can be incorporated as build progresses; pending open items are deferred to time of need, not blocking the sequence.
 
+**Note on this revision (Day 21):** Phase 5 is now closed — all subphases 5.1–5.9 (including 5.8's three sub-parts) built and live-verified across reception, Doctor, and CMO logins. 5.7 was deliberately decided not to be built, not missed — see the Phase 5 entry below and `docs/PHASE5_DESIGN.md` for the reasoning. Every item on the original "Still Open" list is now resolved one way or another.
+
 ---
 
 ## Quick Paths
@@ -107,36 +109,41 @@ Full design in `docs/PHASE4_DESIGN.md`. Originally scoped as 5 steps (cascading 
 - When building an employee-level feature, check whether family members need the analogous feature before considering the module done — blood donor consent was in the original plan for both and only the employee half got built initially
 - Verify live Firestore data directly (raw export) before building UI that assumes a schema doc is accurate — Phase 3 already established this, Phase 4 confirmed it again
 
-### Phase 5 — Ambulance flow redesign — **subphases locked, Day 15**
-Originally scoped as a standard gap/bug audit. Live testing (screenshots covering employee/reception/driver flows, cancellation, notifications, completion) plus a full design discussion with Homi turned it into a near-total redesign of the operational model. Full design in `docs/PHASE5_DESIGN.md` — this entry only tracks build sequence and status. Execute one subphase at a time — fix, verify live, move to next. Do not batch.
+### Phase 5 — Ambulance flow redesign — **CLOSED Day 21**
+Originally scoped as a standard gap/bug audit. Live testing (screenshots covering employee/reception/driver flows, cancellation, notifications, completion) plus a full design discussion with Homi turned it into a near-total redesign of the operational model. Full design in `docs/PHASE5_DESIGN.md` — this entry only tracks build sequence and status. All subphases below built and live-verified across reception, Doctor, and CMO logins. 5.7 was formally decided **not** to be built — see `docs/PHASE5_DESIGN.md`'s "Explicitly Not Solved By This App" section for the reasoning and accepted consequence, not a gap that was missed.
 
-**Confirmed during code review + live screenshots (not redesign, just real bugs):**
-- Firestore rules gap: `ambulanceRequests` update rule currently allows any `employee` role to directly write any field via client SDK, bypassing all backend role/state logic — same category as the Phase 4 rules-vs-Express mismatch
-- "Purpose of Visit" (Emergency/Routine Consultation/Physiotherapy/Dental/Lab Sample) is captured on both request screens but never persisted by the backend — confirmed live: testers have been typing the purpose into the free-text Condition/Complaint field as a workaround (e.g. "Dental Visit" appearing as the condition)
-- Employee cannot view their own submitted request (`GET /:id` excludes `employee` role) or cancel it while pending (only reception/CMO/assigned driver can cancel)
-- Neither CMO nor Doctor home screen has any ambulance tile — confirmed via live screenshots of both dashboards
+**Confirmed during code review + live screenshots (not redesign, just real bugs) — all closed:**
+- Firestore rules gap: `ambulanceRequests` update rule allowed any `employee` role to directly write any field via client SDK, bypassing all backend role/state logic — **closed (5.1)**
+- "Purpose of Visit" captured on both request screens but never persisted by the backend — **closed (5.2)**
+- Employee cannot view or cancel their own submitted request — **closed (5.5)**
+- Neither CMO nor Doctor home screen had any ambulance tile — **closed (5.8.1)**
 
-**Operating reality the redesign is built around:** one driver per shift (not one per vehicle) — Bolan (general seating, non-AC, within-township) and Hiace/BLS (stretcher, paramedic-equipped) can never both be in motion at once. No dedicated emergency driver exists or is planned near-term; vehicle-switching cost during an emergency is an accepted limitation, not something this app solves.
+**Operating reality the redesign is built around:** one driver per shift (not one per vehicle) — Bolan (general seating, non-AC, within-township) and Hiace/BLS (stretcher, paramedic-equipped) can never both be in motion at once. No dedicated emergency driver exists or is planned near-term; vehicle-switching cost during an emergency is an accepted limitation, not something this app solves (see 5.7 below).
 
-**Subphase sequence:**
-- [ ] **5.1 — Firestore rules fix** — lock down `ambulanceRequests` update rule to match backend's actual role/state logic. No dependencies; cheapest to close first.
-- [ ] **5.2 — Purpose of Visit persistence** — save the field backend currently drops; surface it properly on dispatch cards/detail screen instead of relying on it being smuggled into Condition/Complaint.
-- [ ] **5.3 — Family member dropdown** — replace free-text Patient Name with family dropdown on employee + reception request screens; excludes disabled family members (deceased/divorced spouse, admin-disabled child). **Requires `EmployeeHome.js` review first** — not yet seen, needed to check current ambulance tile gating.
-- [ ] **5.4 — Single system-wide queue + emergency bypass** — one active-trip slot, only one driver/vehicle can be physically dispatched at a time (lock is at `dispatched`→`completed`, not `accepted` — reception can freely accept/triage multiple pending requests, the exclusivity applies only at the dispatch step; corrected during build per Homi's clarification). Reception's on-behalf-of auto-accept now also respects the lock — previously always auto-accepted, which let reception bypass it. Employee sees plain queue-position number, no ETA (deliberately dropped — a wrong time estimate creates a new complaint, a queue number is always honest). Structural core the remaining subphases sit on. **Built, not yet live-verified.**
-- [ ] **5.5 — Employee-side self-service** — view own request, cancel own request while still pending, block duplicate active request per patient (not a lifetime limit — only while a prior request for that same patient is still open).
-- [ ] **5.6 — Return-to-home tab** — new reception-only category, separate from main request flow, drop-off defaults to registered house number, mergeable with a subsequent pickup in the same drive.
-- [ ] **5.7 — Emergency mid-route diversion** — driver decides divert-now vs. return-to-base; boarded routine patient decides board-off-here vs. return to Medical Centre (patient's call, not reception's — no approval delay); trip marked `Complete` directly from `picked_up` (new allowed-from state for the Complete action, not a new status — deliberately not over-engineered since a mid-route drop-off is a maximum ~20 min walk in the township). Deliberately last among core items — depends on 5.4 and the `picked_up`→`Complete` change being stable.
-- [ ] **5.8 — CMO / Doctor ambulance dashboard** — scope (live operational view / historical / both) still open, decide before wireframing. Check whether the existing unwired `reportRoutes.js` `/ambulance` route (flagged in Phase 10's orphaned-routes list) already covers part of this before building new report logic.
+**Subphase sequence — all closed:**
+- [x] **5.1 — Firestore rules fix** — locked down `ambulanceRequests` update rule to match backend's actual role/state logic.
+- [x] **5.2 — Purpose of Visit persistence** — field now saved and surfaced on dispatch cards/detail screen.
+- [x] **5.3 — Family member dropdown** — replaces free-text Patient Name on employee + reception request screens; excludes disabled family members.
+- [x] **5.4 — Single system-wide queue + emergency bypass** — one active-trip slot, lock at `dispatched`→`completed` (not `accepted`). Employee sees plain queue-position number, no ETA. **Live-verified across multiple real scenarios.**
+- [x] **5.5 — Employee-side self-service** — view own request (`GET /my-active`), cancel while still pending, duplicate-active-request block per patient via `employeeNumber`.
+- [x] **5.6.1–5.6.3 — Driver on-duty tracking, auto-assignment, Confirm Arrival/Drop Off split** — `onDuty` flag replaces manual driver picker; `Complete Request` split into `Confirm Arrival` (vehicle freed, request stays open) and `Drop Off`/`Drop Off Not Required` (final close-out, two fixed reasons, no free text).
+- [x] **5.7 — Emergency mid-route diversion — decided NOT to build (Day 21).** Discussed in depth; same "don't over-engineer for an edge case" reasoning applied elsewhere in this phase. The driver's existing Cancel Trip action (fixed reason: "Diverted for another emergency call," Day 18) is the accepted permanent mechanism for this scenario — not a stopgap pending 5.7. See `docs/PHASE5_DESIGN.md` §5 and "Explicitly Not Solved By This App" for the three real-world scenarios this covers and the one accepted historical-record gap (mid-route drop location/outcome not distinguished from a clean pre-pickup cancellation).
+- [x] **5.8 — CMO / Doctor ambulance dashboard.** Resolved scope: **both** live + historical views, **both** CMO and Doctor with full write parity (not view-only — "CMO may be on leave at some time"). Built in three parts, all live-verified Day 21:
+  - **5.8.1** — `doctor` added to every ambulance write/read role check (accept/assign/dispatch/arrive/dropoff/cancel, plus previously-excluded `GET /:id`/`GET /active`/`GET /on-duty-driver`); tile added to both `CMOHome.js` and `DoctorHome.js` pointing at the same `AmbulanceReceptionHub` reception already uses. Doctor drove a full lifecycle (Accept→Dispatch→Arrival→Drop Off) live; CMO independently verified Accept/Cancel.
+  - **5.8.2** — new `AmbulanceCMOHistoryScreen`: full-status history (no default restriction, unlike 5.9) + Response Time KPIs panel. Extended `reportRoutes.js` `GET /ambulance` (status/employeeSearch/falseEmergencyOnly filters, acceptedByName resolution) and `GET /ambulance/kpis` (added fromDate/toDate, added doctor role) rather than forking new routes.
+  - **5.8.3** — false-emergency checkbox on the Drop Off action, shown only for emergency-flagged requests. Flag routes a dedicated notification to CMO (not Doctor — treated as an administrative/disciplinary matter) and surfaces via a filter chip + row tag in 5.8.2's history screen. Resolves the "Reclassification" open item — closure-time flagging instead of a live-reclassify tool, since the call can't be made before the patient arrives and shouldn't rest on instinct mid-trip.
+- [x] **5.9 — Reception history/filter view.** Reception-only, standalone screen, default scope completed+cancelled only (narrower than 5.8.2's CMO/Doctor screen). Filters: date range, employee search, status, priority. Columns: patient name, employee #, status, initiated-at, accepted-by.
+- [x] **Small fixes bundle (Day 18)** — emergency Accept-time hard block (reception/CMO/Doctor cannot accept a routine request while an emergency sits pending — locked as a hard rule after live testing showed the original advisory behavior letting a routine request ("Q3") jump ahead of a pending emergency); employee-facing intercity-away banner on the "My Ambulance Request" screen, alongside the queue-position line.
 
-**Still open, to resolve at time of need (not blocking the sequence above):**
-- Reception's ability to reclassify a false "Emergency" after the fact — raised in discussion, never resolved
-- ~~Queue-position scope (system-wide vs. per-vehicle-type)~~ — resolved during 5.4 build: system-wide, confirmed in `getActiveQueue()` comment in `ambulanceRoutes.js`
-- **Day 16, raised during 5.4 build:** scheduled 4 AM auto-cancel of stale `pending` requests, as an ongoing safety net (separate from the one-time manual cleanup already done before 5.4 deployed). Logged for later analysis — not built, may be dropped after review.
+**All items from the original "Still Open" list are resolved** — see `docs/PHASE5_DESIGN.md`'s "Formerly Still Open" section for the full resolution of each (4 AM auto-cancel dropped; queue-position scope confirmed system-wide; reception on-behalf-of flow needed no further change; CMO/Doctor scope resolved to both+both; reclassification resolved via 5.8.3; `EmployeeHome.js` review deferred to pre-publish UI pass, non-blocking).
 
-**V2 backlog additions from this discussion (not this phase):**
+**V2 backlog additions from this phase (not built, logged for later):**
 - GPS tracking of vehicle, visible to reception
 - WhatsApp integration — automated messages to employees waiting in queue
-- Driver-side dashboard with queue visibility and emergency auto-alert — design deferred until 5.1–5.8 above are built and live-verified; when designed, must be designed together with 5.7 since they're the same operational moment from two different screens
+- Driver-side dashboard with queue visibility and emergency auto-alert — originally scoped to be designed together with 5.7; since 5.7 was decided not to be built, this V2 item would need fresh scoping if revisited, not a resumption of the original note
+
+**Files touched across Phase 5 (final list):**
+`firestore.rules`; `functions/src/ambulance/ambulanceRoutes.js`; `functions/src/auth/authRoutes.js`; `functions/src/reports/reportRoutes.js`; `functions/src/constants.js` + `app/src/constants.js`; `app/src/screens/ambulance/AmbulanceRequestScreen.js`, `AmbulanceRequestReceptionScreen.js`, `AmbulanceReceptionHubScreen.js`, `AmbulanceRequestDetailScreen.js`, `MyAmbulanceRequestScreen.js`, `AmbulanceHistoryScreen.js` (new, 5.9), `AmbulanceCMOHistoryScreen.js` (new, 5.8.2); `app/src/screens/home/DriverHome.js`, `CMOHome.js`, `DoctorHome.js`; `app/src/navigation/AppNavigator.js`.
 
 ### Phase 6 — Doctor Availability review
 - [ ] Not yet reviewed this session — audit screens + backend routes for gaps/bugs within scope

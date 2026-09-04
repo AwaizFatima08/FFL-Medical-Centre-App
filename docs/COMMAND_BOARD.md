@@ -10,6 +10,10 @@ Quick reference for daily work. For locked flow status, architecture, and decisi
 
 **Note on this revision (Day 21, cont'd):** Phase 6 (Doctor Availability) is now closed. Like Phases 4 and 5, it grew from a standard gap/bug audit into real feature work once live testing surfaced actual bugs and a design conversation added a genuine new capability (leave scheduling) mid-phase. Full detail in the Phase 6 entry below.
 
+**Note on this revision (Day 21, cont'd):** Phase 7 (Doctor Directory) is now closed — small, contained review as expected, one data typo fixed, admin-only write access confirmed intentional. Phase 8 (Notices & Circulars) is now closed — surfaced a real Storage rules gap (any authenticated user could write directly to Storage regardless of the app's role-gated buttons), fixed and live-verified. Full detail in the Phase 7 and Phase 8 entries below.
+
+**Note on this revision (Day 21, cont'd):** Phase 9 (Patient Feedback) is now closed — started as the Day-13-flagged report bug, grew into a substantial feature phase: two new lightweight provider roles (Dentist/Physiotherapist), admin's feedback access removed entirely for privacy reasons, and a new standalone Suggestions feature built end-to-end. Fully live-verified from employee, CMO, and admin logins. Full detail in the Phase 9 entry below. Remaining backlog going into next session: Medical Trip (Phase 11 — never had its own review phase), Fitness Scheduling (Phase 12), and Reports (Phase 10, already scoped below).
+
 ---
 
 ## Quick Paths
@@ -178,21 +182,73 @@ Started as a standard gap/bug audit. Live testing surfaced a real bug chain root
 **Files touched across Phase 6:**
 `functions/src/auth/authRoutes.js`; `functions/src/utils.js`; `functions/src/availability/availabilityRoutes.js`; `app/src/screens/availability/DoctorAvailabilityScreen.js`, `DoctorAvailabilityManageScreen.js`. (`availabilityScheduler.js` diagnosed but not code-changed — fixed via the `role` backfill, no logic change needed.)
 
-### Phase 7 — Doctor Directory review
-- [ ] Not yet reviewed this session — audit screens + backend routes for gaps/bugs within scope
+### Phase 7 — Doctor Directory review — **CLOSED Day 21**
 
-### Phase 8 — Notices & Circulars review
-- [ ] Not yet reviewed this session — audit screens + backend routes for gaps/bugs within scope
+Small, contained review as expected — flat reference-catalogue module, no state machine, no links into other collections.
 
-### Phase 9 — Patient Feedback review
-- [ ] Confirmed bug (found Day 13): `reportRoutes.js`'s `/feedback` route reads field names that don't match the real schema (`ratings.staffBehaviour`, `ratings.housekeeping`, `ratings.waitingTime`, `suggestion` vs. what the route reads). Same shape of bug as the Phase 1 Fitness report fix. Feedback averages/report have likely never shown correct data.
-- [ ] Screens (`FeedbackDetailScreen.js`, `FeedbackFormScreen.js`, `FeedbackListScreen.js`) not yet reviewed — audit for further gaps/bugs within scope
+**Findings — all resolved:**
+- Admin view initially appeared blank in a screenshot; re-checked live and confirmed it renders correctly with the Add Doctor button — was a capture issue, not a real bug.
+- "Gyenecologist" data typo in `speciality` field for Dr. Shazia Majid Khan — corrected directly in Firestore console to "Gynecologist."
+- Edit and Delete confirmed present and working from the Doctor Details screen (admin login) — full CRUD exists, contrary to initial concern that only Add/view existed.
+
+**Access confirmed (by design, not a gap):** Add/Edit/Delete restricted to admin only. Reception, CMO, doctor, and employee logins are read-only. Confirmed intentional.
+
+**No code changes required this phase** — module was already correctly built; review surfaced one data-entry typo and confirmed intended access model.
+
+### Phase 8 — Notices & Circulars review — **CLOSED Day 21**
+
+Standard gap/bug audit surfaced one real security gap, not a UI bug.
+
+**Finding — resolved:** Storage rules for `circulars/` were `allow read, write: if request.auth != null` — any authenticated user, any role, could write directly to Storage regardless of the app's role-gated Upload/Delete buttons (which only blocked the *button*, not the underlying write). Backend (`circularRoutes.js`) correctly checked role for its own `/save` and `/delete` routes, but the file upload itself bypasses the backend entirely (client uploads straight to Storage per the module's designed flow) — so the backend check alone gave no real protection.
+
+**Root cause, same shape as Phase 4's `bloodDonorRegistry` bug:** UI restriction and backend restriction existed; the third layer (Storage rules) didn't match either.
+
+**Fix:** Storage rules rewritten — `circulars/` allows read to any authenticated user, write restricted to `admin_incharge`/`cmo` via Firestore role lookup, matching the backend's own role check. Everything else in Storage (`reports/`, written only by Cloud Functions via Admin SDK) locked down by default catch-all, deferred for reassessment at Phase 10 if report screens turn out to need direct client reads.
+
+**Live-verified:** admin/CMO upload, view, and delete all still function correctly after the rule change; non-admin roles confirmed unable to access Add/Delete.
+
+**No other issues found** — tabs, counts, Open/Delete flows, and role-gated UI all functioning correctly.
+
+**Process note:** third confirmation (after Phase 4, Phase 6) that a module can look fully correct from the UI down through backend code, with the actual gap sitting in a layer that's easy to forget exists — worth keeping "how many enforcement layers does this write path touch" as a standing question, not just for new features but for reviewing already-built ones.
+
+**Files touched:** `storage.rules` only. No app or Cloud Function code changed.
+
+### Phase 9 — Patient Feedback review — **CLOSED**
+
+Started as the Day-13-flagged report bug, grew into a substantial feature phase after live testing and design discussion — new roles, new UI patterns, a security-adjacent access decision, and a standalone new feature (Suggestions), all built and live-verified.
+
+**Confirmed bug, fixed:** `reportRoutes.js`'s `/feedback` route was reading field names that don't match the real schema (`f.staffBehaviourRating` instead of nested `f.ratings.staffBehaviour`, `f.comments` instead of `f.overallExperience`, a nonexistent `f.isAnonymous`, and a `servicesRating` field that was never real — per-service ratings are individual fields). Every average had always silently returned `null`. Fixed; `services` now averages across all per-service ratings combined; `waitingTime` added (was missing entirely); `anonymous` removed (no schema basis). Role list locked to CMO only, matching the rest of the module — previously Doctor and Reception could see aggregate stats despite no access to individual entries. No frontend screen exists for this report yet (per Day 13 note) — fix is backend-only, verified by code review and syntax check, not a live screen; Phase 10's job to wire up.
+
+**New roles — Dentist & Physiotherapist:** third-party providers engaged for in-house paid services, feedback-attribution only. Deliberately lightweight — real Firebase accounts via the existing Signup + Admin Approval flow (so UIDs are always auto-assigned, never hand-typed, avoiding a repeat of the Phase 6 "O vs 0" bug), but no `doctorAvailability` doc, no dashboard, no scheduling hookup. Approval screen skips the entire internal-employee profile section (department/designation/blood group — none of it applies to a contracted provider) for these two roles specifically, replaced with a short explanatory note. Assigned via dummy employee numbers in the existing `FFL-00000` format, per Homi's call — no over-engineering a fit where none exists. Live-verified end to end: approved as Dentist and Physiotherapist, both show correctly in User Management with the right role, both appear as selectable providers in the feedback form's provider list, confirmed from a real employee login.
+
+**Admin access removed entirely:** Patient Feedback tile removed from Admin Dashboard; `GET /all` and `GET /:feedbackId` in `feedbackRoutes.js` locked to CMO only (`DELETE` was already CMO-only). Reasoning: protecting the identity of who reported what about a teammate — CMO-only review, consistent with how sensitive feedback data is treated everywhere else in this module. Live-verified — tile confirmed gone from Admin Dashboard grid.
+
+**New standalone Suggestions feature:** general-purpose suggestion box, deliberately separate from per-visit feedback. Reached via a bold toggle ("📋 Give Feedback" / "💡 Suggest Something") at the top of the employee feedback form — restructured so the toggle is never blocked behind the doctor-list loading spinner. Reviewed by CMO as a second tab on the Feedback list screen, styled with a distinct amber accent matching the submission side so it reads as one connected feature. New `suggestions` Firestore collection; new `/suggestions/submit`, `/suggestions/all`, `/suggestions/:id` (delete) routes, same access model as feedback (any employee submits, CMO only reviews/deletes). Logged as a deliberate V1 addition after discussion, not scope creep — considered and rejected as its own dashboard tile in favor of staying inside the existing module. Live-verified from both employee (submit) and CMO (review, tabs, counts) logins.
+
+**Other fixes:**
+- Visit Date and Visit Time on the feedback form converted from free-text to proper pickers (`DatePickerField`, and a new sibling `TimePickerField` built to match) — removes the risk of a malformed date/time string reaching the backend unchecked.
+- Per-visit "Suggestion for Improvement" field removed from the feedback form entirely, superseded by the new standalone Suggestions feature.
+- "Consulting Doctor" relabelled "Consulting Doctor / Provider" since the list can now include non-doctor providers.
+
+**Process notes:**
+- A mid-build editing mistake (a `str_replace` that silently deleted a needed line) was caught only because every file was run through a real JS/JSX parser before being handed over, not trusted by eye — this is now the standing practice for every file this project touches going forward, not just when something feels risky.
+- Third confirmation this project that a feature can look fully wired from the UI down through the backend, with the one path that actually proves it works — a real end-to-end account — left untested until specifically checked. Worth continuing to ask "has the actual new-role path been run, not just the code path" before closing out role-related work.
+- The doctors list is now shared between real doctors (via `doctorAvailability`) and lightweight providers (via `users` role lookup) — a good example of extending an existing data shape rather than forking a parallel one, worth keeping as a pattern for any future lightweight-role additions.
+
+**Files touched:** `functions/src/constants.js` + `app/src/constants.js`; `functions/src/feedback/feedbackRoutes.js`; `functions/src/reports/reportRoutes.js`; `app/src/screens/admin/UserApprovalScreen.js`; `app/src/screens/home/AdminHome.js`; `app/src/screens/feedback/FeedbackFormScreen.js`; `app/src/screens/feedback/FeedbackListScreen.js`; `app/src/components/TimePickerField.js` (new).
 
 ### Phase 10 — Reports review
 - [ ] Run all 7 report screens post Phase 2/3/4 fixes and confirm each returns correct live data — now includes checking whether any report should reflect the new My Profile fields (department/designation/blood group are now reliably populated where they weren't before)
 - [ ] 5 `reportRoutes.js` routes with no frontend tile (`/fitness`, `/ambulance`, `/trips`, `/vaccination`, `/feedback`) — decide build-vs-remove per route (Fitness/Ambulance/Feedback in-scope, Vaccination is V2)
+- [ ] `/feedback` route was fixed in Phase 9 (field names + role list) but has no frontend screen yet — build one against the corrected response shape (no `anonymous`, includes `waitingTime`) rather than the old broken shape
 - [ ] Assess requirement for any new reports, remaining within scope
 - [ ] Deliberately held until after Phase 4 (now closed) so reports can be reviewed against the complete employee data model
+
+### Phase 11 — Medical Trip review
+- [ ] Not yet reviewed this session — this module has never had its own dedicated review phase; audit screens + backend routes (write-side especially) for gaps/bugs within scope
+
+### Phase 12 — Fitness Scheduling review
+- [ ] Not yet reviewed this session — audit screens + backend routes for gaps/bugs within scope
 
 ---
 
@@ -214,7 +270,7 @@ Started as a standard gap/bug audit. Live testing surfaced a real bug chain root
 - Any other new module or idea raised during this review, however small
 
 ## Other pending (unchanged from before)
-- Notification debugging — deferred to final pre-production testing round, after Phase 10
+- Notification debugging — deferred to final pre-production testing round, after Phases 10–12
 
 ## Important Commands
 

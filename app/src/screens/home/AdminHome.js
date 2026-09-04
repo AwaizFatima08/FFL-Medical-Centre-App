@@ -13,7 +13,6 @@ const TILES = [
   { id: 'manageUsers',  label: 'Manage Users',        icon: '🧑‍💼', screen: 'UserManagement',          active: true },
   { id: 'healthTips',   label: 'Health Tips',          icon: '💡', screen: 'HealthTipsAdmin',          active: true },
   { id: 'availability', label: 'Doctor Availability',  icon: '🩺', screen: 'DoctorAvailabilityManage', active: true },
-  { id: 'feedback',     label: 'Patient Feedback',     icon: '📋', screen: 'FeedbackList',             active: true },
   { id: 'directory',    label: 'Doctors Directory',    icon: '🏥', screen: 'DirectoryList',            active: true },
   { id: 'circulars',    label: 'Circulars & Notices',  icon: '📢', screen: 'Circulars',                active: true },
   { id: 'fitness',      label: 'Annual Fitness',       icon: '🏃', screen: 'FitnessAdmin',             active: true },

@@ -8,11 +8,15 @@ Generated from live production data review. This reflects the **actual** schema 
 
 **Day 16–17 revision note:** `ambulanceRequests` and `users` updated, marked inline as **[Day 16–17]**. Same basis as Day 14's approach — refreshed directly from `ambulanceRoutes.js` and `authRoutes.js` as they stand after Phase 5 subphases 5.1–5.6.3, not a fresh console export. `ambulanceRequests` specifically had been flagged as unverified since Day 13 (see the note above) — this is its first real re-verification, not just an incremental update on top of an already-shaky baseline. All other sections remain exactly as they were at Day 14 and are still unverified past that point.
 
+**Day 21 revision note:** `feedback` updated to reflect the full real field set (per-service `ratings.*` and `booleans.*` fields were previously undocumented, confirmed directly against `feedbackRoutes.js` and live Firestore data during Phase 9). New `suggestions` collection added — built this session, has no prior history to correct. `users` gets a small addition noting the two new lightweight role values. Basis: `feedbackRoutes.js`, `FeedbackFormScreen.js`, and live Firestore screenshots reviewed during Phase 9's testing — not a fresh full console export. A real bug was also found while doing this reconciliation, unrelated to anything fixed this session — see the note under `feedback` below.
+
 ---
 
 ## Top-Level Collections
 
-`ambulanceRequests` · `bloodDonorRegistry` · `circulars` · `config` · `doctorAvailability` · `doctorDirectory` · `employees` · `familyMembers` · `feedback` · `fitnessAppointments` · `healthTips` · `mail` · `notifications` · `tripBookings` · `users` · `vaccinationRecords` · `vaccinationReports` · `vaccineSchedule`
+`ambulanceRequests` · `bloodDonorRegistry` · `circulars` · `config` · `doctorAvailability` · `doctorDirectory` · `employees` · `familyMembers` · `feedback` · `fitnessAppointments` · `healthTips` · `mail` · `notifications` · `suggestions` · `tripBookings` · `users` · `vaccinationRecords` · `vaccinationReports` · `vaccineSchedule`
+
+**[Day 21 correction]** `suggestions` added — new this session (Phase 9), a standalone collection for the general-purpose Suggestions feature, unrelated to `feedback`. See its own section below.
 
 **[Day 13 correction]** `healthTips` added — this collection did not exist at Day 10; it was built Aug 29 and is confirmed live.
 
@@ -140,6 +144,8 @@ Read access restricted to `doctor` / `cmo` / `reception` / `nurse` via Firestore
 
 Subcollection: `statusLog` — **[Day 13 correction]** confirmed live (previously "referenced in design doc, not expanded"); currently empty in test data.
 
+**[Day 21 note]** Dentist and Physiotherapist (added Phase 9) deliberately have **no** document here, unlike Doctor/CMO. They're lightweight, feedback-attribution-only roles with no scheduling or dashboard — `feedbackRoutes.js`'s `/doctors` route looks them up separately via `users` role, not through this collection. Don't assume every person selectable as a "consulting provider" on the feedback form has a `doctorAvailability` doc.
+
 ## doctorDirectory
 
 | Field | Type | Notes |
@@ -230,28 +236,60 @@ Read/write restricted to `admin_incharge` and `cmo` only, enforced at the Firest
 
 ## feedback
 
+**[Day 21 correction]** Previous version of this table only listed 4 `booleans.*` fields and 3 `ratings.*` fields — the real set is much larger, since every service a patient used gets its own rating and its own set of yes/no questions. Confirmed directly against `feedbackRoutes.js`'s `POST /submit` and live Firestore documents during Phase 9.
+
 | Field | Type | Notes |
 |---|---|---|
-| booleans.bedLinenClean | boolean | |
-| booleans.doctorGaveAmpleTime | boolean | |
-| booleans.doctorUnderstoodProblem | boolean | |
-| booleans.nursingBehaviour | boolean | |
-| consultingDoctorId | string | |
+| booleans.bedLinenClean | boolean | present only if `nursing` in `servicesUsed` |
+| booleans.dentalReceiptProvided | boolean | present only if `dental` in `servicesUsed` |
+| booleans.dentalRatesSatisfied | boolean | present only if `dental` in `servicesUsed` |
+| booleans.dentalTreatmentSatisfied | boolean | present only if `dental` in `servicesUsed` |
+| booleans.doctorGaveAmpleTime | boolean | present only if `consultation` in `servicesUsed` |
+| booleans.doctorUnderstoodProblem | boolean | present only if `consultation` in `servicesUsed` |
+| booleans.labExplainedProcedure | boolean | present only if `laboratory` in `servicesUsed` |
+| booleans.labReportsOnTime | boolean | present only if `laboratory` in `servicesUsed` |
+| booleans.nursingBehaviour | boolean | present only if `nursing` in `servicesUsed` |
+| booleans.pharmacyExplainedMedicine | boolean | present only if `pharmacy` in `servicesUsed` |
+| booleans.physioPrivacyMaintained | boolean | present only if `physiotherapy` in `servicesUsed` |
+| booleans.physioRatesSatisfied | boolean | present only if `physiotherapy` in `servicesUsed` |
+| booleans.physioReceiptProvided | boolean | present only if `physiotherapy` in `servicesUsed` |
+| booleans.physioStaffBehaviour | boolean | present only if `physiotherapy` in `servicesUsed` |
+| consultingDoctorId | string (uid) | **[Day 21]** can now be a real doctor (via `doctorAvailability`) or a Dentist/Physiotherapist provider (via `users` role lookup) — see `doctorAvailability` and `users` sections below |
 | employeeId | string | |
-| overallExperience | string | e.g. "satisfied" |
-| patientName | string | |
-| patientRelation | string | |
-| ratings.housekeeping | number | 1-5 |
-| ratings.staffBehaviour | number | 1-5 |
-| ratings.waitingTime | number | 1-5 |
-| servicesUsed[] | array<string> | e.g. "consultation", "nursing" |
-| submittedAt | timestamp | |
+| overallExperience | string / null | |
+| patientName | string / null | |
+| patientRelation | string | "Self" / "Spouse" / "Child" / "Parent" / "Other" |
+| ratings.consultation | number | 1-5, present only if `consultation` in `servicesUsed` |
+| ratings.dental | number | 1-5, present only if `dental` in `servicesUsed` |
+| ratings.housekeeping | number | 1-5, mandatory on every submission |
+| ratings.laboratory | number | 1-5, present only if `laboratory` in `servicesUsed` |
+| ratings.nursing | number | 1-5, present only if `nursing` in `servicesUsed` |
+| ratings.pharmacy | number | 1-5, present only if `pharmacy` in `servicesUsed` |
+| ratings.physiotherapy | number | 1-5, present only if `physiotherapy` in `servicesUsed` |
+| ratings.staffBehaviour | number | 1-5, mandatory on every submission |
+| ratings.waitingTime | number | 1-5, mandatory on every submission |
+| ratings.xray | number | 1-5, present only if `xray` in `servicesUsed` |
+| servicesUsed[] | array<string> | any of: "consultation", "pharmacy", "laboratory", "xray", "nursing", "dental", "physiotherapy" |
+| submittedAt | string (ISO) | not a Firestore timestamp — plain ISO string from `nowISO()` |
 | submittedBy | string (uid) | |
-| suggestion | string | |
+| suggestion | string / null | **[Day 21]** legacy field — the per-visit "Suggestion for Improvement" input was removed from the form in Phase 9. Documents submitted before Phase 9 may have this populated; documents submitted after will always have it as `null`. General suggestions now live in the separate `suggestions` collection below. |
 | visitDate | string | YYYY-MM-DD |
 | visitTime | string | HH:MM |
 
-**[Day 13 note]** `reportRoutes.js`'s `/feedback` route reads `staffBehaviourRating`, `cleanlinessRating`, `servicesRating`, and `comments` — none of these match the real field names above (`ratings.staffBehaviour`, `ratings.housekeeping`, `suggestion`). This report has likely never shown correct averages. Not yet added to a numbered phase — flag for Phase 9 (Patient Feedback review).
+**[Day 21 correction — real bug found, not yet fixed]** `FeedbackFormScreen.js` collects and sends a `purposeOfVisit` field (required in the frontend form — "Emergency" / "Routine Consultation" / "Physiotherapy Visit" / "Dental Treatment Visit" / "Laboratory Sample") but `feedbackRoutes.js`'s `POST /submit` never destructures or saves it. The field is silently dropped on every submission — it is required client-side, sent over the wire, and then discarded server-side. **No `feedback` document has ever actually stored `purposeOfVisit`, despite the form treating it as mandatory.** Found while reconciling this doc against live code during Phase 9's wrap-up, unrelated to anything fixed this session. Not yet triaged into a phase — flag for the next session.
+
+**[Day 21 — resolved]** The report-route field-mismatch bug noted here since Day 13 was confirmed and fixed in Phase 9 — see Command Board Phase 9 entry. `reportRoutes.js`'s `/feedback` route now reads the correct nested field names above. No frontend screen exists for this report yet (Phase 10's job).
+
+## suggestions
+
+**[Day 21 — new]** Built in Phase 9. Standalone from `feedback` — a general-purpose suggestion box, not tied to a specific visit. Submitted via a toggle on the employee feedback form; reviewed by CMO as a second tab on the feedback list screen.
+
+| Field | Type | Notes |
+|---|---|---|
+| employeeId | string / null | |
+| submittedAt | string (ISO) | not a Firestore timestamp — plain ISO string from `nowISO()`, same convention as `feedback` |
+| submittedBy | string (uid) | |
+| suggestionText | string | the only real content field — free text |
 
 ## fitnessAppointments
 
@@ -366,7 +404,7 @@ Trigger collection for the email extension (Firebase Send Email pattern).
 | phone | string | |
 | reEnabledAt | timestamp / null | set by `POST /enable-user` (admin only) |
 | reEnabledBy | string (uid) / null | |
-| role | string | "employee" / "reception" / etc. |
+| role | string | "employee" / "reception" / etc. — **[Day 21]** also "dentist" / "physiotherapist" (Phase 9) — see `doctorAvailability` note above; these two are deliberately excluded from that collection |
 | roleChangedAt | timestamp / null | set by `POST /change-role` (admin only) |
 | roleChangedBy | string (uid) / null | |
 

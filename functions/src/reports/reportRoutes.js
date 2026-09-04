@@ -264,8 +264,20 @@ router.get('/employees', verifyToken, verifyRole([
 });
 
 // ─── GET /feedback ────────────────────────────────────────
+// Phase 9 fix (flagged Day 13, confirmed and fixed here): this route was
+// reading field names that don't match the real feedback schema —
+// ratings are nested under `ratings.*`, not top-level `*Rating` fields;
+// `isAnonymous` doesn't exist anywhere in this module (there's no
+// anonymous-submission concept in Feedback); the comment field is
+// `overallExperience`, not `comments`. Every average and comment count
+// below has always silently returned null/0/empty because of this — same
+// shape of bug as the Phase 1 Fitness report fix. Role list also locked
+// to CMO only here, matching the rest of the feedback module (this was
+// previously CMO + DOCTOR + RECEPTION, which meant those two roles could
+// see aggregate feedback stats despite having no access to individual
+// entries via feedbackRoutes.js — inconsistent, now resolved).
 router.get('/feedback', verifyToken, verifyRole([
-  ROLES.CMO, ROLES.DOCTOR, ROLES.RECEPTION,
+  ROLES.CMO,
 ]), async (req, res) => {
   try {
     const db = admin.firestore();
@@ -278,17 +290,54 @@ router.get('/feedback', verifyToken, verifyRole([
         return date.getMonth() + 1 === parseInt(month) && date.getFullYear() === parseInt(year);
       });
     }
+
+    // Averages a named rating field across all feedback docs, reading it
+    // from the real nested location (ratings.<field>) — not top-level,
+    // which is what the old version incorrectly did.
     const calcAvg = (field) => {
-      const values = feedbacks.map(f => f[field]).filter(v => v !== null && v !== undefined);
+      const values = feedbacks
+        .map(f => f.ratings?.[field])
+        .filter(v => typeof v === 'number');
       if (values.length === 0) return null;
       return Math.round((values.reduce((a, b) => a + b, 0) / values.length) * 10) / 10;
     };
+
+    // Per-service ratings (consultation, pharmacy, laboratory, xray,
+    // nursing, dental, physiotherapy) each live as their own optional
+    // field under ratings.*, present only when that service was used on
+    // a given visit — there's no single "servicesRating" field to read,
+    // unlike the three mandatory ratings above. This averages across all
+    // of them combined, the closest real equivalent to what this summary
+    // field was trying to represent.
+    const SERVICE_RATING_KEYS = [
+      'consultation', 'pharmacy', 'laboratory',
+      'xray', 'nursing', 'dental', 'physiotherapy',
+    ];
+    const allServiceValues = feedbacks.flatMap(f =>
+      SERVICE_RATING_KEYS
+        .map(key => f.ratings?.[key])
+        .filter(v => typeof v === 'number')
+    );
+    const servicesAvg = allServiceValues.length === 0 ? null :
+      Math.round((allServiceValues.reduce((a, b) => a + b, 0) / allServiceValues.length) * 10) / 10;
+
+    // Real comment field is overallExperience — the per-visit "suggestion"
+    // field was removed from the submission form in Phase 9 (general
+    // suggestions now live in their own suggestions collection, unrelated
+    // to a visit), so it's intentionally not folded in here.
+    const withComments = feedbacks.filter(f => f.overallExperience && f.overallExperience.trim());
+
     const summary = {
-      total: feedbacks.length, anonymous: feedbacks.filter(f => f.isAnonymous).length,
-      withComments: feedbacks.filter(f => f.comments && f.comments.trim()).length,
-      averageRatings: { staffBehaviour: calcAvg('staffBehaviourRating'), cleanliness: calcAvg('cleanlinessRating'), services: calcAvg('servicesRating') },
-      recentComments: feedbacks.filter(f => f.comments && f.comments.trim()).slice(0, 10)
-        .map(f => ({ comment: f.comments, submittedAt: f.submittedAt, isAnonymous: f.isAnonymous })),
+      total: feedbacks.length,
+      withComments: withComments.length,
+      averageRatings: {
+        staffBehaviour: calcAvg('staffBehaviour'),
+        waitingTime:    calcAvg('waitingTime'),
+        housekeeping:   calcAvg('housekeeping'),
+        services:       servicesAvg,
+      },
+      recentComments: withComments.slice(0, 10)
+        .map(f => ({ comment: f.overallExperience, submittedAt: f.submittedAt })),
     };
     return successResponse(res, { summary, feedbacks });
   } catch (error) {

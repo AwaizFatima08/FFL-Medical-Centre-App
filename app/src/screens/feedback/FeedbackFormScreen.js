@@ -1,4 +1,14 @@
 // app/src/screens/feedback/FeedbackFormScreen.js
+//
+// Phase 9 update: Visit Date and Visit Time now use the shared
+// DatePickerField / TimePickerField components instead of raw free-text
+// input — removes the risk of a malformed "YYYY-MM-DD" or "HH:MM" typo
+// reaching the backend unchecked. The per-visit "Suggestion for
+// Improvement" field has been removed entirely; general suggestions now
+// live in their own tab on the Feedback list screen, separate from any
+// specific visit. "Consulting Doctor" is relabelled to "Consulting Doctor
+// / Provider" since the list returned by /doctors can now include
+// Dentist/Physiotherapist providers alongside real doctors.
 import React, { useState, useEffect } from 'react';
 import {
   View, Text, TextInput, StyleSheet, TouchableOpacity,
@@ -6,6 +16,8 @@ import {
 } from 'react-native';
 import { getAuth } from 'firebase/auth';
 import { API } from '../../config/api';
+import DatePickerField from '../../components/DatePickerField';
+import TimePickerField from '../../components/TimePickerField';
 
 const SERVICES = [
   { key: 'consultation',  label: 'Consultation' },
@@ -114,14 +126,21 @@ function BooleanQuestion({ label, value, onChange }) {
 }
 
 export default function FeedbackFormScreen({ navigation }) {
+  // Phase 9 — toggle between the full visit-feedback form and a much
+  // simpler standalone suggestion box. 'feedback' is the default so
+  // nothing changes for the common case.
+  const [mode, setMode] = useState('feedback');
+
   const [doctors, setDoctors] = useState([]);
   const [loadingDoctors, setLoadingDoctors] = useState(true);
 
   // Visit details
-  const today   = new Date().toISOString().split('T')[0];
-  const nowTime = new Date().toTimeString().slice(0, 5);
-  const [visitDate,          setVisitDate]          = useState(today);
-  const [visitTime,          setVisitTime]          = useState(nowTime);
+  // Phase 9 — visitDate is now a JS Date (DatePickerField), converted to
+  // 'YYYY-MM-DD' at submit time. visitTime stays a plain 'HH:MM' string —
+  // TimePickerField already speaks that format natively, so no conversion
+  // needed here, unlike visitDate.
+  const [visitDate,          setVisitDate]          = useState(new Date());
+  const [visitTime,          setVisitTime]          = useState(new Date().toTimeString().slice(0, 5));
   const [consultingDoctorId, setConsultingDoctorId] = useState('');
   const [patientName,        setPatientName]        = useState('');
   const [patientRelation,    setPatientRelation]    = useState('Self');
@@ -139,11 +158,16 @@ export default function FeedbackFormScreen({ navigation }) {
   const [serviceRatings,  setServiceRatings]  = useState({});
   const [serviceBooleans, setServiceBooleans] = useState({});
 
-  // Comments
+  // Comments — Phase 9: per-visit "Suggestion for Improvement" removed.
+  // General suggestions now live in their own mode, unrelated to a visit.
   const [overallExperience, setOverallExperience] = useState('');
-  const [suggestion,        setSuggestion]        = useState('');
 
   const [submitting, setSubmitting] = useState(false);
+
+  // Phase 9 — standalone suggestion box state, separate from the feedback
+  // form's own state above so switching modes never mixes the two up.
+  const [suggestionText,       setSuggestionText]       = useState('');
+  const [submittingSuggestion, setSubmittingSuggestion] = useState(false);
 
   useEffect(() => { fetchDoctors(); }, []);
 
@@ -187,6 +211,17 @@ export default function FeedbackFormScreen({ navigation }) {
   const setBoolean = (key, value) =>
     setServiceBooleans(prev => ({ ...prev, [key]: value }));
 
+  // Phase 9 — Date -> 'YYYY-MM-DD', local date parts (not UTC), same
+  // approach DatePickerField and SignupScreen's dob already use elsewhere
+  // in this project to avoid the timezone-shift bug noted in Key Learnings.
+  const formatVisitDate = (date) => {
+    if (!date) return null;
+    const yyyy = date.getFullYear();
+    const mm = String(date.getMonth() + 1).padStart(2, '0');
+    const dd = String(date.getDate()).padStart(2, '0');
+    return `${yyyy}-${mm}-${dd}`;
+  };
+
   const handleSubmit = async () => {
     if (!visitDate)          { alert('Please select a visit date.');        return; }
     if (!consultingDoctorId) { alert('Please select the consulting doctor.');return; }
@@ -209,7 +244,7 @@ export default function FeedbackFormScreen({ navigation }) {
           'Authorization': `Bearer ${token}`,
         },
         body: JSON.stringify({
-          visitDate,
+          visitDate: formatVisitDate(visitDate),
           visitTime,
           consultingDoctorId,
           purposeOfVisit,                          // ← NEW
@@ -219,7 +254,6 @@ export default function FeedbackFormScreen({ navigation }) {
           ratings,
           booleans:          serviceBooleans,
           overallExperience: overallExperience.trim() || null,
-          suggestion:        suggestion.trim() || null,
         }),
       });
 
@@ -237,14 +271,38 @@ export default function FeedbackFormScreen({ navigation }) {
     }
   };
 
-  if (loadingDoctors) {
-    return (
-      <View style={styles.centered}>
-        <ActivityIndicator size="large" color="#3182ce" />
-        <Text style={styles.loadingText}>Loading...</Text>
-      </View>
-    );
-  }
+  // Phase 9 — separate, much simpler submit path for the suggestion box.
+  const handleSuggestionSubmit = async () => {
+    if (!suggestionText.trim()) { alert('Please write a suggestion before submitting.'); return; }
+
+    setSubmittingSuggestion(true);
+    try {
+      const auth  = getAuth();
+      const token = await auth.currentUser.getIdToken();
+
+      const response = await fetch(`${API.feedback}/suggestions/submit`, {
+        method: 'POST',
+        headers: {
+          'Content-Type':  'application/json',
+          'Authorization': `Bearer ${token}`,
+        },
+        body: JSON.stringify({ suggestionText: suggestionText.trim() }),
+      });
+
+      const data = await response.json();
+      if (response.ok) {
+        alert('Thank you for your suggestion!');
+        setSuggestionText('');
+        navigation.goBack();
+      } else {
+        alert(data.message || 'Submission failed. Please try again.');
+      }
+    } catch (error) {
+      alert('Network error. Please check your connection.');
+    } finally {
+      setSubmittingSuggestion(false);
+    }
+  };
 
   return (
     <View style={styles.outer}>
@@ -259,28 +317,90 @@ export default function FeedbackFormScreen({ navigation }) {
           <Text style={styles.subtitle}>Your feedback helps us improve</Text>
         </View>
 
+        {/* Phase 9 — mode toggle. Always visible, never blocked behind the
+            doctors-loading spinner below, so someone who just wants to
+            leave a quick suggestion isn't made to wait on unrelated data. */}
+        <View style={styles.modeRow}>
+          <TouchableOpacity
+            style={[styles.modeBtn, mode === 'feedback' && styles.modeBtnFeedbackActive]}
+            onPress={() => setMode('feedback')}
+          >
+            <Text style={[styles.modeBtnText, mode === 'feedback' && styles.modeBtnTextActive]}>
+              📋 Give Feedback
+            </Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.modeBtn, mode === 'suggestion' && styles.modeBtnSuggestionActive]}
+            onPress={() => setMode('suggestion')}
+          >
+            <Text style={[styles.modeBtnText, mode === 'suggestion' && styles.modeBtnTextActive]}>
+              💡 Suggest Something
+            </Text>
+          </TouchableOpacity>
+        </View>
+
+        {/* ─── Suggestion mode — simple, standalone, not tied to a visit ─── */}
+        {mode === 'suggestion' && (
+          <View style={styles.suggestionCard}>
+            <Text style={styles.suggestionHeadline}>Got an idea to make the centre better?</Text>
+            <Text style={styles.suggestionSubtext}>
+              Tell us about anything — a service you'd like to see, something
+              that could work better, anything at all. We're listening.
+            </Text>
+            <TextInput
+              style={[styles.input, styles.suggestionInput]}
+              value={suggestionText}
+              onChangeText={setSuggestionText}
+              placeholder="Share your idea here..."
+              placeholderTextColor="#a0aec0"
+              multiline
+              numberOfLines={6}
+            />
+            <TouchableOpacity
+              style={[styles.suggestionSubmitBtn, submittingSuggestion && styles.submitBtnDisabled]}
+              onPress={handleSuggestionSubmit}
+              disabled={submittingSuggestion}
+            >
+              {submittingSuggestion
+                ? <ActivityIndicator color="#ffffff" />
+                : <Text style={styles.submitText}>Send Suggestion</Text>
+              }
+            </TouchableOpacity>
+          </View>
+        )}
+
+        {/* ─── Feedback mode — the full visit-feedback form ─── */}
+        {mode === 'feedback' && (loadingDoctors ? (
+          <View style={styles.centered}>
+            <ActivityIndicator size="large" color="#3182ce" />
+            <Text style={styles.loadingText}>Loading...</Text>
+          </View>
+        ) : (
+        <>
         {/* Visit Details */}
         <Text style={styles.sectionLabel}>Visit Details</Text>
 
-        <Text style={styles.fieldLabel}>Visit Date</Text>
-        <TextInput
-          style={styles.input}
-          value={visitDate}
-          onChangeText={setVisitDate}
-          placeholder="YYYY-MM-DD"
-          placeholderTextColor="#a0aec0"
-        />
+        {/* Phase 9 — proper pickers instead of free text; DatePickerField
+            and TimePickerField already render their own label, so the old
+            separate <Text> labels above them are gone. */}
+        <View style={styles.pickerWrap}>
+          <DatePickerField
+            label="Visit Date"
+            value={visitDate}
+            onChange={setVisitDate}
+            maximumDate={new Date()}
+          />
+        </View>
 
-        <Text style={styles.fieldLabel}>Visit Time</Text>
-        <TextInput
-          style={styles.input}
-          value={visitTime}
-          onChangeText={setVisitTime}
-          placeholder="HH:MM"
-          placeholderTextColor="#a0aec0"
-        />
+        <View style={styles.pickerWrap}>
+          <TimePickerField
+            label="Visit Time"
+            value={visitTime}
+            onChange={setVisitTime}
+          />
+        </View>
 
-        <Text style={styles.fieldLabel}>Consulting Doctor</Text>
+        <Text style={styles.fieldLabel}>Consulting Doctor / Provider</Text>
         <View style={styles.segRow}>
           {doctors.map(doc => (
             <TouchableOpacity
@@ -405,7 +525,8 @@ export default function FeedbackFormScreen({ navigation }) {
           );
         })}
 
-        {/* Comments */}
+        {/* Comments — Phase 9: Suggestion for Improvement removed, now its
+            own tab on the Feedback list screen. */}
         <Text style={styles.sectionLabel}>Comments</Text>
 
         <Text style={styles.fieldLabel}>Overall Experience (optional)</Text>
@@ -414,17 +535,6 @@ export default function FeedbackFormScreen({ navigation }) {
           value={overallExperience}
           onChangeText={setOverallExperience}
           placeholder="Share your overall experience..."
-          placeholderTextColor="#a0aec0"
-          multiline
-          numberOfLines={3}
-        />
-
-        <Text style={styles.fieldLabel}>Suggestion for Improvement (optional)</Text>
-        <TextInput
-          style={[styles.input, styles.textArea]}
-          value={suggestion}
-          onChangeText={setSuggestion}
-          placeholder="How can we serve you better?"
           placeholderTextColor="#a0aec0"
           multiline
           numberOfLines={3}
@@ -440,6 +550,8 @@ export default function FeedbackFormScreen({ navigation }) {
             : <Text style={styles.submitText}>Submit Feedback</Text>
           }
         </TouchableOpacity>
+        </>
+        ))}
 
         <View style={{ height: 40 }} />
       </ScrollView>
@@ -476,6 +588,11 @@ const styles = StyleSheet.create({
     fontSize: 14, color: '#2d3748', marginHorizontal: 20, marginBottom: 14,
   },
   textArea:     { height: 80, textAlignVertical: 'top' },
+  // Phase 9 — DatePickerField/TimePickerField manage their own internal
+  // spacing; this wrapper just matches the horizontal margin every other
+  // field on this screen uses, so the pickers line up visually with the
+  // rest of the form.
+  pickerWrap:   { marginHorizontal: 20 },
   segRow:       { flexDirection: 'row', flexWrap: 'wrap', gap: 8, paddingHorizontal: 20, marginBottom: 14 },
   segBtn:       { paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8, borderWidth: 1, borderColor: '#e2e8f0', backgroundColor: '#f7fafc' },
   segBtnActive: { backgroundColor: '#ebf8ff', borderColor: '#3182ce' },
@@ -524,6 +641,41 @@ const styles = StyleSheet.create({
   submitBtn:           { marginHorizontal: 20, marginTop: 24, backgroundColor: '#3182ce', borderRadius: 8, paddingVertical: 14, alignItems: 'center' },
   submitBtnDisabled:   { backgroundColor: '#a0aec0' },
   submitText:          { color: '#ffffff', fontSize: 16, fontWeight: '600' },
+  // Phase 9 — mode toggle
+  modeRow: {
+    flexDirection: 'row', gap: 10, marginHorizontal: 20, marginBottom: 16,
+  },
+  modeBtn: {
+    flex: 1, borderRadius: 10, paddingVertical: 12, alignItems: 'center',
+    borderWidth: 1.5, borderColor: '#e2e8f0', backgroundColor: '#f7fafc',
+  },
+  modeBtnFeedbackActive:   { backgroundColor: '#ebf8ff', borderColor: '#3182ce' },
+  modeBtnSuggestionActive: { backgroundColor: '#fffbeb', borderColor: '#d69e2e' },
+  modeBtnText:       { fontSize: 14, color: '#718096', fontWeight: '600' },
+  modeBtnTextActive: { color: '#2d3748', fontWeight: '800' },
+
+  // Phase 9 — suggestion card, deliberately warmer/bolder than the
+  // feedback form's blue, so it reads as its own inviting space rather
+  // than a smaller version of the feedback form.
+  suggestionCard: {
+    marginHorizontal: 20, backgroundColor: '#fffbeb', borderRadius: 14,
+    padding: 20, borderWidth: 1.5, borderColor: '#f6e05e',
+  },
+  suggestionHeadline: {
+    fontSize: 18, fontWeight: '800', color: '#744210', marginBottom: 8,
+  },
+  suggestionSubtext: {
+    fontSize: 13, color: '#92400e', lineHeight: 19, marginBottom: 16,
+  },
+  suggestionInput: {
+    marginHorizontal: 0, height: 140, backgroundColor: '#ffffff',
+    borderColor: '#f6e05e',
+  },
+  suggestionSubmitBtn: {
+    marginTop: 4, backgroundColor: '#d69e2e', borderRadius: 8,
+    paddingVertical: 14, alignItems: 'center',
+  },
+
 });
 
 const star = StyleSheet.create({

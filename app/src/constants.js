@@ -12,6 +12,11 @@ export const ROLES = {
   PHARMACY_INCHARGE:'pharmacy_incharge',
   ADMIN_INCHARGE:   'admin_incharge',
   CMO:              'cmo',
+  // Phase 9 — third-party providers, feedback-attribution only. No login
+  // hookup beyond identity: no doctorAvailability doc, no dashboard tile,
+  // no scheduling. See Command Board Phase 9 entry for the full reasoning.
+  DENTIST:          'dentist',
+  PHYSIOTHERAPIST:  'physiotherapist',
 };
 
 // ─── EMPLOYEE TYPE ────────────────────────────────────────────────────────────

@@ -11,6 +11,15 @@
 // and Designation all cascade from it, using the same constants.js lists
 // already locked in Phase 3 (EMPLOYEE_TYPES, DEPARTMENT_GROUPS, UNITS,
 // getDesignationsByType, BLOOD_GROUPS).
+//
+// Phase 9 update: Dentist and Physiotherapist added as approvable roles.
+// These are third-party providers engaged for in-house paid services —
+// feedback-attribution only, no dashboard, no availability tracking. The
+// Employee Profile Data section below (department/designation/etc.) is
+// built entirely around internal FFL/ESB staff and has no valid options
+// for a contracted provider, so it's skipped entirely for these two roles,
+// both in the UI and in the approval validation. Homi's call — no
+// over-engineering a fit where none exists.
 import React, { useState, useCallback } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity,
@@ -36,7 +45,15 @@ const ROLE_OPTIONS = [
   { label: 'Driver',            value: 'driver' },
   { label: 'Admin Incharge',    value: 'admin_incharge' },
   { label: 'CMO',               value: 'cmo' },
+  // Phase 9 — third-party providers, feedback-attribution only
+  { label: 'Dentist',           value: 'dentist' },
+  { label: 'Physiotherapist',   value: 'physiotherapist' },
 ];
+
+// Phase 9 — roles that skip the internal-employee profile-data section
+// entirely (department/designation/etc. don't apply to a third-party
+// provider). Add any future non-employee role here.
+const LIGHTWEIGHT_ROLES = ['dentist', 'physiotherapist'];
 
 // Day 14, Step D — Employee Type options for the new profile section
 const EMPLOYEE_TYPE_OPTIONS = [
@@ -190,14 +207,21 @@ export default function UserApprovalScreen({ navigation }) {
     const role = roles[uid];
     if (!role) { webAlert('Select Role', 'Please select a role before approving.'); return; }
 
-    // Day 14, Step D — profile data must be complete before approving.
+    // Phase 9 — third-party provider roles skip profile-data validation
+    // entirely; there's no valid department/designation for them to pick.
+    const isLightweightRole = LIGHTWEIGHT_ROLES.includes(role);
+
+    // Day 14, Step D — profile data must be complete before approving
+    // (skipped for lightweight roles — see above).
     const profile = getProfile(uid);
     const unitOptions = UNITS[profile.department] || [];
-    if (!profile.employeeType) { webAlert('Required', 'Please select Employee Type.'); return; }
-    if (!profile.department)   { webAlert('Required', 'Please select Department.'); return; }
-    if (unitOptions.length > 0 && !profile.unit) { webAlert('Required', 'Please select Unit.'); return; }
-    if (!profile.designation)  { webAlert('Required', 'Please select Designation.'); return; }
-    if (!profile.bloodGroup)   { webAlert('Required', 'Please select Blood Group.'); return; }
+    if (!isLightweightRole) {
+      if (!profile.employeeType) { webAlert('Required', 'Please select Employee Type.'); return; }
+      if (!profile.department)   { webAlert('Required', 'Please select Department.'); return; }
+      if (unitOptions.length > 0 && !profile.unit) { webAlert('Required', 'Please select Unit.'); return; }
+      if (!profile.designation)  { webAlert('Required', 'Please select Designation.'); return; }
+      if (!profile.bloodGroup)   { webAlert('Required', 'Please select Blood Group.'); return; }
+    }
 
     const roleLabel = ROLE_OPTIONS.find(r => r.value === role)?.label;
     const user = users.find(u => u.uid === uid);
@@ -226,7 +250,9 @@ export default function UserApprovalScreen({ navigation }) {
           // 2. Day 14, Step D — save profile data onto the employee record.
           // Uses the same PUT /:employeeId route hardened in Step A; admin
           // callers are allowed to write these admin-owned fields.
-          if (user?.employeeId) {
+          // Phase 9 — skipped for lightweight roles; no profile data was
+          // collected for them, so there's nothing to save.
+          if (user?.employeeId && !isLightweightRole) {
             try {
               const profileRes = await fetch(`${API.employees}/${user.employeeId}`, {
                 method: 'PUT',
@@ -376,6 +402,8 @@ export default function UserApprovalScreen({ navigation }) {
             ? getDesignationsByType(profile.employeeType)
             : [];
           const isESB = profile.employeeType === EMPLOYEE_TYPES.ESB;
+          const currentRole = roles[user.uid] || 'employee';
+          const isLightweightRole = LIGHTWEIGHT_ROLES.includes(currentRole);
 
           return (
             <View key={user.uid} style={styles.card}>
@@ -436,129 +464,144 @@ export default function UserApprovalScreen({ navigation }) {
                     ))}
                   </View>
 
-                  {/* ─── Day 14, Step D — Employee Profile Data ─────────── */}
-                  <View style={styles.profileSectionDivider} />
-                  <Text style={styles.profileSectionTitle}>Employee Profile Data</Text>
-                  <Text style={styles.profileSectionHint}>
-                    Enter this from medical centre / HR records. The employee will only
-                    confirm it, not edit it, after approval.
-                  </Text>
-
-                  {/* Employee Type */}
-                  <Text style={styles.roleLabel}>Employee Type</Text>
-                  <View style={styles.roleGrid}>
-                    {EMPLOYEE_TYPE_OPTIONS.map(opt => (
-                      <TouchableOpacity
-                        key={opt.value}
-                        style={[styles.roleChip, profile.employeeType === opt.value && styles.roleChipSelected]}
-                        onPress={() => handleEmployeeTypeChange(user.uid, opt.value)}
-                      >
-                        <Text style={[styles.roleChipText, profile.employeeType === opt.value && styles.roleChipTextSelected]}>
-                          {opt.label}
-                        </Text>
-                      </TouchableOpacity>
-                    ))}
-                  </View>
-
-                  {/* Department — hidden for ESB, it's auto-set */}
-                  {profile.employeeType && !isESB && (
+                  {/* Phase 9 — lightweight roles (Dentist/Physiotherapist)
+                      skip the internal-employee profile section entirely.
+                      Nothing in it applies to a third-party provider. */}
+                  {isLightweightRole ? (
+                    <View style={styles.readOnlyNote}>
+                      <Text style={styles.readOnlyNoteText}>
+                        No profile data needed for this role — approving creates
+                        their account only. Assign them a dummy employee number
+                        in the usual format when they sign up.
+                      </Text>
+                    </View>
+                  ) : (
                     <>
-                      <Text style={styles.roleLabel}>Department</Text>
+                      {/* ─── Day 14, Step D — Employee Profile Data ─────────── */}
+                      <View style={styles.profileSectionDivider} />
+                      <Text style={styles.profileSectionTitle}>Employee Profile Data</Text>
+                      <Text style={styles.profileSectionHint}>
+                        Enter this from medical centre / HR records. The employee will only
+                        confirm it, not edit it, after approval.
+                      </Text>
+
+                      {/* Employee Type */}
+                      <Text style={styles.roleLabel}>Employee Type</Text>
                       <View style={styles.roleGrid}>
-                        {DEPARTMENT_OPTIONS.map(opt => (
+                        {EMPLOYEE_TYPE_OPTIONS.map(opt => (
                           <TouchableOpacity
                             key={opt.value}
-                            style={[styles.roleChip, profile.department === opt.value && styles.roleChipSelected]}
-                            onPress={() => handleDepartmentChange(user.uid, opt.value)}
+                            style={[styles.roleChip, profile.employeeType === opt.value && styles.roleChipSelected]}
+                            onPress={() => handleEmployeeTypeChange(user.uid, opt.value)}
                           >
-                            <Text style={[styles.roleChipText, profile.department === opt.value && styles.roleChipTextSelected]}>
+                            <Text style={[styles.roleChipText, profile.employeeType === opt.value && styles.roleChipTextSelected]}>
                               {opt.label}
                             </Text>
                           </TouchableOpacity>
                         ))}
                       </View>
-                    </>
-                  )}
-                  {isESB && (
-                    <View style={styles.readOnlyNote}>
-                      <Text style={styles.readOnlyNoteText}>Department: Education Society Board (auto-set)</Text>
-                    </View>
-                  )}
 
-                  {/* Unit — cascades from department */}
-                  {profile.department && unitOptions.length > 0 && (
-                    <>
-                      <Text style={styles.roleLabel}>Unit</Text>
+                      {/* Department — hidden for ESB, it's auto-set */}
+                      {profile.employeeType && !isESB && (
+                        <>
+                          <Text style={styles.roleLabel}>Department</Text>
+                          <View style={styles.roleGrid}>
+                            {DEPARTMENT_OPTIONS.map(opt => (
+                              <TouchableOpacity
+                                key={opt.value}
+                                style={[styles.roleChip, profile.department === opt.value && styles.roleChipSelected]}
+                                onPress={() => handleDepartmentChange(user.uid, opt.value)}
+                              >
+                                <Text style={[styles.roleChipText, profile.department === opt.value && styles.roleChipTextSelected]}>
+                                  {opt.label}
+                                </Text>
+                              </TouchableOpacity>
+                            ))}
+                          </View>
+                        </>
+                      )}
+                      {isESB && (
+                        <View style={styles.readOnlyNote}>
+                          <Text style={styles.readOnlyNoteText}>Department: Education Society Board (auto-set)</Text>
+                        </View>
+                      )}
+
+                      {/* Unit — cascades from department */}
+                      {profile.department && unitOptions.length > 0 && (
+                        <>
+                          <Text style={styles.roleLabel}>Unit</Text>
+                          <View style={styles.roleGrid}>
+                            {unitOptions.map(opt => (
+                              <TouchableOpacity
+                                key={opt}
+                                style={[styles.roleChip, profile.unit === opt && styles.roleChipSelected]}
+                                onPress={() => setProfileField(user.uid, 'unit', opt)}
+                              >
+                                <Text style={[styles.roleChipText, profile.unit === opt && styles.roleChipTextSelected]}>
+                                  {opt}
+                                </Text>
+                              </TouchableOpacity>
+                            ))}
+                          </View>
+                        </>
+                      )}
+
+                      {/* Designation — cascades from employee type */}
+                      {profile.employeeType && designationOptions.length > 0 && (
+                        <>
+                          <Text style={styles.roleLabel}>Designation</Text>
+                          <View style={styles.roleGrid}>
+                            {designationOptions.map(opt => (
+                              <TouchableOpacity
+                                key={opt.value}
+                                style={[styles.roleChip, profile.designation === opt.value && styles.roleChipSelected]}
+                                onPress={() => setProfileField(user.uid, 'designation', opt.value)}
+                              >
+                                <Text style={[styles.roleChipText, profile.designation === opt.value && styles.roleChipTextSelected]}>
+                                  {opt.label}
+                                </Text>
+                              </TouchableOpacity>
+                            ))}
+                          </View>
+                        </>
+                      )}
+
+                      {/* Blood Group */}
+                      <Text style={styles.roleLabel}>Blood Group</Text>
                       <View style={styles.roleGrid}>
-                        {unitOptions.map(opt => (
+                        {BLOOD_GROUPS.map(opt => (
                           <TouchableOpacity
                             key={opt}
-                            style={[styles.roleChip, profile.unit === opt && styles.roleChipSelected]}
-                            onPress={() => setProfileField(user.uid, 'unit', opt)}
+                            style={[styles.roleChip, profile.bloodGroup === opt && styles.roleChipSelected]}
+                            onPress={() => setProfileField(user.uid, 'bloodGroup', opt)}
                           >
-                            <Text style={[styles.roleChipText, profile.unit === opt && styles.roleChipTextSelected]}>
+                            <Text style={[styles.roleChipText, profile.bloodGroup === opt && styles.roleChipTextSelected]}>
                               {opt}
                             </Text>
                           </TouchableOpacity>
                         ))}
                       </View>
-                    </>
-                  )}
 
-                  {/* Designation — cascades from employee type */}
-                  {profile.employeeType && designationOptions.length > 0 && (
-                    <>
-                      <Text style={styles.roleLabel}>Designation</Text>
+                      {/* Chronic Disease — multi-select, optional, admin/CMO-visible only */}
+                      <Text style={styles.roleLabel}>Chronic Disease (optional, admin/CMO-visible only)</Text>
                       <View style={styles.roleGrid}>
-                        {designationOptions.map(opt => (
-                          <TouchableOpacity
-                            key={opt.value}
-                            style={[styles.roleChip, profile.designation === opt.value && styles.roleChipSelected]}
-                            onPress={() => setProfileField(user.uid, 'designation', opt.value)}
-                          >
-                            <Text style={[styles.roleChipText, profile.designation === opt.value && styles.roleChipTextSelected]}>
-                              {opt.label}
-                            </Text>
-                          </TouchableOpacity>
-                        ))}
+                        {CHRONIC_DISEASE_OPTIONS.map(opt => {
+                          const selected = (profile.chronicDisease || []).includes(opt);
+                          return (
+                            <TouchableOpacity
+                              key={opt}
+                              style={[styles.roleChip, selected && styles.roleChipSelected]}
+                              onPress={() => toggleChronicDisease(user.uid, opt)}
+                            >
+                              <Text style={[styles.roleChipText, selected && styles.roleChipTextSelected]}>
+                                {opt}
+                              </Text>
+                            </TouchableOpacity>
+                          );
+                        })}
                       </View>
                     </>
                   )}
-
-                  {/* Blood Group */}
-                  <Text style={styles.roleLabel}>Blood Group</Text>
-                  <View style={styles.roleGrid}>
-                    {BLOOD_GROUPS.map(opt => (
-                      <TouchableOpacity
-                        key={opt}
-                        style={[styles.roleChip, profile.bloodGroup === opt && styles.roleChipSelected]}
-                        onPress={() => setProfileField(user.uid, 'bloodGroup', opt)}
-                      >
-                        <Text style={[styles.roleChipText, profile.bloodGroup === opt && styles.roleChipTextSelected]}>
-                          {opt}
-                        </Text>
-                      </TouchableOpacity>
-                    ))}
-                  </View>
-
-                  {/* Chronic Disease — multi-select, optional, admin/CMO-visible only */}
-                  <Text style={styles.roleLabel}>Chronic Disease (optional, admin/CMO-visible only)</Text>
-                  <View style={styles.roleGrid}>
-                    {CHRONIC_DISEASE_OPTIONS.map(opt => {
-                      const selected = (profile.chronicDisease || []).includes(opt);
-                      return (
-                        <TouchableOpacity
-                          key={opt}
-                          style={[styles.roleChip, selected && styles.roleChipSelected]}
-                          onPress={() => toggleChronicDisease(user.uid, opt)}
-                        >
-                          <Text style={[styles.roleChipText, selected && styles.roleChipTextSelected]}>
-                            {opt}
-                          </Text>
-                        </TouchableOpacity>
-                      );
-                    })}
-                  </View>
 
                   <View style={styles.actionRow}>
                     <TouchableOpacity

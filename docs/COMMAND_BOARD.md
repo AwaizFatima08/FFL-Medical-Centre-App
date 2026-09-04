@@ -8,6 +8,8 @@ Quick reference for daily work. For locked flow status, architecture, and decisi
 
 **Note on this revision (Day 21):** Phase 5 is now closed — all subphases 5.1–5.9 (including 5.8's three sub-parts) built and live-verified across reception, Doctor, and CMO logins. 5.7 was deliberately decided not to be built, not missed — see the Phase 5 entry below and `docs/PHASE5_DESIGN.md` for the reasoning. Every item on the original "Still Open" list is now resolved one way or another.
 
+**Note on this revision (Day 21, cont'd):** Phase 6 (Doctor Availability) is now closed. Like Phases 4 and 5, it grew from a standard gap/bug audit into real feature work once live testing surfaced actual bugs and a design conversation added a genuine new capability (leave scheduling) mid-phase. Full detail in the Phase 6 entry below.
+
 ---
 
 ## Quick Paths
@@ -146,7 +148,35 @@ Originally scoped as a standard gap/bug audit. Live testing (screenshots coverin
 `firestore.rules`; `functions/src/ambulance/ambulanceRoutes.js`; `functions/src/auth/authRoutes.js`; `functions/src/reports/reportRoutes.js`; `functions/src/constants.js` + `app/src/constants.js`; `app/src/screens/ambulance/AmbulanceRequestScreen.js`, `AmbulanceRequestReceptionScreen.js`, `AmbulanceReceptionHubScreen.js`, `AmbulanceRequestDetailScreen.js`, `MyAmbulanceRequestScreen.js`, `AmbulanceHistoryScreen.js` (new, 5.9), `AmbulanceCMOHistoryScreen.js` (new, 5.8.2); `app/src/screens/home/DriverHome.js`, `CMOHome.js`, `DoctorHome.js`; `app/src/navigation/AppNavigator.js`.
 
 ### Phase 6 — Doctor Availability review
-- [ ] Not yet reviewed this session — audit screens + backend routes for gaps/bugs within scope
+### Phase 6 — Doctor Availability review — **CLOSED Day 21**
+Started as a standard gap/bug audit. Live testing surfaced a real bug chain rooted in a single cause, and a follow-up conversation with Homi turned the back half of this phase into a genuine feature build (leave scheduling) plus two smaller enhancements discovered through testing the feature itself.
+
+**Root-cause bug chain — all closed:**
+- **"Unknown" doctor displayed instead of a real name.** Root cause: `doctorAvailability` docs are meant to be keyed by the doctor's own Firebase uid (matching the pattern `employees`/`users` already use), but nothing in the codebase ever auto-creates this doc — it has always relied on hand-creation in the Firestore console. Dr. Jamil's doc had been created under a mistyped ID (`O` instead of `0` — visually identical, confirmed only by pasting both values as plain text and diffing character-by-character). Fixed by recreating the doc under the correct, copy-pasted uid.
+- **Scheduler (`availabilityScheduler.js`) silently using the wrong working-hours schedule for the CMO.** The scheduler reads a `role` field to decide Doctor vs. CMO hours, but no existing doc had `role` set at all — meaning every doctor, including Homi as CMO, was being checked against the DOCTOR schedule regardless of actual role. CMO and DOCTOR hours differ by ~1h45m at both ends of the day, so this was a real (if quiet) mis-scheduling, not just a data-hygiene issue. Fixed via a one-time backfill (`role: 'doctor'` / `'cmo'`, lowercase — a second bug was caught here too, one doc briefly had `"CMO"` uppercase, which the scheduler's exact-match check would have silently ignored).
+- **Root fix — `doctorAvailability` docs now auto-created at approval.** `POST /approve-user` in `authRoutes.js` now creates the doc automatically, keyed by the uid Firebase Auth already assigned (never hand-typed), whenever a user is approved as `doctor` or `cmo`. Only fires at initial approval — a later role change via `/change-role` is a known, accepted gap, not handled (Homi's call: low real-world likelihood given team size).
+- `isAvailable` field confirmed fully dead — written but never read anywhere in the route or either screen. Decision: leave it dormant rather than remove it, since removing live data has its own small risk for no real benefit.
+
+**Leave-scheduling feature (built from a live conversation about Homi's own attendance pattern) — closed:**
+- Reception can pre-schedule a doctor's leave (start date + end date) in advance; nothing changes on screen until the start date arrives.
+- Computed live, not via a background job — every time the availability list loads, the backend checks whether today falls inside the doctor's scheduled window and overrides the displayed status to On Leave if so. Avoids the failure mode of a cron job that could silently stop running.
+- Auto-reverts to whatever the doctor's manual status was before the leave began, the moment the end date passes — no action needed from reception.
+- Reception can view and cancel an active or upcoming scheduled leave at any time.
+- **Found through testing the feature itself, not the original ask — the manual status buttons (Available/Not Available/On Leave) are now disabled with an explanatory note whenever a scheduled leave is active**, since tapping them during that window would silently do nothing (the leave override always wins on the next refresh) — this was confirmed live before being fixed, not just reasoned about in the abstract.
+
+**Not Available — tentative return time (added after a follow-up request, extending the same module):**
+- Reception can optionally set a tentative return time when marking a doctor Not Available (e.g. "leaves for 2 hours, back tentatively at ___") — genuinely optional, confirming with no time given still works.
+- Shown on both reception's and the employee-facing screen ("⏰ Expected back around 3:30 PM"), directly targeting Homi's stated pain point of employees complaining about unexplained non-availability.
+- Automatically cleared the moment status changes away from Not Available — no stale times can linger.
+- Employees also now see the scheduled leave's return date under On Leave ("📅 Back on 11 Sept 2026") — added for parity with the Not Available treatment above, guarded so a stale/expired scheduled-leave field can never mistakenly display next to an unrelated, manually-set On Leave status.
+
+**Process notes from this phase:**
+- Hand-typed Firestore document IDs are a real, repeatable failure mode — `O`/`0` is genuinely indistinguishable at a glance even zoomed in. Diagnosing this required pasting values as plain text and diffing character-by-character, not eyeballing screenshots. Worth remembering for any future hand-created document ID.
+- A dual-purpose collection field (`currentStatus` vs. `isAvailable`) drifting apart in live data, exactly like Phase 3's config-vs-code mismatches, surfaced again here — worth continuing to check "is this field actually read anywhere" before trusting it during future audits.
+- This phase is a second confirmation (after Phase 4, Phase 5) that a live-testing round can surface a real interaction bug (the locked-buttons case) that pure code review wouldn't have caught — round-based testing discipline continues to earn its keep.
+
+**Files touched across Phase 6:**
+`functions/src/auth/authRoutes.js`; `functions/src/utils.js`; `functions/src/availability/availabilityRoutes.js`; `app/src/screens/availability/DoctorAvailabilityScreen.js`, `DoctorAvailabilityManageScreen.js`. (`availabilityScheduler.js` diagnosed but not code-changed — fixed via the `role` backfill, no logic change needed.)
 
 ### Phase 7 — Doctor Directory review
 - [ ] Not yet reviewed this session — audit screens + backend routes for gaps/bugs within scope

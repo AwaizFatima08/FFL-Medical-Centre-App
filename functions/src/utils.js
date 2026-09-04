@@ -95,6 +95,18 @@ const getDayOfWeek = (date) => {
   return days[new Date(date).getDay()];
 };
 
+// ─── PAKISTAN "TODAY" DATE STRING (Phase 6 — leave scheduling) ───────────
+// Returns today's date as YYYY-MM-DD in Pakistan Standard Time (UTC+5),
+// not server/UTC time — same offset convention as isWithinWorkingHours
+// above, so a leave window's start/end date lines up with the same "day"
+// reception sees on their clock, not a UTC day that could be a few hours
+// off near midnight.
+const getPakistanToday = () => {
+  const pkOffsetMs = 5 * 60 * 60 * 1000;
+  const pkNow = new Date(Date.now() + pkOffsetMs);
+  return pkNow.toISOString().split('T')[0];
+};
+
 // ─── NEXT MEDICAL TRIP DATE ──────────────────────────────
 const getNextTripDates = (count = 3) => {
   const tripDays = [1, 3, 6]; // Monday, Wednesday, Saturday
@@ -128,6 +140,7 @@ module.exports = {
   addDays,
   formatDate,
   getDayOfWeek,
+  getPakistanToday,
   getNextTripDates,
   getPaginationParams,
 };

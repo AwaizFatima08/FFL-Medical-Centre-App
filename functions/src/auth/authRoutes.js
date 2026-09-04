@@ -415,6 +415,29 @@ router.post('/approve-user', verifyToken, verifyRole([ROLES.ADMIN_INCHARGE]), as
       });
     }
 
+    // Day 21+ (Phase 6 fix) — auto-create the doctorAvailability doc for
+    // doctor/CMO approvals, keyed by the doctor's own uid (never
+    // hand-typed, so it can't drift from the real uid the way the
+    // Jamil bug did). Only fires at initial approval — a later role
+    // change via /change-role is a known, accepted gap, not handled here
+    // per Phase 6 decision. If a doc already exists at this uid (e.g.
+    // re-approving after a disable/enable cycle), it's left untouched.
+    if (role === ROLES.DOCTOR || role === ROLES.CMO) {
+      const availRef = db.collection('doctorAvailability').doc(uid);
+      const availSnap = await availRef.get();
+      if (!availSnap.exists) {
+        const fullName = empSnap.empty ? '—' : empSnap.docs[0].data().fullName;
+        await availRef.set({
+          currentStatus: 'available',
+          isAvailable:   true,
+          fullName,
+          role,
+          updatedBy:     req.user.uid,
+          updatedAt:     nowISO(),
+        });
+      }
+    }
+
     try {
       await admin.auth().generateEmailVerificationLink(
         userDoc.data().email,

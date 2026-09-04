@@ -11,6 +11,45 @@ const STATUS_CONFIG = {
   on_leave:      { label: 'On Leave',      color: '#744210', bg: '#fefcbf', icon: '🟡' },
 };
 
+// Phase 6 (follow-up) — expectedBackAt is stored as a plain "HH:mm"
+// 24-hour string, always meaning "today". Converts it to a display
+// string like "3:30 PM".
+const formatTimeOfDay = (hhmm) => {
+  if (!hhmm) return '';
+  const [h, m] = hhmm.split(':').map(Number);
+  const d = new Date();
+  d.setHours(h, m, 0, 0);
+  return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+};
+
+// Phase 6 (follow-up) — local-date 'YYYY-MM-DD', same convention used
+// throughout this project's availability screens (see Manage screen).
+const toDateString = (date) => {
+  const d = new Date(date);
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  const dd = String(d.getDate()).padStart(2, '0');
+  return `${yyyy}-${mm}-${dd}`;
+};
+
+const formatLeaveDate = (dateStr) => {
+  if (!dateStr) return '';
+  const [y, m, d] = dateStr.split('-').map(Number);
+  return new Date(y, m - 1, d).toLocaleDateString('en-GB', {
+    day: '2-digit', month: 'short', year: 'numeric',
+  });
+};
+
+// Only trust scheduledLeave's dates as "the reason" a doctor shows On
+// Leave if today genuinely falls inside that window. Guards against a
+// stale scheduledLeave field (from a past, uncancelled leave) being
+// shown alongside an unrelated, manually-set On Leave status.
+const isLeaveActiveToday = (leave) => {
+  if (!leave) return false;
+  const today = toDateString(new Date());
+  return today >= leave.startDate && today <= leave.endDate;
+};
+
 export default function DoctorAvailabilityScreen({ navigation }) {
   const [doctors, setDoctors] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -74,10 +113,22 @@ export default function DoctorAvailabilityScreen({ navigation }) {
           ) : (
             doctors.map((doctor) => {
               const config = STATUS_CONFIG[doctor.status] || STATUS_CONFIG.not_available;
+              const showLeaveDate = doctor.status === 'on_leave' &&
+                isLeaveActiveToday(doctor.scheduledLeave);
               return (
                 <View key={doctor.id} style={styles.card}>
                   <View style={styles.cardLeft}>
                     <Text style={styles.doctorName}>{doctor.fullName}</Text>
+                    {doctor.status === 'not_available' && doctor.expectedBackAt && (
+                      <Text style={styles.noteText}>
+                        ⏰ Expected back around {formatTimeOfDay(doctor.expectedBackAt)}
+                      </Text>
+                    )}
+                    {showLeaveDate && (
+                      <Text style={styles.noteText}>
+                        📅 Back on {formatLeaveDate(doctor.scheduledLeave.endDate)}
+                      </Text>
+                    )}
                     <Text style={styles.updatedAt}>
                       Last updated: {doctor.updatedAt
                         ? new Date(doctor.updatedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
@@ -115,6 +166,7 @@ const styles = StyleSheet.create({
   card:         { backgroundColor: '#ffffff', borderRadius: 12, padding: 16, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.08, shadowRadius: 4, elevation: 3 },
   cardLeft:     { flex: 1, marginRight: 12 },
   doctorName:   { fontSize: 16, fontWeight: '600', color: '#2d3748' },
+  noteText:     { fontSize: 12, color: '#c05621', marginTop: 2 },
   updatedAt:    { fontSize: 12, color: '#a0aec0', marginTop: 4 },
   statusBadge:  { borderRadius: 8, paddingVertical: 6, paddingHorizontal: 12, alignItems: 'center' },
   statusIcon:   { fontSize: 18, marginBottom: 2 },

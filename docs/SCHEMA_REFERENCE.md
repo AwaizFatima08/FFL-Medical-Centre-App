@@ -10,6 +10,14 @@ Generated from live production data review. This reflects the **actual** schema 
 
 **Day 21 revision note:** `feedback` updated to reflect the full real field set (per-service `ratings.*` and `booleans.*` fields were previously undocumented, confirmed directly against `feedbackRoutes.js` and live Firestore data during Phase 9). New `suggestions` collection added — built this session, has no prior history to correct. `users` gets a small addition noting the two new lightweight role values. Basis: `feedbackRoutes.js`, `FeedbackFormScreen.js`, and live Firestore screenshots reviewed during Phase 9's testing — not a fresh full console export. A real bug was also found while doing this reconciliation, unrelated to anything fixed this session — see the note under `feedback` below.
 
+**Day 22 revision note (final):** Two threads closed this session.
+
+**(1) `purposeOfVisit` — fixed.** The bug flagged Day 21 as "not yet fixed" is now fixed: `feedbackRoutes.js`'s `POST /submit` correctly saves it. Two follow-ups from that same finding remain open, not yet built: no server-side validation actually enforcing it as mandatory, and `GET /all` / `GET /:feedbackId` still don't project it into their response shape — so it's saved going forward, but not yet visible on any review screen.
+
+**(2) Phase 11 (Medical Trip) — closed.** `tripBookings` gets three real additions this session: `hospital` (fixed — see its own note below), `patientFamilyMemberId` (new), `cancelReason` (new). `patientRelation`'s valid set is now locked to `Self` / `Spouse` / `Son` / `Daughter` only — previously unrestricted free text (Father/Mother/Other/Wife dropped; V1's `familyMembers` never modeled parents or other relatives, so those options could never be verified against anything real). A structural misunderstanding surfaced and was corrected mid-build, worth flagging clearly so it isn't repeated: `familyMembers` was mistakenly assumed to live as a *subcollection* under `employees/{id}` — matching the shape of `employeeRoutes.js`'s `/:employeeId/family-members` routes — when it's actually a **top-level** collection, exactly as this doc already correctly stated further down. Those `employeeRoutes.js` routes write to and read from a path that nothing else in the app uses; they are dead code, not the real integration point, and should probably be removed or investigated in a future Family-module session. Basis for this section: `tripRoutes.js`, `TripBookingScreen.js`, and `EmployeeHome.js` (which already queried the top-level collection correctly), plus live Firestore console screenshots reviewed directly during this review — not a fresh full export.
+
+**(3) Phase 12 (Fitness Scheduling) — closed.** No schema changes from Phase 12's own fix (a frontend-only History tab), but reviewing this collection surfaced that its field list below was itself incomplete: `cancelReason`, `cancelledAt`, `cancelledBy`, and `confirmedAt` are all real, live-written fields (`fitnessRoutes.js`'s cancel and confirm routes) that had never been documented here. Added below.
+
 ---
 
 ## Top-Level Collections
@@ -234,6 +242,8 @@ Read/write restricted to `admin_incharge` and `cmo` only, enforced at the Firest
 | disabledAt | timestamp / null | **[Day 14]** |
 | disabledBy | string (uid) / null | **[Day 14]** admin who disabled the record |
 
+**[Day 22 — important, read before touching this collection]** This is confirmed as a **top-level** collection — `employeeId` (a string holding the owning employee's Auth uid) is how a document is linked back to its employee, not collection nesting. This was gotten wrong mid-build during Phase 11 despite being correctly stated in this table all along: `employeeRoutes.js` has routes shaped `POST/GET/PUT /:employeeId/family-members` that write to and read from `employees/{employeeId}/familyMembers` as a **subcollection** — a completely different, empty location that nothing real populates. `EmployeeHome.js` queries this collection correctly (top-level, filtered by `employeeId`); `TripBookingScreen.js` initially did not, and was corrected once live data showed the subcollection route returning nothing despite real, validated family records existing. Treat those `employeeRoutes.js` subcollection routes as dead code, not a second valid access path, until someone investigates and either removes or repurposes them.
+
 ## feedback
 
 **[Day 21 correction]** Previous version of this table only listed 4 `booleans.*` fields and 3 `ratings.*` fields — the real set is much larger, since every service a patient used gets its own rating and its own set of yes/no questions. Confirmed directly against `feedbackRoutes.js`'s `POST /submit` and live Firestore documents during Phase 9.
@@ -259,6 +269,7 @@ Read/write restricted to `admin_incharge` and `cmo` only, enforced at the Firest
 | overallExperience | string / null | |
 | patientName | string / null | |
 | patientRelation | string | "Self" / "Spouse" / "Child" / "Parent" / "Other" |
+| purposeOfVisit | string | **[Day 22, new]** "Emergency" / "Routine Consultation" / "Physiotherapy Visit" / "Dental Treatment Visit" / "Laboratory Sample" — required on the form since before this session, but silently dropped server-side until Day 22 (see correction below). Documents created before Day 22 will not have this field at all. |
 | ratings.consultation | number | 1-5, present only if `consultation` in `servicesUsed` |
 | ratings.dental | number | 1-5, present only if `dental` in `servicesUsed` |
 | ratings.housekeeping | number | 1-5, mandatory on every submission |
@@ -276,7 +287,7 @@ Read/write restricted to `admin_incharge` and `cmo` only, enforced at the Firest
 | visitDate | string | YYYY-MM-DD |
 | visitTime | string | HH:MM |
 
-**[Day 21 correction — real bug found, not yet fixed]** `FeedbackFormScreen.js` collects and sends a `purposeOfVisit` field (required in the frontend form — "Emergency" / "Routine Consultation" / "Physiotherapy Visit" / "Dental Treatment Visit" / "Laboratory Sample") but `feedbackRoutes.js`'s `POST /submit` never destructures or saves it. The field is silently dropped on every submission — it is required client-side, sent over the wire, and then discarded server-side. **No `feedback` document has ever actually stored `purposeOfVisit`, despite the form treating it as mandatory.** Found while reconciling this doc against live code during Phase 9's wrap-up, unrelated to anything fixed this session. Not yet triaged into a phase — flag for the next session.
+**[Day 21 — bug found; Day 22 — fixed]** `FeedbackFormScreen.js` collects and sends a `purposeOfVisit` field (required in the frontend form — "Emergency" / "Routine Consultation" / "Physiotherapy Visit" / "Dental Treatment Visit" / "Laboratory Sample") but `feedbackRoutes.js`'s `POST /submit` never destructured or saved it. The field was silently dropped on every submission — required client-side, sent over the wire, then discarded server-side. **No `feedback` document created before Day 22 has `purposeOfVisit` populated**, despite the form treating it as mandatory throughout. Fixed Day 22: now destructured and saved on every new submission. Two follow-ups from this same finding are still open, not yet built: (1) no server-side validation actually enforcing it as mandatory — a malformed client could still submit `null`; (2) `GET /all` and `GET /:feedbackId` don't yet project this field into their response shape, so it's saved but not yet visible on the CMO's review screens.
 
 **[Day 21 — resolved]** The report-route field-mismatch bug noted here since Day 13 was confirmed and fixed in Phase 9 — see Command Board Phase 9 entry. `reportRoutes.js`'s `/feedback` route now reads the correct nested field names above. No frontend screen exists for this report yet (Phase 10's job).
 
@@ -298,9 +309,13 @@ Read/write restricted to `admin_incharge` and `cmo` only, enforced at the Firest
 | adminNote | string / null | |
 | assignedAt | timestamp | |
 | assignedBy | string (uid) | |
+| cancelledAt | timestamp / null | **[Day 22, added]** confirmed live in `fitnessRoutes.js`'s `POST /:id/cancel` — was missing from this table entirely until this review |
+| cancelledBy | string (uid) / null | **[Day 22, added]** |
+| cancelReason | string / null | **[Day 22, added]** |
 | completedAt | timestamp / null | |
 | completedBy | string (uid) / null | |
 | completionRemarks | string / null | |
+| confirmedAt | timestamp / null | **[Day 22, added]** set by `POST /:id/confirm` (employee confirming attendance) — also missing from this table until this review |
 | createdAt | timestamp | |
 | cycleYear | number | |
 | department | string | |
@@ -316,9 +331,11 @@ Read/write restricted to `admin_incharge` and `cmo` only, enforced at the Firest
 | rescheduledDate / rescheduledTime | string / null | |
 | scheduledDate | string | YYYY-MM-DD |
 | scheduledTime | string | HH:MM |
-| status | string | "completed" |
+| status | string | **[Day 22, corrected]** full set, confirmed against `fitnessRoutes.js`'s `FITNESS_STATUS`: "scheduled" / "confirmed" / "reschedule_requested" / "rescheduled" / "reschedule_rejected" / "completed" / "cancelled" — prior version of this table only listed "completed", as if it were the only value |
 
 **[Day 13 confirmation]** Confirmed live field is `fitnessOutcome`, not `fitnessStatus` — `reportRoutes.js`'s `/fitness` route reads the wrong field name (Phase 1 item, confirmed root cause).
+
+**[Day 22 note]** Reviewing this collection for Phase 12 (a frontend-only fix — see Command Board) surfaced that this table itself was incomplete, independent of anything that changed in code this session: `cancelReason`, `cancelledAt`, `cancelledBy`, and `confirmedAt` are all fields `fitnessRoutes.js` has always written (via `POST /:id/cancel` and `POST /:id/confirm`), just never documented here. No code changed to produce this correction — this is a doc-only catch-up, same as the `status` value-set correction above.
 
 ## mail
 
@@ -368,14 +385,17 @@ Trigger collection for the email extension (Firebase Send Email pattern).
 |---|---|---|
 | bookedBy | string (uid) | |
 | cancelledAt / cancelledBy | timestamp / string / null | |
+| cancelReason | string / null | **[Day 22, new]** required when reception cancels someone else's booking; not required and left `null` when an employee cancels their own — see note below |
 | confirmedAt / confirmedBy | timestamp / string | |
 | createdAt | timestamp | |
 | department | string | |
 | doctorId / doctorName | string | snapshot at booking time |
 | employeeName / employeeNumber | string | |
+| hospital | string / null | **[Day 22, new]** snapshot at booking time, alongside `doctorId`/`doctorName` — see note below |
 | notes | string / null | |
 | overnightStay | boolean | |
-| patientName / patientRelation | string | |
+| patientFamilyMemberId | string / null | **[Day 22, new]** links to the `familyMembers` doc actually selected — `null` when `patientRelation` is `"Self"`. See note below. |
+| patientName / patientRelation | string | **[Day 22]** `patientRelation` valid set is now `"Self"` / `"Spouse"` / `"Son"` / `"Daughter"` only — see note below. Bookings created before Day 22 may have older free-text values (`"Wife"`, `"Father"`, `"Mother"`, `"Other"`) that no longer occur in new bookings. |
 | phone | string | |
 | pickupHouse | string | |
 | referralConfirmed | boolean | |
@@ -384,7 +404,15 @@ Trigger collection for the email extension (Firebase Send Email pattern).
 | status | string | "confirmed" |
 | tripDate | string | YYYY-MM-DD |
 
-**[Day 13 correction — important]** This is a **flat, top-level collection** — each document is a booking directly, confirmed live. `reportRoutes.js`'s trip report routes (`/trip-day`, `/trips/monthly`, `/trips`) instead query a `medicalTrips` collection with a `bookings` subcollection, which **does not exist in live Firestore**. Trip Day Report and Monthly Trip Report have almost certainly never returned real data (Phase 2 item, top priority). Note also: `tripBookings` has **no `hospital` field** — reports needing it must look it up via `doctorId` → `doctorDirectory.hospital`.
+**[Day 13 correction — important]** This is a **flat, top-level collection** — each document is a booking directly, confirmed live. `reportRoutes.js`'s trip report routes (`/trip-day`, `/trips/monthly`, `/trips`) instead query a `medicalTrips` collection with a `bookings` subcollection, which **does not exist in live Firestore**. Trip Day Report and Monthly Trip Report have almost certainly never returned real data (Phase 2 item, top priority).
+
+**[Day 22 correction]** The line above used to end with "`tripBookings` has no `hospital` field — reports needing it must look it up via `doctorId` → `doctorDirectory.hospital`." That's no longer accurate. A locked design decision called for `hospital` to be saved as a snapshot at booking time, the same way `doctorName` already is — but `tripRoutes.js`'s `POST /book` was never updated to actually do it. The frontend (`TripBookingScreen.js`) had already been built to capture and send `hospital`; the backend silently dropped it on every submission, exactly the same shape of bug as `purposeOfVisit` in `feedback` (Day 21). Fixed this session. **Bookings created before this fix will have `hospital: null`** — there is no way to backfill it after the fact except by cross-referencing `doctorId` against `doctorDirectory.hospital`, which still works as a fallback for old records. Phase 10 (Reports) should prefer the snapshot on the booking itself for anything created after this fix, and fall back to the `doctorDirectory` lookup only for older bookings.
+
+**[Day 22 — new] Family-linked patient selection.** Booking a trip for anyone other than yourself now requires selecting a real, validated, active record from `familyMembers` — no more free-typing a relation you don't actually have on file. `patientRelation` is restricted to `Self`/`Spouse`/`Son`/`Daughter` (Father/Mother/Other dropped — not modeled in `familyMembers` at all in V1). When a real match doesn't exist yet (family member not registered), the employee is directed to book under `Self` and add a note in the general-purpose `notes` field explaining who the booking is actually for — there is no dedicated field for this; it deliberately reuses `notes`. Verified server-side in `tripRoutes.js`'s `POST /book`, not just filtered client-side: the submitted `patientFamilyMemberId` is checked against the real `familyMembers` document to confirm it exists, belongs to the requesting employee, matches the claimed relation, and is `status: "validated"` and not disabled.
+
+**[Day 22 — new] Reception cancellation reason.** `POST /:id/cancel` now requires a free-text reason when reception cancels someone else's booking (saved to `cancelReason`); an employee cancelling their own booking needs no reason and `cancelReason` stays `null` in that case. The reason is internal only — the employee's cancellation notification is always a fixed, generic line regardless of what reception typed, by design (matches the same pattern already used for the Ambulance module's driver-cancel reason). Admin's cancel permission on this route was removed the same session — Admin's trip access is intentionally read-only now (view via `TripViewScreen.js` only).
+
+**[Day 22 — new] Doctor selection restricted to Rahimyarkhan.** The trip only ever travels to Rahimyarkhan, so as of Day 22 the doctor picker (both `TripBookingScreen.js`'s frontend filter and a matching server-side check in `POST /book`) only allows `doctorDirectory` entries with `city === "Rahimyarkhan"`. This doesn't change `doctorDirectory`'s own schema or its other consumers (e.g. the general Doctors Directory screen still shows every city) — it's a Trip-booking-specific usage constraint, not a data model change.
 
 ## users
 
@@ -462,4 +490,4 @@ Trigger collection for the email extension (Firebase Send Email pattern).
 
 ---
 
-*Generated Day 10, corrected Day 13 from live Firestore console screenshots reviewed in session, updated Day 14 from Phase 4 code + live testing screenshots (not a full fresh re-export — see Day 14 revision note above). Update this file if the schema changes — treat as a living reference, not a locked spec.*
+*Generated Day 10, corrected Day 13 from live Firestore console screenshots reviewed in session, updated Day 14 from Phase 4 code + live testing screenshots, updated Day 22 from Phase 11/12 code + live testing (not full fresh re-exports — see each day's revision note above for basis). Update this file if the schema changes — treat as a living reference, not a locked spec.*

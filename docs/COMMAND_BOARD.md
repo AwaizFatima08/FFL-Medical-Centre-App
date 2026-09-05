@@ -14,6 +14,8 @@ Quick reference for daily work. For locked flow status, architecture, and decisi
 
 **Note on this revision (Day 21, cont'd):** Phase 9 (Patient Feedback) is now closed — started as the Day-13-flagged report bug, grew into a substantial feature phase: two new lightweight provider roles (Dentist/Physiotherapist), admin's feedback access removed entirely for privacy reasons, and a new standalone Suggestions feature built end-to-end. Fully live-verified from employee, CMO, and admin logins. Full detail in the Phase 9 entry below. Remaining backlog going into next session: Medical Trip (Phase 11 — never had its own review phase), Fitness Scheduling (Phase 12), and Reports (Phase 10, already scoped below).
 
+**Note on this revision (Day 22):** Phase 11 (Medical Trip) and Phase 12 (Fitness Scheduling) are both now closed. Phase 11 started as the standard write-side gap audit and grew substantially once live testing began — a real family-linked patient-selection redesign, a reception cancellation-reason feature, a Rahimyarkhan-only doctor restriction, and a genuine mid-build mistake (wrongly assuming `familyMembers` was a subcollection) caught and corrected via live data. Phase 12 stayed small and contained as expected — one real gap (no history view for admin/CMO/doctor) plus a few small polish items. Full detail in each phase's entry below. Also fixed at the very start of this session, before Phase 11 began: the `purposeOfVisit` bug flagged during Phase 9's wrap-up (tracked only in Schema Reference at the time, not listed under Phase 9 above since it surfaced after that phase's own closing) — see the addendum under Phase 9. Only Phase 10 (Reports) remains before the full V1 module set has been through a dedicated review pass.
+
 ---
 
 ## Quick Paths
@@ -53,7 +55,7 @@ Vaccination flow, Lab module, Store/Pharmacy module, and any new idea or module 
 
 ---
 
-## Way Forward — V1 Completion (Phases 1–10)
+## Way Forward — V1 Completion (Phases 1–12)
 
 ### Phase 1 — Confirmed live bugs — **CLOSED Day 13**
 - [x] Residence Type split by branch (family vs bachelor) + bachelor question reworded to "Are you living in township bachelor accommodation?" — closed, tested, confirmed on both branches
@@ -237,6 +239,8 @@ Started as the Day-13-flagged report bug, grew into a substantial feature phase 
 
 **Files touched:** `functions/src/constants.js` + `app/src/constants.js`; `functions/src/feedback/feedbackRoutes.js`; `functions/src/reports/reportRoutes.js`; `app/src/screens/admin/UserApprovalScreen.js`; `app/src/screens/home/AdminHome.js`; `app/src/screens/feedback/FeedbackFormScreen.js`; `app/src/screens/feedback/FeedbackListScreen.js`; `app/src/components/TimePickerField.js` (new).
 
+**Day 22 addendum:** A bug found during this phase's own wrap-up but only tracked in Schema Reference at the time (not listed above since it surfaced after this phase closed) — `FeedbackFormScreen.js` requires `purposeOfVisit` and sends it on every submission, but `feedbackRoutes.js`'s `POST /submit` never destructured or saved it, silently dropping it on every single submission ever made. Fixed at the start of Day 22's session, before Phase 11 began: one-line addition to the destructure and the `.set()` call. Two follow-ups from this same fix remain open, not yet built: no server-side validation actually enforcing the field as mandatory, and `GET /all`/`GET /:feedbackId` still don't project it into their response shape — so it's saved going forward but not yet visible on the CMO's review screens.
+
 ### Phase 10 — Reports review
 - [ ] Run all 7 report screens post Phase 2/3/4 fixes and confirm each returns correct live data — now includes checking whether any report should reflect the new My Profile fields (department/designation/blood group are now reliably populated where they weren't before)
 - [ ] 5 `reportRoutes.js` routes with no frontend tile (`/fitness`, `/ambulance`, `/trips`, `/vaccination`, `/feedback`) — decide build-vs-remove per route (Fitness/Ambulance/Feedback in-scope, Vaccination is V2)
@@ -244,11 +248,40 @@ Started as the Day-13-flagged report bug, grew into a substantial feature phase 
 - [ ] Assess requirement for any new reports, remaining within scope
 - [ ] Deliberately held until after Phase 4 (now closed) so reports can be reviewed against the complete employee data model
 
-### Phase 11 — Medical Trip review
-- [ ] Not yet reviewed this session — this module has never had its own dedicated review phase; audit screens + backend routes (write-side especially) for gaps/bugs within scope
+### Phase 11 — Medical Trip review — **CLOSED Day 22**
+Started as the standard write-side gap audit (per the Day 13 scope note — this module had never had its own review phase). Grew substantially once live testing began, the same pattern as Phases 4/5/9.
 
-### Phase 12 — Fitness Scheduling review
-- [ ] Not yet reviewed this session — audit screens + backend routes for gaps/bugs within scope
+**Confirmed bugs, fixed:**
+- `hospital` field silently dropped at booking despite the frontend already sending it — `TripBookingScreen.js` sent it, `tripRoutes.js`'s `POST /book` never destructured or saved it. Same shape as Phase 9's `purposeOfVisit` bug. Schema Reference updated with the caveat that bookings made before the fix have `hospital: null` permanently — no way to backfill except cross-referencing `doctorId` against `doctorDirectory.hospital`.
+- `GET /employees/profile` didn't exist. `employeeRoutes.js` only had `GET /:employeeId`, which silently swallowed `/profile` as if it were a literal (non-existent) employee ID and always 404'd. This was the root cause of House Number auto-fill always coming back blank on the booking form. Added the missing route, positioned above `/:employeeId` — same Express route-ordering principle `tripRoutes.js` already documents for its own `/confirmedCount`/`/all`.
+- Dead/wrong trip constants in `app/src/constants.js`: `MEDICAL_TRIP_TOTAL_SEATS` said 26 against a real live cap of 24; `BOOKING_STATUS` used `'approved'`, the exact same live-data mismatch already found and fixed inside `reportRoutes.js` back in Phase 2, but never corrected at its source. Corrected rather than deleted, since not confirmed unused outside this session's reviewed files — `functions/src/constants.js` not yet checked for the same drift.
+
+**New capability — family-linked patient selection:** Patient Name/Relation was free text — any relation, any name, no connection to real family records. Redesigned so relation chips are computed from the employee's actual data (Self always; Spouse only if `maritalStatus === 'married'`; Son/Daughter always offered). For anything but Self, the employee must now pick from their own real, validated, active `familyMembers` records rather than typing a name. Father/Mother/Other/Wife dropped from the relation set entirely — `familyMembers` never modeled parents or other relatives in V1, so those options could never be verified against anything real; "Wife" relabelled "Spouse" since the underlying schema is gender-neutral. When no matching family member exists yet, the employee is directed to book under Self with a note in the existing `notes` field — deliberately no new dedicated field, and deliberately **no** reception override/proxy-booking escape hatch (Homi's explicit call — keeps pressure on completing real family records rather than working around gaps). Saves a real `patientFamilyMemberId` link, verified server-side (not just filtered client-side): confirms the record exists, belongs to the requesting employee, matches the claimed relation, and is validated + active.
+
+**Bug found and corrected mid-build — flagging clearly so it isn't repeated:** the family-member picker was initially wired to `employeeRoutes.js`'s `/:employeeId/family-members` routes, which write to and read from `employees/{id}/familyMembers` as a subcollection. Live testing (Boota's and Majid's bookings both coming back empty despite real registered family members existing) proved this wrong — `familyMembers` is a top-level collection, exactly as Schema Reference already stated, and those `employeeRoutes.js` routes are dead code nothing else populates. `EmployeeHome.js` already queried the correct top-level collection; corrected `TripBookingScreen.js` and `tripRoutes.js`'s server-side verification to match. Flagged for a future Family-module session: those dead subcollection routes should probably be removed or investigated, not left as a second, wrong integration point.
+
+**New capability — reception cancellation reason:** `POST /:id/cancel` now requires a free-text reason when reception cancels someone else's booking (saved to `cancelReason`, internal only); employee self-cancellation needs no reason and none is stored. The employee-facing notification is always one fixed, generic line regardless of what reception actually typed — mirrors the Ambulance module's existing fixed driver-cancel-reason pattern. No reception proxy-booking escape route. Admin's cancel permission removed from this route as part of a broader call this session: Admin's trip access is now read-only (view-only, same `TripViewScreen.js` CMO/Doctor already use).
+
+**New restriction — Rahimyarkhan-only doctor selection:** the trip only travels to Rahimyarkhan, but the doctor picker was pulling the full, city-blind directory — a Lahore-based doctor was successfully selected and the booking accepted during live testing before this was caught. Restricted both the frontend picker and a matching backend check in `POST /book` to `city === "Rahimyarkhan"` only. Doesn't touch `doctorDirectory`'s own schema or its other consumers — the general Directory screen still shows every city.
+
+**Process notes:**
+- The family-member bug was only caught because Homi ran real bookings for real employees (Boota, Majid, Qasim) against real Firestore data — nothing about reading the code alone would have surfaced it; the code looked internally consistent right up until live data proved the underlying assumption wrong. Same "has the real path actually been run" lesson as Phase 9, reconfirmed.
+- The wrong assumption was made despite the correct answer already sitting in this project's own Schema Reference doc and in already-reviewed code (`EmployeeHome.js`) — worth remembering that checking existing docs and already-read code before wiring up a new integration applies even mid-phase, not just at the start of a review.
+- Trip Report structural observations from this phase's live testing were deliberately not folded in here — carried forward to Phase 10 per Homi's explicit call, to be tackled last, after Phase 12.
+
+**Files touched:** `functions/src/trips/tripRoutes.js`; `functions/src/employees/employeeRoutes.js`; `app/src/screens/trip/TripBookingScreen.js`; `app/src/screens/trip/TripDetailScreen.js`; `app/src/constants.js`.
+
+### Phase 12 — Fitness Scheduling review — **CLOSED Day 22**
+Small, contained review as expected — Homi confirmed other features already checked and working; one real gap plus a few small polish items.
+
+**Confirmed bug, fixed:** `FitnessAdminScreen.js`'s tab literally labeled "All" only ever rendered `activeAppointments` (status not `completed`/`cancelled`) — the moment an exam was marked complete, it vanished from admin/CMO/doctor view entirely, with no way to look it up again. The backend (`GET /all`) was already fine — it returns everything and already supports `cycleYear`/`status`/`date` filtering; this was purely a frontend gap, nothing to fix server-side. Renamed "All" → "Active" (honest about what it always showed) and added a new "History" tab: completed + cancelled appointments, filterable by a cycle-year chip selector. Cards now also show the actual fitness outcome/remarks or cancellation reason for History entries — previously `renderCard` showed only a status badge, which would have made a History tab useless on its own.
+
+**Other fixes:**
+- Caught while checking for leftover references to the renamed tab: after scheduling a new appointment, the screen jumped to the now-nonexistent `'All'` tab key, which would have silently landed on a blank screen post-rename. Fixed to jump to `'Active'`.
+- Both free-text "HH:MM" time fields (Schedule tab, reschedule-approve panel) switched to the existing `TimePickerField` component, same one built in Phase 9.
+- `fitnessScheduler.js`'s daily reminder job now includes `reschedule_requested` in its eligible statuses — previously an employee with a pending reschedule request got no day-before/day-of reminder at all for the original slot, even though that slot is still what's technically booked until admin acts on the request.
+
+**Files touched:** `app/src/screens/fitness/FitnessAdminScreen.js`; `functions/src/fitness/fitnessScheduler.js`.
 
 ---
 
@@ -270,7 +303,7 @@ Started as the Day-13-flagged report bug, grew into a substantial feature phase 
 - Any other new module or idea raised during this review, however small
 
 ## Other pending (unchanged from before)
-- Notification debugging — deferred to final pre-production testing round, after Phases 10–12
+- Notification debugging — deferred to final pre-production testing round. Phases 11 and 12 now closed (Day 22); Phase 10 is the only one left of the original "after Phases 10–12" trio.
 
 ## Important Commands
 

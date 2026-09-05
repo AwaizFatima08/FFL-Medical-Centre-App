@@ -17,9 +17,13 @@ const sendFitnessReminders = async (event) => {
     const tomorrowPKT = new Date(nowPKT.getTime() + 24 * 60 * 60 * 1000);
     const tomorrowStr = tomorrowPKT.toISOString().slice(0, 10);
 
-    // Fetch appointments scheduled for today or tomorrow that are still active
+    // Fetch appointments scheduled for today or tomorrow that are still active.
+    // Includes reschedule_requested — the original slot is still what's
+    // actually booked until admin approves a new date, so an employee
+    // waiting on a pending request shouldn't silently miss their reminder
+    // for the date currently on record.
     const snapshot = await db.collection('fitnessAppointments')
-      .where('status', 'in', ['scheduled', 'confirmed', 'rescheduled', 'reschedule_rejected'])
+      .where('status', 'in', ['scheduled', 'confirmed', 'rescheduled', 'reschedule_rejected', 'reschedule_requested'])
       .get();
 
     if (snapshot.empty) {

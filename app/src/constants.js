@@ -212,12 +212,24 @@ export const DROP_OFF_OUTCOMES = [
 ];
 
 // ─── MEDICAL TRIP ─────────────────────────────────────────────────────────────
+// Phase 11 review, Day 22 — these had drifted from what tripRoutes.js and the
+// trip screens actually use, and were unused by any of them (each defines its
+// own local SEAT_CAP/status constants instead of importing from here). Values
+// below corrected to match live behavior rather than deleted, in case
+// something not reviewed this session still imports them — but if nothing
+// does, these are candidates for outright removal next time this file is touched.
 export const MEDICAL_TRIP_DAYS          = ['monday', 'wednesday', 'saturday'];
 export const MEDICAL_TRIP_DEPARTURE_MC  = '17:30';
 export const MEDICAL_TRIP_DEPARTURE_RYK = '21:00';
-export const MEDICAL_TRIP_TOTAL_SEATS   = 26;
-export const BOOKING_STATUS = { PENDING: 'pending', APPROVED: 'approved', CANCELLED: 'cancelled' };
-export const TRIP_STATUS    = { OPEN: 'open', FULL: 'full', COMPLETED: 'completed', CANCELLED: 'cancelled' };
+export const MEDICAL_TRIP_TOTAL_SEATS   = 24; // was 26 — real cap everywhere else is 24
+// BOOKING_STATUS previously used 'approved', which never appears in live
+// data (real value is 'confirmed') — this exact mismatch was already found
+// and fixed inside reportRoutes.js back in Phase 2; this export just hadn't
+// been corrected to match. TRIP_STATUS's 'open'/'full' values don't appear
+// anywhere in live code either — replaced with the real status set used by
+// tripRoutes.js and every trip screen.
+export const BOOKING_STATUS = { PENDING: 'pending', CONFIRMED: 'confirmed', CANCELLED: 'cancelled', COMPLETED: 'completed' };
+export const TRIP_STATUS    = BOOKING_STATUS; // same real status set — kept as an alias in case existing code imports either name
 
 // ─── VACCINATION ──────────────────────────────────────────────────────────────
 export const VACCINE_STATUS = {

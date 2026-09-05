@@ -17,6 +17,7 @@ import { getAuth } from 'firebase/auth';
 import { useFocusEffect } from '@react-navigation/native';
 import { API } from '../../config/api';
 import DatePickerField from '../../components/DatePickerField';
+import TimePickerField from '../../components/TimePickerField';
 
 // ─── Status display config ────────────────────────────────────────────────────
 const STATUS_CONFIG = {
@@ -35,7 +36,7 @@ const OUTCOME_OPTIONS = [
   { label: '⚠️ Fit with Restrictions', value: 'fit_with_restrictions' },
 ];
 
-const TABS = ['Pending', 'All', 'Schedule'];
+const TABS = ['Pending', 'Active', 'History', 'Schedule'];
 
 // ─── Role permission helpers ──────────────────────────────────────────────────
 const canSchedule        = (role) => ['admin_incharge', 'cmo'].includes(role);
@@ -61,6 +62,14 @@ export default function FitnessAdminScreen({ navigation, route }) {
   const [loading, setLoading]                 = useState(true);
   const [refreshing, setRefreshing]           = useState(false);
   const [actionLoading, setActionLoading]     = useState(false);
+
+  // ── History tab — Phase 12 review, Day 22 ──────────────────────────────────
+  // 'All' used to silently drop completed/cancelled appointments, so admin/
+  // CMO/doctor had no way to look up a past result. Renamed that tab
+  // 'Active' (honest about what it's always shown) and added this dedicated
+  // History tab instead, filterable by cycle year since that's how a fitness
+  // record is naturally looked up ("what was their result last year").
+  const [historyYear, setHistoryYear]         = useState(new Date().getFullYear());
 
   // ── Schedule new form ──────────────────────────────────────────────────────
   const [empNumInput, setEmpNumInput]         = useState('');
@@ -189,7 +198,7 @@ export default function FitnessAdminScreen({ navigation, route }) {
         setSchedDate('');
         setSchedTime('');
         setSchedNotes('');
-        setActiveTab('All');
+        setActiveTab('Active');
         await fetchAppointments();
       } else {
         alert(data.message || 'Failed to schedule appointment.');
@@ -321,6 +330,18 @@ export default function FitnessAdminScreen({ navigation, route }) {
   const activeAppointments = allAppointments.filter(a =>
     !['completed', 'cancelled'].includes(a.status)
   );
+  const historyAppointmentsAllYears = allAppointments.filter(a =>
+    ['completed', 'cancelled'].includes(a.status)
+  );
+  // Years that actually have history, most recent first — current year
+  // always included even if empty, so the selector isn't blank on a fresh system.
+  const historyYears = Array.from(new Set([
+    new Date().getFullYear(),
+    ...historyAppointmentsAllYears.map(a => a.cycleYear),
+  ])).sort((a, b) => b - a);
+  const historyAppointments = historyAppointmentsAllYears
+    .filter(a => a.cycleYear === historyYear)
+    .sort((a, b) => (b.scheduledDate || '').localeCompare(a.scheduledDate || ''));
 
   // ── Render appointment card ────────────────────────────────────────────────
   const renderCard = (appt) => {
@@ -354,6 +375,28 @@ export default function FitnessAdminScreen({ navigation, route }) {
           <View style={styles.rescheduleReasonBox}>
             <Text style={styles.rescheduleReasonLabel}>Employee's Reason:</Text>
             <Text style={styles.rescheduleReasonText}>{appt.rescheduleReason}</Text>
+          </View>
+        )}
+
+        {/* Completion result — mirrors what the employee already sees on
+            their own screen; without this, History is just a status badge
+            with nothing underneath it. */}
+        {appt.status === 'completed' && (
+          <View style={styles.outcomeBox}>
+            <Text style={styles.outcomeLabel}>Examination Result</Text>
+            <Text style={styles.outcomeValue}>
+              {OUTCOME_OPTIONS.find(o => o.value === appt.fitnessOutcome)?.label || appt.fitnessOutcome}
+            </Text>
+            {appt.completionRemarks && (
+              <Text style={styles.outcomeRemarks}>{appt.completionRemarks}</Text>
+            )}
+          </View>
+        )}
+
+        {appt.status === 'cancelled' && (
+          <View style={styles.cancelReasonBox}>
+            <Text style={styles.cancelReasonLabel}>Cancellation Reason</Text>
+            <Text style={styles.cancelReasonText}>{appt.cancelReason || '—'}</Text>
           </View>
         )}
 
@@ -447,6 +490,35 @@ export default function FitnessAdminScreen({ navigation, route }) {
     )
   );
 
+  const renderHistoryTab = () => (
+    <View>
+      <View style={styles.yearChipRow}>
+        {historyYears.map(y => (
+          <TouchableOpacity
+            key={y}
+            style={[styles.yearChip, historyYear === y && styles.yearChipSelected]}
+            onPress={() => setHistoryYear(y)}
+          >
+            <Text style={[styles.yearChipText, historyYear === y && styles.yearChipTextSelected]}>
+              {y}
+            </Text>
+          </TouchableOpacity>
+        ))}
+      </View>
+      {historyAppointments.length === 0 ? (
+        <View style={styles.emptyState}>
+          <Text style={styles.emptyIcon}>🗂️</Text>
+          <Text style={styles.emptyTitle}>No History for {historyYear}</Text>
+          <Text style={styles.emptySubtitle}>
+            Completed and cancelled appointments for this cycle year will appear here.
+          </Text>
+        </View>
+      ) : (
+        historyAppointments.map(renderCard)
+      )}
+    </View>
+  );
+
   const renderScheduleTab = () => {
     if (!canSchedule(userRole)) {
       return (
@@ -530,14 +602,10 @@ export default function FitnessAdminScreen({ navigation, route }) {
           minimumDate={new Date()}
         />
 
-        <Text style={styles.inputLabel}>Time * (HH:MM)</Text>
-        <TextInput
-          style={styles.input}
-          placeholder="e.g. 09:30"
-          placeholderTextColor="#a0aec0"
+        <TimePickerField
+          label="Time *"
           value={schedTime}
-          onChangeText={setSchedTime}
-          keyboardType="numbers-and-punctuation"
+          onChange={setSchedTime}
         />
 
         <Text style={styles.inputLabel}>Cycle Year *</Text>
@@ -615,7 +683,8 @@ export default function FitnessAdminScreen({ navigation, route }) {
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
         >
           {activeTab === 'Pending'  && renderPendingTab()}
-          {activeTab === 'All'      && renderAllTab()}
+          {activeTab === 'Active'   && renderAllTab()}
+          {activeTab === 'History'  && renderHistoryTab()}
           {activeTab === 'Schedule' && renderScheduleTab()}
         </ScrollView>
       )}
@@ -635,14 +704,10 @@ export default function FitnessAdminScreen({ navigation, route }) {
               onChange={(date) => setNewDate(date.toISOString().split('T')[0])}
               minimumDate={new Date()}
             />
-            <Text style={styles.inputLabel}>New Time * (HH:MM)</Text>
-            <TextInput
-              style={styles.input}
-              placeholder="e.g. 10:00"
-              placeholderTextColor="#a0aec0"
+            <TimePickerField
+              label="New Time *"
               value={newTime}
-              onChangeText={setNewTime}
-              keyboardType="numbers-and-punctuation"
+              onChange={setNewTime}
             />
             <View style={styles.panelActions}>
               <TouchableOpacity
@@ -833,6 +898,32 @@ const styles = StyleSheet.create({
   },
   rescheduleReasonLabel: { fontSize: 12, color: '#c05621', fontWeight: '700', marginBottom: 4 },
   rescheduleReasonText:  { fontSize: 13, color: '#744210' },
+
+  // ── Completion outcome (History / completed cards)
+  outcomeBox: {
+    backgroundColor: '#f0fff4', borderRadius: 8, padding: 12, marginBottom: 12,
+  },
+  outcomeLabel:   { fontSize: 12, color: '#276749', fontWeight: '700', marginBottom: 4 },
+  outcomeValue:   { fontSize: 14, color: '#22543d', fontWeight: '700', marginBottom: 4 },
+  outcomeRemarks: { fontSize: 13, color: '#2f855a' },
+
+  // ── Cancellation reason (History / cancelled cards)
+  cancelReasonBox: {
+    backgroundColor: '#fff5f5', borderRadius: 8, padding: 12, marginBottom: 12,
+    borderLeftWidth: 3, borderLeftColor: '#fc8181',
+  },
+  cancelReasonLabel: { fontSize: 12, color: '#c53030', fontWeight: '700', marginBottom: 4 },
+  cancelReasonText:  { fontSize: 13, color: '#742a2a' },
+
+  // ── History tab — cycle year selector
+  yearChipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 16 },
+  yearChip: {
+    paddingHorizontal: 16, paddingVertical: 8, borderRadius: 20,
+    backgroundColor: '#f7fafc', borderWidth: 1.5, borderColor: '#e2e8f0',
+  },
+  yearChipSelected:     { backgroundColor: '#3182ce', borderColor: '#3182ce' },
+  yearChipText:         { fontSize: 14, fontWeight: '600', color: '#4a5568' },
+  yearChipTextSelected: { color: '#ffffff' },
 
   actions:        { gap: 8, marginTop: 4 },
   btnApprove:     { backgroundColor: '#276749', borderRadius: 8, paddingVertical: 11, alignItems: 'center' },

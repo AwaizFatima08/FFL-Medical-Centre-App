@@ -107,6 +107,47 @@ router.get('/pending-validation', verifyToken,
   }
 );
 
+// ─── GET /profile ─────────────────────────────────────────
+// Returns the logged-in user's own employee record, looked up by their
+// Firebase Auth uid. Employee documents are keyed by their own Firestore
+// doc ID, not by uid — the uid lives inside the document as `userId` —
+// so this can't be a plain `.doc(uid)` lookup. Same pattern already used
+// by getEmployeeData() in tripRoutes.js and the employee-record lookup
+// in feedbackRoutes.js.
+//
+// MUST stay above 'GET /:employeeId' below: Express matches routes in
+// file order, and '/:employeeId' would otherwise treat "profile" as if
+// it were an employee ID, silently look up a document literally named
+// "profile" (which never exists), and 404 — exactly what was happening
+// before this route was added. That silent 404 was why TripBookingScreen.js's
+// House Number auto-fill always came back blank (Phase 11 review, Day 21).
+router.get('/profile', verifyToken, async (req, res) => {
+  try {
+    const db = admin.firestore();
+    const snapshot = await db.collection('employees')
+      .where('userId', '==', req.user.uid)
+      .limit(1)
+      .get();
+
+    if (snapshot.empty) {
+      return errorResponse(res, 'Employee record not found', 404);
+    }
+
+    const doc = snapshot.docs[0];
+    const data = doc.data();
+
+    // Only admin can see communityGroup — same rule as GET /:employeeId
+    if (req.userRole !== ROLES.ADMIN_INCHARGE) {
+      delete data.communityGroup;
+    }
+
+    return successResponse(res, { id: doc.id, ...data });
+  } catch (error) {
+    console.error('Get own profile error:', error);
+    return errorResponse(res, 'Failed to fetch profile', 500);
+  }
+});
+
 // ─── GET /:employeeId ─────────────────────────────────────
 router.get('/:employeeId', verifyToken, async (req, res) => {
   try {

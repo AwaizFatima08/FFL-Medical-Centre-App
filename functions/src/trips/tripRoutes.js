@@ -15,6 +15,18 @@ const db = getFirestore();
 const SEAT_CAP  = 24;
 const MAX_SEATS = 4;
 
+// Phase 11 review, Day 22 — mirrors TripBookingScreen.js's RELATIONS /
+// FAMILY_RELATION_VALUE. Kept here too (not imported) since this is the
+// backend's own trust boundary — a stale or modified client shouldn't be
+// able to submit a relation this route wouldn't otherwise accept.
+const VALID_RELATIONS = ['Self', 'Spouse', 'Son', 'Daughter'];
+const FAMILY_RELATION_VALUE = { Spouse: 'spouse', Son: 'son', Daughter: 'daughter' };
+
+// Phase 11 review, Day 22 — the trip only ever travels to Rahimyarkhan;
+// a doctorId from anywhere else shouldn't be acceptable here even if the
+// frontend's own filter is somehow bypassed or stale.
+const TRIP_CITY = 'Rahimyarkhan';
+
 const ROLES = {
   EMPLOYEE:  'employee',
   RECEPTION: 'reception',
@@ -66,14 +78,78 @@ router.post('/book', async (req, res) => {
 
     const {
       tripDate, pickupHouse, seats = 1,
-      patientName, patientRelation,
-      doctorId, doctorName,
+      patientName, patientRelation, patientFamilyMemberId,
+      doctorId, doctorName, hospital,
       referralConfirmed, overnightStay, returnTrip, notes,
     } = req.body;
 
     if (!tripDate?.trim())    return res.status(400).json({ success: false, message: 'Trip date is required' });
     if (!pickupHouse?.trim()) return res.status(400).json({ success: false, message: 'Pickup house is required' });
     if (!patientName?.trim()) return res.status(400).json({ success: false, message: 'Patient name is required' });
+
+    // Phase 11 review, Day 22 — relation is no longer free-form. Self needs
+    // nothing further; Spouse/Son/Daughter must point at a real, validated,
+    // active family record belonging to this employee — otherwise the whole
+    // point of linking bookings to real family data is just cosmetic on the
+    // frontend and bypassable by anyone calling this route directly.
+    if (!VALID_RELATIONS.includes(patientRelation)) {
+      return res.status(400).json({
+        success: false,
+        message: `patientRelation must be one of: ${VALID_RELATIONS.join(', ')}`,
+      });
+    }
+
+    let verifiedFamilyMemberId = null;
+    const employee = await getEmployeeData(uid);
+
+    if (patientRelation !== 'Self') {
+      if (!patientFamilyMemberId) {
+        return res.status(400).json({
+          success: false,
+          message: `A registered ${patientRelation.toLowerCase()} must be selected, or choose Self and add a note`,
+        });
+      }
+
+      // Corrected same session as the frontend fix — familyMembers is a
+      // top-level collection keyed by its own doc id, with an `employeeId`
+      // field holding the owning employee's Auth uid. It is NOT a
+      // subcollection under employees/{id} (that path is a separate, dead
+      // route in employeeRoutes.js that nothing else reads from or writes
+      // to — see Command Board note for Phase 11).
+      const memberDoc = await db.collection('familyMembers').doc(patientFamilyMemberId).get();
+
+      if (!memberDoc.exists) {
+        return res.status(400).json({ success: false, message: 'Selected family member not found' });
+      }
+      const member = memberDoc.data();
+      if (member.employeeId !== uid) {
+        return res.status(400).json({ success: false, message: 'Selected family member does not belong to you' });
+      }
+      if (member.relation !== FAMILY_RELATION_VALUE[patientRelation]) {
+        return res.status(400).json({ success: false, message: 'Selected family member does not match the chosen relation' });
+      }
+      if (member.status !== 'validated' || member.isActive === false) {
+        return res.status(400).json({ success: false, message: 'Selected family member is not an active, validated record' });
+      }
+
+      verifiedFamilyMemberId = patientFamilyMemberId;
+    }
+
+    // If a doctor was picked from the directory (not typed manually),
+    // confirm they're actually Rahimyarkhan-based — same reasoning as the
+    // family-member check above: don't trust the frontend's own filter alone.
+    if (doctorId) {
+      const doctorDoc = await db.collection('doctorDirectory').doc(doctorId).get();
+      if (!doctorDoc.exists) {
+        return res.status(400).json({ success: false, message: 'Selected doctor not found' });
+      }
+      if (doctorDoc.data().city !== TRIP_CITY) {
+        return res.status(400).json({
+          success: false,
+          message: 'Only Rahimyarkhan-based doctors can be referred for this trip',
+        });
+      }
+    }
 
     const seatCount = parseInt(seats, 10);
     if (isNaN(seatCount) || seatCount < 1 || seatCount > MAX_SEATS) {
@@ -119,31 +195,31 @@ router.post('/book', async (req, res) => {
       });
     }
 
-    const employee = await getEmployeeData(uid);
-
     const booking = {
-      bookedBy:          uid,
-      employeeName:      employee.fullName || '',
-      employeeNumber:    employee.officialEmployeeNumber || '',
-      department:        employee.department || '',
-      phone:             employee.phone || '',
-      tripDate:          tripDate.trim(),
-      pickupHouse:       pickupHouse.trim(),
-      seats:             seatCount,
-      patientName:       patientName.trim(),
-      patientRelation:   patientRelation || 'Self',
-      doctorId:          doctorId || null,
-      doctorName:        doctorName || null,
-      referralConfirmed: referralConfirmed === true,
-      overnightStay:     overnightStay === true,
-      returnTrip:        returnTrip !== false,
-      notes:             notes?.trim() || null,
-      status:            STATUS.PENDING,
-      confirmedAt:       null,
-      confirmedBy:       null,
-      cancelledAt:       null,
-      cancelledBy:       null,
-      createdAt:         Timestamp.now(),
+      bookedBy:               uid,
+      employeeName:           employee.fullName || '',
+      employeeNumber:         employee.officialEmployeeNumber || '',
+      department:             employee.department || '',
+      phone:                  employee.phone || '',
+      tripDate:               tripDate.trim(),
+      pickupHouse:            pickupHouse.trim(),
+      seats:                  seatCount,
+      patientName:            patientName.trim(),
+      patientRelation:        patientRelation || 'Self',
+      patientFamilyMemberId:  verifiedFamilyMemberId,
+      doctorId:               doctorId || null,
+      doctorName:             doctorName || null,
+      hospital:               hospital || null,
+      referralConfirmed:      referralConfirmed === true,
+      overnightStay:          overnightStay === true,
+      returnTrip:             returnTrip !== false,
+      notes:                  notes?.trim() || null,
+      status:                 STATUS.PENDING,
+      confirmedAt:            null,
+      confirmedBy:            null,
+      cancelledAt:            null,
+      cancelledBy:            null,
+      createdAt:              Timestamp.now(),
     };
 
     const ref = await db.collection('tripBookings').add(booking);
@@ -339,10 +415,15 @@ router.post('/:id/cancel', async (req, res) => {
     const { uid } = req.user;
     const role = await getUserRole(uid);
 
-    const allowed = [ROLES.EMPLOYEE, ROLES.RECEPTION, ROLES.ADMIN];
+    // Admin's trip access is read-only (Phase 11 review) — cancel intentionally
+    // left out of this list, unlike GET /all, /confirmedCount and /:id which
+    // admin still has for viewing.
+    const allowed = [ROLES.EMPLOYEE, ROLES.RECEPTION];
     if (!allowed.includes(role)) {
       return res.status(403).json({ success: false, message: 'Access denied' });
     }
+
+    const { reason } = req.body;
 
     const ref = db.collection('tripBookings').doc(req.params.id);
     const doc = await ref.get();
@@ -353,6 +434,15 @@ router.post('/:id/cancel', async (req, res) => {
     if (role === ROLES.EMPLOYEE && booking.bookedBy !== uid) {
       return res.status(403).json({ success: false, message: 'You can only cancel your own bookings' });
     }
+
+    // Reception cancelling someone else's booking must give a reason — this
+    // is an internal record only, never shown verbatim to the employee (see
+    // the fixed notification text below). Employees cancelling their own
+    // booking need no reason — it's their own choice.
+    if (role === ROLES.RECEPTION && !reason?.trim()) {
+      return res.status(400).json({ success: false, message: 'A cancellation reason is required' });
+    }
+
     if (booking.status === STATUS.CANCELLED) {
       return res.status(400).json({ success: false, message: 'Booking is already cancelled' });
     }
@@ -361,18 +451,22 @@ router.post('/:id/cancel', async (req, res) => {
     }
 
     await ref.update({
-      status:      STATUS.CANCELLED,
-      cancelledAt: Timestamp.now(),
-      cancelledBy: uid,
+      status:        STATUS.CANCELLED,
+      cancelledAt:   Timestamp.now(),
+      cancelledBy:   uid,
+      cancelReason:  role === ROLES.RECEPTION ? reason.trim() : null,
     });
 
-    // ── Notify employee only if cancelled by someone else (reception/admin) ───
+    // ── Notify employee only if cancelled by someone else (reception) ─────────
+    // Fixed, generic wording by design — the real reason stays internal on the
+    // booking record (cancelReason above), visible to reception/CMO only. The
+    // employee is pointed to a phone call rather than an automated explanation.
     if (booking.bookedBy !== uid) {
       await createNotification({
         recipientUid:  booking.bookedBy,
         recipientRole: ROLES.EMPLOYEE,
         title:         'Medical Trip Booking Cancelled',
-        body:          `Your trip booking for ${booking.tripDate} (Patient: ${booking.patientName}) has been cancelled by reception.`,
+        body:          'Your booking is cancelled by reception, please call medical centre for further details.',
         type:          'trip',
         referenceId:   req.params.id,
       });

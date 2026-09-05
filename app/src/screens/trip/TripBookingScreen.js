@@ -10,12 +10,31 @@ import {
   Modal, FlatList,
 } from 'react-native';
 import { getAuth } from 'firebase/auth';
+import { collection, query, where, getDocs } from 'firebase/firestore';
+import { db } from '../../config/firebase';
 import { API } from '../../config/api';
 
 const TRIP_DAYS = ['Monday', 'Wednesday', 'Saturday'];
 const MAX_SEATS = 4;
-const RELATIONS = ['Self', 'Wife', 'Son', 'Daughter', 'Father', 'Mother', 'Other'];
 const ALL = 'All';
+
+// Phase 11 review, Day 22 — Father/Mother/Other/Wife dropped. The
+// familyMembers schema only ever recognizes son/daughter/spouse as
+// relation types (parents and "other" relatives are V2 scope, not
+// modeled at all in V1), so those options could never be matched
+// against a real family record — they'd always fall through to the
+// override path, which isn't really an "edge case" at that point.
+// "Wife" relabeled "Spouse" — the family schema itself is gender-neutral.
+const RELATIONS = ['Self', 'Spouse', 'Son', 'Daughter'];
+
+// Maps a relation label above to the lowercase value actually stored on
+// familyMembers documents (see employeeRoutes.js POST .../family-members).
+const FAMILY_RELATION_VALUE = { Spouse: 'spouse', Son: 'son', Daughter: 'daughter' };
+
+// Phase 11 review, Day 22 — the trip only ever travels to Rahimyarkhan, so
+// the doctor picker shouldn't offer doctors based anywhere else. Confirmed
+// live value against DirectoryListScreen's city filter chips.
+const TRIP_CITY = 'Rahimyarkhan';
 
 function getUpcomingTripDates(count = 6) {
   const results = [];
@@ -52,6 +71,18 @@ export default function TripBookingScreen({ navigation, route }) {
   const [patientName, setPatientName]                     = useState('');
   const [patientRelation, setPatientRelation]             = useState('Self');
 
+  // Phase 11 review, Day 22 — family-linked patient selection.
+  // maritalStatus comes from GET /employees/profile. familyMembers comes
+  // from a direct Firestore query (see effect below) — see its comment
+  // for why this isn't a backend route call. selectedFamilyMemberId is
+  // the actual traceable link saved on the booking — patientName is kept
+  // in sync for display/backward-compat but is no longer the source of
+  // truth once a real family member is selected.
+  const [maritalStatus, setMaritalStatus]                 = useState('');
+  const [familyMembers, setFamilyMembers]                 = useState([]);
+  const [loadingFamily, setLoadingFamily]                 = useState(true);
+  const [selectedFamilyMemberId, setSelectedFamilyMemberId] = useState('');
+
   // Doctor state
   const [doctors, setDoctors]                             = useState([]);
   const [loadingDoctors, setLoadingDoctors]               = useState(true);
@@ -87,14 +118,72 @@ export default function TripBookingScreen({ navigation, route }) {
           headers: { 'Authorization': `Bearer ${token}` },
         });
         const data = await response.json();
-        if (response.ok && data.data?.houseNumber) {
-          setPickupHouse(data.data.houseNumber);
+        if (response.ok && data.data) {
+          if (data.data.houseNumber) setPickupHouse(data.data.houseNumber);
+          setMaritalStatus(data.data.maritalStatus || '');
         }
       } catch {}
       finally { setLoadingProfile(false); }
     };
     loadProfile();
   }, []);
+
+  useEffect(() => {
+    // Corrected Day 22, same session — this originally called
+    // GET /employees/{id}/family-members (employeeRoutes.js), which writes
+    // to and reads from employees/{id}/familyMembers as a SUBCOLLECTION.
+    // Live Firestore confirmed that's not where real family data lives:
+    // familyMembers is a top-level collection (documented as such in
+    // SCHEMA_REFERENCE.md since Day 10, and already queried this way by
+    // EmployeeHome.js), with each document carrying its own `employeeId`
+    // (the owning employee's Auth uid) rather than living nested under
+    // the employee doc. The employeeRoutes.js subcollection endpoints
+    // appear to be dead code — nothing populates the path they read from.
+    const loadFamily = async () => {
+      try {
+        const auth = getAuth();
+        const uid = auth.currentUser?.uid;
+        if (!uid) { setLoadingFamily(false); return; }
+
+        const q = query(
+          collection(db, 'familyMembers'),
+          where('employeeId', '==', uid),
+        );
+        const snap = await getDocs(q);
+        setFamilyMembers(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+      } catch {}
+      finally { setLoadingFamily(false); }
+    };
+    loadFamily();
+  }, []);
+
+  // Relation chips actually available to this employee — Spouse only
+  // shown if married, same rule EmployeeHome.js already uses for the
+  // Family tile's active/alert state.
+  const availableRelations = RELATIONS.filter(r =>
+    r !== 'Spouse' || maritalStatus === 'married'
+  );
+
+  // This employee's validated, non-disabled family members matching the
+  // currently selected relation — the only ones selectable as a patient.
+  // A pending/rejected/disabled record isn't real enough to book a trip
+  // against, even though it exists.
+  const matchingFamilyMembers = patientRelation === 'Self' ? [] : familyMembers.filter(m =>
+    m.relation === FAMILY_RELATION_VALUE[patientRelation] &&
+    m.status === 'validated' &&
+    m.isActive !== false
+  );
+
+  const handleSelectRelation = (r) => {
+    setPatientRelation(r);
+    setSelectedFamilyMemberId('');
+    setPatientName(r === 'Self' ? '' : '');
+  };
+
+  const handleSelectFamilyMember = (member) => {
+    setSelectedFamilyMemberId(member.id);
+    setPatientName(member.name);
+  };
 
   useEffect(() => {
     const loadDoctors = async () => {
@@ -104,7 +193,14 @@ export default function TripBookingScreen({ navigation, route }) {
           headers: { 'Authorization': `Bearer ${token}` },
         });
         const data = await response.json();
-        if (response.ok) setDoctors(data.data || []);
+        if (response.ok) {
+          // Restricted to Rahimyarkhan at the source, not just as an optional
+          // filter — a doctor based anywhere else can't meaningfully be
+          // "referred" for a trip that only ever travels to RYK. Manual free-
+          // text entry (for a doctor not in the directory at all) is
+          // untouched below — there's no city to check on plain text.
+          setDoctors((data.data || []).filter(d => d.city === TRIP_CITY));
+        }
       } catch {}
       finally { setLoadingDoctors(false); }
     };
@@ -164,7 +260,18 @@ export default function TripBookingScreen({ navigation, route }) {
   const validate = () => {
     if (!selectedDate)       { alert('Please select a trip date.');      return false; }
     if (!pickupHouse.trim()) { alert('Please enter your house number.'); return false; }
-    if (!patientName.trim()) { alert('Please enter the patient name.');  return false; }
+
+    if (patientRelation === 'Self') {
+      if (!patientName.trim()) { alert('Please enter the patient name.'); return false; }
+    } else if (!selectedFamilyMemberId) {
+      alert(
+        `Please select a registered ${patientRelation.toLowerCase()} from the list. ` +
+        `If they're not registered yet, choose Self instead and add a note at the ` +
+        `end of the form explaining who this booking is actually for.`
+      );
+      return false;
+    }
+
     if (seats < 1 || seats > MAX_SEATS) {
       alert(`Seats must be between 1 and ${MAX_SEATS}.`); return false;
     }
@@ -177,18 +284,19 @@ export default function TripBookingScreen({ navigation, route }) {
     try {
       const token = await getToken();
       const payload = {
-        tripDate:          selectedDate,
-        pickupHouse:       pickupHouse.trim(),
+        tripDate:               selectedDate,
+        pickupHouse:            pickupHouse.trim(),
         seats,
-        patientName:       patientName.trim(),
+        patientName:            patientName.trim(),
         patientRelation,
-        doctorId:          selectedDoctorId || null,
-        doctorName:        getFinalDoctorName(),
-        hospital:          selectedDoctorHospital || null, // ← NEW
+        patientFamilyMemberId:  patientRelation === 'Self' ? null : selectedFamilyMemberId,
+        doctorId:               selectedDoctorId || null,
+        doctorName:             getFinalDoctorName(),
+        hospital:               selectedDoctorHospital || null, // ← NEW
         referralConfirmed,
         overnightStay,
         returnTrip,
-        notes:             notes.trim(),
+        notes:                  notes.trim(),
       };
       const response = await fetch(`${API.trips}/book`, {
         method: 'POST',
@@ -245,23 +353,61 @@ export default function TripBookingScreen({ navigation, route }) {
         {/* Patient details */}
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>Patient Details</Text>
-          <Text style={styles.fieldLabel}>Patient Name *</Text>
-          <TextInput
-            style={styles.input} value={patientName} onChangeText={setPatientName}
-            placeholder="Full name of patient" placeholderTextColor="#a0aec0"
-          />
-          <Text style={[styles.fieldLabel, { marginTop: 12 }]}>Relation *</Text>
+
+          <Text style={styles.fieldLabel}>Relation *</Text>
           <View style={styles.chipRow}>
-            {RELATIONS.map(r => (
+            {availableRelations.map(r => (
               <TouchableOpacity
                 key={r}
                 style={[styles.chip, patientRelation === r && styles.chipSelected]}
-                onPress={() => setPatientRelation(r)}
+                onPress={() => handleSelectRelation(r)}
               >
                 <Text style={[styles.chipText, patientRelation === r && styles.chipTextSelected]}>{r}</Text>
               </TouchableOpacity>
             ))}
           </View>
+          <Text style={styles.fieldHint}>
+            If your spouse or child is not registered, book in your own name and add a note in the box at end of page.
+          </Text>
+
+          {patientRelation === 'Self' ? (
+            <>
+              <Text style={[styles.fieldLabel, { marginTop: 12 }]}>Patient Name *</Text>
+              <TextInput
+                style={styles.input} value={patientName} onChangeText={setPatientName}
+                placeholder="Full name of patient" placeholderTextColor="#a0aec0"
+              />
+            </>
+          ) : (
+            <View style={{ marginTop: 12 }}>
+              <Text style={styles.fieldLabel}>Select {patientRelation} *</Text>
+              {loadingFamily ? (
+                <ActivityIndicator size="small" color="#3182ce" style={{ marginTop: 8 }} />
+              ) : matchingFamilyMembers.length > 0 ? (
+                <View style={styles.chipRow}>
+                  {matchingFamilyMembers.map(member => (
+                    <TouchableOpacity
+                      key={member.id}
+                      style={[styles.chip, selectedFamilyMemberId === member.id && styles.chipSelected]}
+                      onPress={() => handleSelectFamilyMember(member)}
+                    >
+                      <Text style={[
+                        styles.chipText,
+                        selectedFamilyMemberId === member.id && styles.chipTextSelected,
+                      ]}>
+                        {member.name}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              ) : (
+                <Text style={styles.fieldHint}>
+                  No registered {patientRelation.toLowerCase()} found on your family record.
+                </Text>
+              )}
+            </View>
+          )}
+
           <Text style={[styles.fieldLabel, { marginTop: 12 }]}>Number of Seats *</Text>
           <View style={styles.seatsRow}>
             <TouchableOpacity style={styles.seatBtn} onPress={() => setSeats(s => Math.max(1, s - 1))}>
@@ -278,6 +424,9 @@ export default function TripBookingScreen({ navigation, route }) {
         {/* Doctor */}
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>Referred Doctor</Text>
+          <Text style={styles.fieldHint}>
+            Showing Rahimyarkhan doctors only — this trip doesn't travel anywhere else.
+          </Text>
 
           {selectedDoctorId ? (
             <View style={styles.selectedDoctor}>

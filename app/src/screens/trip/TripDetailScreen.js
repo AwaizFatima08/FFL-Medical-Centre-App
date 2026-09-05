@@ -6,7 +6,7 @@ import { webAlert, webConfirm } from '../../utils/webAlert';
 import React, { useState, useEffect } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity,
-  ScrollView, ActivityIndicator,
+  ScrollView, ActivityIndicator, TextInput,
 } from 'react-native';
 import { getAuth } from 'firebase/auth';
 import { API } from '../../config/api';
@@ -29,6 +29,12 @@ export default function TripDetailScreen({ navigation, route }) {
   const [seatsConfirmed, setSeatsConfirmed] = useState(0);
   const [loading, setLoading]           = useState(true);
   const [actionLoading, setActionLoading] = useState(false);
+
+  // Reception cancellation reason — required (Phase 11 review, Day 22).
+  // Kept internal: employee sees a fixed generic notification regardless
+  // of what's typed here (see performAction/cancel below).
+  const [showCancelBox, setShowCancelBox] = useState(false);
+  const [cancelReason, setCancelReason]   = useState('');
 
   const getToken = async () => {
     const auth = getAuth();
@@ -92,20 +98,29 @@ export default function TripDetailScreen({ navigation, route }) {
   };
 
   const handleCancel = () => {
-    webConfirm(
-      'Cancel Booking',
-      `Cancel ${booking?.employeeName}'s trip booking?`,
-      () => performAction('cancel')
-    );
+    setCancelReason('');
+    setShowCancelBox(true);
   };
 
-  const performAction = async (action) => {
+  const submitCancel = () => {
+    if (!cancelReason.trim()) {
+      webAlert('Reason Required', 'Please enter a reason for cancelling this booking.');
+      return;
+    }
+    performAction('cancel', { reason: cancelReason.trim() });
+  };
+
+  const performAction = async (action, body) => {
     setActionLoading(true);
     try {
       const token = await getToken();
       const response = await fetch(`${API.trips}/${bookingId}/${action}`, {
         method: 'POST',
-        headers: { 'Authorization': `Bearer ${token}` },
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          ...(body ? { 'Content-Type': 'application/json' } : {}),
+        },
+        ...(body ? { body: JSON.stringify(body) } : {}),
       });
       const data = await response.json();
       if (response.ok) {
@@ -236,7 +251,7 @@ export default function TripDetailScreen({ navigation, route }) {
                 }
               </TouchableOpacity>
             )}
-            {(booking.status === 'pending' || booking.status === 'confirmed') && (
+            {(booking.status === 'pending' || booking.status === 'confirmed') && !showCancelBox && (
               <TouchableOpacity
                 style={[styles.cancelBtn, actionLoading && styles.btnDisabled]}
                 onPress={handleCancel}
@@ -247,6 +262,47 @@ export default function TripDetailScreen({ navigation, route }) {
                   : <Text style={styles.cancelBtnText}>✕  Cancel Booking</Text>
                 }
               </TouchableOpacity>
+            )}
+            {(booking.status === 'pending' || booking.status === 'confirmed') && showCancelBox && (
+              <View style={styles.cancelReasonBox}>
+                <Text style={styles.cancelReasonLabel}>
+                  Reason for cancelling — required, shown to reception/CMO only.
+                  The employee sees a fixed generic message, not this text.
+                </Text>
+                <TextInput
+                  style={styles.cancelReasonInput}
+                  value={cancelReason}
+                  onChangeText={setCancelReason}
+                  placeholder="e.g. Seat reassigned, duplicate booking..."
+                  placeholderTextColor="#a0aec0"
+                  multiline
+                  numberOfLines={2}
+                  autoFocus
+                />
+                <View style={styles.cancelReasonActions}>
+                  <TouchableOpacity
+                    style={styles.cancelReasonDismiss}
+                    onPress={() => setShowCancelBox(false)}
+                    disabled={actionLoading}
+                  >
+                    <Text style={styles.cancelReasonDismissText}>Never mind</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[
+                      styles.cancelBtn,
+                      { flex: 1 },
+                      (!cancelReason.trim() || actionLoading) && styles.btnDisabled,
+                    ]}
+                    onPress={submitCancel}
+                    disabled={!cancelReason.trim() || actionLoading}
+                  >
+                    {actionLoading
+                      ? <ActivityIndicator color="#c53030" />
+                      : <Text style={styles.cancelBtnText}>✕  Confirm Cancellation</Text>
+                    }
+                  </TouchableOpacity>
+                </View>
+              </View>
             )}
           </View>
         )}
@@ -329,6 +385,24 @@ const styles = StyleSheet.create({
     paddingVertical: 14, alignItems: 'center', backgroundColor: '#fff5f5',
   },
   cancelBtnText: { color: '#c53030', fontWeight: '700', fontSize: 16 },
+  cancelReasonBox: {
+    backgroundColor: '#fff5f5', borderRadius: 8, borderWidth: 1,
+    borderColor: '#feb2b2', padding: 12,
+  },
+  cancelReasonLabel: { fontSize: 12, color: '#742a2a', marginBottom: 8, lineHeight: 17 },
+  cancelReasonInput: {
+    backgroundColor: '#ffffff', borderWidth: 1, borderColor: '#feb2b2',
+    borderRadius: 8, paddingHorizontal: 12, paddingVertical: 10,
+    fontSize: 14, color: '#2d3748', minHeight: 60, textAlignVertical: 'top',
+    marginBottom: 10,
+  },
+  cancelReasonActions: { flexDirection: 'row', gap: 10 },
+  cancelReasonDismiss: {
+    flex: 1, alignItems: 'center', justifyContent: 'center',
+    borderWidth: 1, borderColor: '#e2e8f0', borderRadius: 8,
+    backgroundColor: '#ffffff', paddingVertical: 14,
+  },
+  cancelReasonDismissText: { color: '#718096', fontWeight: '600', fontSize: 14 },
   btnDisabled: { opacity: 0.6 },
   centered: { flex: 1, justifyContent: 'center', alignItems: 'center' },
   loadingText: { marginTop: 10, color: '#718096', fontSize: 14 },

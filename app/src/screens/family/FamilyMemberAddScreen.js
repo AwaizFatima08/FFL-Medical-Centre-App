@@ -1,4 +1,13 @@
 // app/src/screens/family/FamilyMemberAddScreen.js
+//
+// Phase 10 fix: Gender field added below. This form writes directly to
+// Firestore (addDoc), not through employeeRoutes.js's
+// POST /:employeeId/family-members — that route is dead code (Command
+// Board Phase 11 review, Day 22: familyMembers mistakenly assumed to be
+// a subcollection there; the real collection is top-level, exactly as
+// this screen already correctly uses). So although that dead route
+// already destructured a `gender` param, it was never actually reachable
+// — there was no real capture path for it anywhere until this fix.
 import { webAlert, webConfirm } from '../../utils/webAlert';
 
 import React, { useEffect, useState } from 'react';
@@ -12,7 +21,7 @@ import {
   getDocs, addDoc, setDoc, doc, Timestamp,
 } from 'firebase/firestore';
 import {
-  FAMILY_RELATIONS, BLOOD_GROUPS,
+  FAMILY_RELATIONS, BLOOD_GROUPS, GENDERS,
   MARITAL_STATUSES, EMPLOYMENT_STATUSES,
 } from '../../constants';
 import DatePickerField from '../../components/DatePickerField';
@@ -78,6 +87,7 @@ export default function FamilyMemberAddScreen({ navigation }) {
   const [relation,         setRelation]         = useState('');
   const [name,             setName]             = useState('');
   const [dob,              setDob]              = useState(null);
+  const [gender,           setGender]           = useState(''); // Phase 10 fix
   const [cnic,             setCnic]             = useState('');
   const [nadraCard,        setNadraCard]        = useState('');
   const [bloodGroup,       setBloodGroup]       = useState('');
@@ -128,6 +138,8 @@ export default function FamilyMemberAddScreen({ navigation }) {
       webAlert('Invalid Date', 'Date of birth cannot be in the future.');
       return false;
     }
+    // Phase 10 fix
+    if (!gender) { webAlert('Required', 'Please select gender.'); return false; }
     if (needsCnic && !cnic.trim()) {
       webAlert('Required', 'CNIC is mandatory for family members aged 18 and above.');
       return false;
@@ -158,6 +170,7 @@ export default function FamilyMemberAddScreen({ navigation }) {
         name:             name.trim(),
         relation,
         dateOfBirth:      Timestamp.fromDate(dobDate),
+        gender,           // ← Phase 10 fix
         cnic:             needsCnic ? cnic.trim() : null,
         nadraCardNumber:  (!needsCnic && nadraCard.trim()) ? nadraCard.trim() : null,
         bloodGroup:       bloodGroup || null,
@@ -276,6 +289,15 @@ export default function FamilyMemberAddScreen({ navigation }) {
             {isAdult ? '  ·  Marital & employment status required' : ''}
           </Text>
         )}
+
+        {/* Phase 10 fix — Gender */}
+        <DropdownField
+          label="Gender"
+          value={gender}
+          options={GENDERS}
+          onSelect={setGender}
+          required
+        />
 
         <View style={styles.fieldGroup}>
           <Text style={styles.label}>

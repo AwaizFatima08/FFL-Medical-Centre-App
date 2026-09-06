@@ -237,6 +237,11 @@ router.post('/validate/:employeeId', verifyToken,
 // fields (fullName, contact info, residence fields) are UNCHANGED and
 // remain self-editable, as they were never part of the Phase 4 scope
 // discussion — not touched here to avoid guessing at scope not agreed on.
+//
+// Phase 10 fix (Population Report): gender added, same self-editable
+// treatment as maritalStatus/isSmoker below — not gated by isSelfService,
+// since gender isn't admin-owned identity data the way cnic/bloodGroup/
+// department/designation are.
 router.put('/:employeeId', verifyToken, async (req, res) => {
   try {
     const db = admin.firestore();
@@ -265,6 +270,7 @@ router.put('/:employeeId', verifyToken, async (req, res) => {
       department,
       unit,                        // ← Day 14, Step D
       employeeType,                // ← Day 14, Step D
+      gender,                      // ← Phase 10 fix (Population Report)
       houseNumber,
       roomNumber,                  // ← NEW
       phoneNumber,
@@ -313,6 +319,10 @@ router.put('/:employeeId', verifyToken, async (req, res) => {
     // Day 14 fix #5 — isSmoker is self-editable anytime, same reasoning as
     // maritalStatus: low-stakes status flag, no admin approval needed.
     if (isSmoker !== undefined) updates.isSmoker = isSmoker;
+    // Phase 10 fix — gender is self-editable anytime, same reasoning as
+    // maritalStatus: not one of the admin-owned identity fields gated
+    // above, no approval workflow needed.
+    if (gender) updates.gender = gender;
     // Day 14 fix #6 — employee reporting a data error. Self-editable in
     // both directions: submitting a request (true + note) and the admin
     // clearing it via UserManagementScreen after fixing the data (false +

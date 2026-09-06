@@ -40,6 +40,17 @@ export const BLOOD_GROUPS = ['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-'];
 // ─── MARITAL STATUS ───────────────────────────────────────────────────────────
 export const MARITAL_STATUSES = ['married', 'unmarried', 'divorced', 'widowed'];
 
+// ─── GENDER (Phase 10 fix) ─────────────────────────────────────────────────────
+// Closes a real capture gap found while speccing the Population Report:
+// no employee or family member record has ever had a gender field — not a
+// missing-wiring bug like isSmoker, but genuinely never captured anywhere.
+// Self-editable for employees (same treatment as maritalStatus, via
+// employeeRoutes.js PUT /:employeeId — not locked like cnic). For family
+// members, routed through the same pendingRevision/admin-review flow as
+// name/dateOfBirth/cnic/bloodGroup (identity data, not a low-stakes toggle
+// like bloodDonorConsent).
+export const GENDERS = ['male', 'female'];
+
 // ─── DEPARTMENTS ──────────────────────────────────────────────────────────────
 // Groups are for display only — not stored in Firestore
 export const DEPARTMENT_GROUPS = {

@@ -1,4 +1,8 @@
 // app/src/screens/family/FamilyMemberEditScreen.js
+//
+// Phase 10 fix: Gender field added below. Routed through pendingRevision
+// like name/dateOfBirth/cnic/bloodGroup — identity data requiring admin
+// review, NOT a direct write like bloodDonorConsent's toggle below.
 import { webAlert, webConfirm } from '../../utils/webAlert';
 
 import React, { useEffect, useState } from 'react';
@@ -12,7 +16,7 @@ import {
   collection, query, where, getDocs, Timestamp,
 } from 'firebase/firestore';
 import {
-  BLOOD_GROUPS, MARITAL_STATUSES, EMPLOYMENT_STATUSES,
+  BLOOD_GROUPS, GENDERS, MARITAL_STATUSES, EMPLOYMENT_STATUSES,
 } from '../../constants';
 import DatePickerField from '../../components/DatePickerField';
 
@@ -82,6 +86,7 @@ export default function FamilyMemberEditScreen({ route, navigation }) {
 
   const [name,             setName]             = useState('');
   const [dob,              setDob]              = useState(null);
+  const [gender,           setGender]           = useState(''); // Phase 10 fix
   const [cnic,             setCnic]             = useState('');
   const [nadraCard,        setNadraCard]        = useState('');
   const [bloodGroup,       setBloodGroup]       = useState('');
@@ -125,6 +130,7 @@ export default function FamilyMemberEditScreen({ route, navigation }) {
         setDob(source.dateOfBirth
           ? (source.dateOfBirth.toDate ? source.dateOfBirth.toDate() : new Date(source.dateOfBirth))
           : null);
+        setGender(source.gender || ''); // Phase 10 fix
         setCnic(source.cnic || '');
         setNadraCard(source.nadraCardNumber || '');
         setBloodGroup(source.bloodGroup || '');
@@ -153,6 +159,8 @@ export default function FamilyMemberEditScreen({ route, navigation }) {
       webAlert('Invalid Date', 'Date of birth cannot be in the future.');
       return false;
     }
+    // Phase 10 fix
+    if (!gender) { webAlert('Required', 'Please select gender.'); return false; }
     if (needsCnic && !cnic.trim()) {
       webAlert('Required', 'CNIC is mandatory for members aged 18 and above.');
       return false;
@@ -178,6 +186,7 @@ export default function FamilyMemberEditScreen({ route, navigation }) {
     const noChange =
       name.trim()        === (live.name || '') &&
       dob?.getTime()     === liveDobDate?.getTime() &&
+      gender             === (live.gender || '') &&
       cnic.trim()        === (live.cnic || '') &&
       nadraCard.trim()   === (live.nadraCardNumber || '') &&
       bloodGroup         === (live.bloodGroup || '') &&
@@ -195,6 +204,7 @@ export default function FamilyMemberEditScreen({ route, navigation }) {
       const revision = {
         name:             name.trim(),
         dateOfBirth:      dobDate ? Timestamp.fromDate(dobDate) : liveRecord.dateOfBirth,
+        gender,           // ← Phase 10 fix
         cnic:             needsCnic ? cnic.trim() : null,
         nadraCardNumber:  (!needsCnic && nadraCard.trim()) ? nadraCard.trim() : null,
         bloodGroup:       bloodGroup || null,
@@ -338,6 +348,15 @@ export default function FamilyMemberEditScreen({ route, navigation }) {
             {isAdult ? '  ·  Marital & employment status required' : ''}
           </Text>
         )}
+
+        {/* Phase 10 fix — Gender */}
+        <DropdownField
+          label="Gender"
+          value={gender}
+          options={GENDERS}
+          onSelect={setGender}
+          required
+        />
 
         <View style={styles.fieldGroup}>
           <Text style={styles.label}>

@@ -51,6 +51,30 @@ const verifyRole = (allowedRoles) => {
 // identity fields below. cnic is admin-owned after this point (see
 // employeeRoutes.js PUT /:employeeId, Step A) — this is the only place
 // it's ever self-entered. maritalStatus stays employee-editable later.
+//
+// Day 22 (Phase 10 bug fix): dateOfBirth was captured by SignupScreen.js
+// Step 2 and sent in this route's request body from day one, but was
+// never destructured or written here — identical silent-drop shape to
+// the purposeOfVisit (Feedback, Day 21) and hospital (Trip Booking,
+// Phase 11) bugs. Fixed by adding it below, with the same required-field
+// treatment as cnic/maritalStatus/isSmoker (frontend already requires
+// it before submit; backend now enforces it too rather than silently
+// accepting its absence). Stored as a Firestore Timestamp, matching
+// familyMembers.dateOfBirth's type — SCHEMA_REFERENCE.md documents that
+// field as a timestamp, so employees.dateOfBirth is kept the same type
+// rather than left as the raw "YYYY-MM-DD" string the frontend sends,
+// to avoid two different types for the same kind of field across
+// collections. Employees who signed up before this fix have no
+// recoverable dateOfBirth — there is no source to backfill it from,
+// unlike hospital which could fall back to a doctorDirectory lookup.
+//
+// Phase 10 fix (Population Report): gender added, same required-field
+// treatment as dateOfBirth above. Unlike dateOfBirth, this is not a
+// silent-drop bug — no employee record has ever had a gender field
+// anywhere, so there was nothing to fix on the write side beyond adding
+// it fresh. Self-editable afterward via employeeRoutes.js
+// PUT /:employeeId, same treatment as maritalStatus — never locked
+// like cnic.
 router.post('/register', verifyToken, async (req, res) => {
   try {
     const db = admin.firestore();
@@ -58,6 +82,8 @@ router.post('/register', verifyToken, async (req, res) => {
       fullName,
       phoneNumber,
       employeeNumber,
+      dateOfBirth,     // ← Day 22, Phase 10 bug fix
+      gender,          // ← Phase 10 fix (Population Report)
       cnic,           // ← Day 14, Step C
       maritalStatus,  // ← Day 14, Step C
       isSmoker,       // ← Day 14 fix #5
@@ -69,8 +95,16 @@ router.post('/register', verifyToken, async (req, res) => {
       cityOfResidence,
     } = req.body;
 
-    if (!fullName || !phoneNumber || !employeeNumber || !cnic || !maritalStatus || isSmoker === undefined || isSmoker === null) {
-      return errorResponse(res, 'fullName, phoneNumber, employeeNumber, cnic, maritalStatus and isSmoker are required', 400);
+    if (!fullName || !phoneNumber || !employeeNumber || !dateOfBirth || !gender || !cnic || !maritalStatus || isSmoker === undefined || isSmoker === null) {
+      return errorResponse(res, 'fullName, phoneNumber, employeeNumber, dateOfBirth, gender, cnic, maritalStatus and isSmoker are required', 400);
+    }
+
+    // Day 22 — validate the incoming "YYYY-MM-DD" string before conversion,
+    // so a malformed value fails loudly here rather than being silently
+    // stored as an Invalid Date timestamp.
+    const parsedDob = new Date(dateOfBirth);
+    if (isNaN(parsedDob.getTime())) {
+      return errorResponse(res, 'dateOfBirth must be a valid date', 400);
     }
 
     const existingUser = await db.collection('users').doc(req.user.uid).get();
@@ -112,6 +146,8 @@ router.post('/register', verifyToken, async (req, res) => {
       fullName,
       officialEmployeeNumber: employeeNumber,
       phoneNumber,
+      dateOfBirth:         admin.firestore.Timestamp.fromDate(parsedDob), // ← Day 22, Phase 10 bug fix
+      gender,              // ← Phase 10 fix (Population Report)
       cnic,           // ← Day 14, Step C
       maritalStatus,  // ← Day 14, Step C
       isSmoker:            isSmoker === true, // ← Day 14 fix #5

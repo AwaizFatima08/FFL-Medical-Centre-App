@@ -16,6 +16,16 @@ Quick reference for daily work. For locked flow status, architecture, and decisi
 
 **Note on this revision (Day 22):** Phase 11 (Medical Trip) and Phase 12 (Fitness Scheduling) are both now closed. Phase 11 started as the standard write-side gap audit and grew substantially once live testing began — a real family-linked patient-selection redesign, a reception cancellation-reason feature, a Rahimyarkhan-only doctor restriction, and a genuine mid-build mistake (wrongly assuming `familyMembers` was a subcollection) caught and corrected via live data. Phase 12 stayed small and contained as expected — one real gap (no history view for admin/CMO/doctor) plus a few small polish items. Full detail in each phase's entry below. Also fixed at the very start of this session, before Phase 11 began: the `purposeOfVisit` bug flagged during Phase 9's wrap-up (tracked only in Schema Reference at the time, not listed under Phase 9 above since it surfaced after that phase's own closing) — see the addendum under Phase 9. Only Phase 10 (Reports) remains before the full V1 module set has been through a dedicated review pass.
 
+**Note on this revision (Day 23):** Phase 10 (Reports) requirements are now fully specced — 10 reports total (3 redesigns of existing screens, 7 new), covering every original report plus the two orphan `reportRoutes.js` routes decided in-scope (Fitness, Feedback). **Nothing has been built yet** — this session was requirements discussion and spec-locking only, plus two standalone bug fixes found while speccing (below). Full detail — every locked column, filter, access rule, and open question — is in the new `docs/PHASE10_DESIGN.md`, following the same relationship to this file that `PHASE4_DESIGN.md`/`PHASE5_DESIGN.md` already have. This entry only summarizes; see that file for the "why" behind every decision.
+
+Two real bugs were found and fixed this session, both closed and live-verified before Phase 10 spec work continued:
+- **`dateOfBirth` silently dropped at employee signup** — same silent-drop shape as `purposeOfVisit`/`hospital`: `SignupScreen.js` sent it, `authRoutes.js`'s `/register` never destructured or saved it. Fixed; now stored as a Firestore Timestamp, matching `familyMembers.dateOfBirth`'s type. Pre-fix employees have no recoverable DOB — accepted, since all current data is test data slated for deletion before launch.
+- **`gender` never captured anywhere, for employees or family members** — not a silent-drop bug like the above; genuinely never existed on any record. Closed across seven files: signup, the employee self-edit route, My Profile's self-edit UI, and both family member add/edit screens (edits there routed through `pendingRevision`, same as name/DOB/CNIC/blood group on that screen). Unblocks Population Report's male/female breakdown figure.
+
+Both fixes still need one follow-up whenever `SCHEMA_REFERENCE.md` is next touched: neither `employees.dateOfBirth` nor `employees.gender`/`familyMembers.gender` is documented there yet.
+
+Build order across the 10 specced reports is not yet decided — first task of the next session.
+
 ---
 
 ## Quick Paths
@@ -241,12 +251,30 @@ Started as the Day-13-flagged report bug, grew into a substantial feature phase 
 
 **Day 22 addendum:** A bug found during this phase's own wrap-up but only tracked in Schema Reference at the time (not listed above since it surfaced after this phase closed) — `FeedbackFormScreen.js` requires `purposeOfVisit` and sends it on every submission, but `feedbackRoutes.js`'s `POST /submit` never destructured or saved it, silently dropping it on every single submission ever made. Fixed at the start of Day 22's session, before Phase 11 began: one-line addition to the destructure and the `.set()` call. Two follow-ups from this same fix remain open, not yet built: no server-side validation actually enforcing the field as mandatory, and `GET /all`/`GET /:feedbackId` still don't project it into their response shape — so it's saved going forward but not yet visible on the CMO's review screens.
 
-### Phase 10 — Reports review
-- [ ] Run all 7 report screens post Phase 2/3/4 fixes and confirm each returns correct live data — now includes checking whether any report should reflect the new My Profile fields (department/designation/blood group are now reliably populated where they weren't before)
-- [ ] 5 `reportRoutes.js` routes with no frontend tile (`/fitness`, `/ambulance`, `/trips`, `/vaccination`, `/feedback`) — decide build-vs-remove per route (Fitness/Ambulance/Feedback in-scope, Vaccination is V2)
-- [ ] `/feedback` route was fixed in Phase 9 (field names + role list) but has no frontend screen yet — build one against the corrected response shape (no `anonymous`, includes `waitingTime`) rather than the old broken shape
-- [ ] Assess requirement for any new reports, remaining within scope
-- [ ] Deliberately held until after Phase 4 (now closed) so reports can be reviewed against the complete employee data model
+### Phase 10 — Reports review — **specs locked Day 23, build not yet started**
+Held until last, deliberately, so reports could be reviewed against live data produced by every other module's own completed review phase rather than assumptions — this paid off directly: reviewing Ambulance KPI Report surfaced that `falseEmergencyFlag` already existed live but was undocumented; reviewing Employee Report surfaced the `dateOfBirth` bug (above); reviewing Population Report surfaced that `gender` had never been captured anywhere. Full detail on every report in `docs/PHASE10_DESIGN.md` — this is a summary only.
+
+**10 reports specced — 3 redesigns/merges of existing screens, 7 new:**
+1. **Trip Day Report** — redesign of `TripDayReportScreen.js`. 10 columns, summary strip, any date past/future (unlimited), filters, reception+admin+doctor+CMO.
+2. **Trip Range Report** — full replacement of `TripMonthlyReportScreen.js` (different query shape: from/to range, not month+year). 8 columns, past-only, CMO only.
+3. **Ambulance KPI Report (Daily + Range)** — redesign of `AmbulanceKPIReportScreen.js`. 12 columns, labels adjusted to match schema exactly (`Intra-Township`/`Intercity`, `natureOfVisit` values), past-only unlimited, CMO only. **Not a duplicate of `AmbulanceCMOHistoryScreen.js`** (Phase 5.8.2) — that's the operational live-tracking view, this is the analytical/exportable one; confirmed both stay.
+4. **Employee Report** — new, consolidates `EmployeeOnlyReportScreen.js` + both branches of `PopulationReportScreen.js` into one screen with filters. One row per employee (family detail deliberately kept out — see #5). CMO only.
+5. **Family Report** — new, split out from #4 specifically to avoid forcing family-level granularity onto Employee Report's flat table. Default 1 spouse + 5 children column groups, collapsible beyond that in-app, always fully expanded in PDF. CMO only.
+6. **Blood Donor Report** — full redesign/replacement of `BloodGroupReportScreen.js`, which has been missing every family-member donor since Phase 4 (queries `employees` directly instead of `bloodDonorRegistry`, which has held family-keyed donor entries since Day 14). New version reads the correct collection, live-filters on active/validated status so a withdrawn or deactivated donor vanishes immediately. admin+reception+doctor+CMO.
+7. **Employee Chronic Disease Report** — new. Reads `private/medical` (the one access-isolated subcollection in the schema) — one extra read per employee, fine for CMO-only/infrequent use. Confirms `isSmoker` is already self-editable and live (Day 14 fix #5), no new work needed there. CMO only.
+8. **Population Report** — new. Tiled/summary-card shape, not a row table. 12 figures including township headcount (employees + family, not employee-count alone), age brackets, and — now unblocked by the gender fix — male/female breakdown. CMO only.
+9. **Annual Fitness Report** — new, resolves one of the 5 orphan `reportRoutes.js` routes below. Backend (`GET /fitness`) already exists and was already fixed in a past session (`fitnessOutcome`, not `fitnessStatus`); only the frontend needs building. Year selector (dynamic, "{year} Report" labels) + within-year date narrowing, completed-only scope. Access narrowed to CMO only from the existing route's wider CMO/Doctor/Admin — safe, since nothing currently calls this route.
+10. **Feedback Report** — new, resolves the other orphan route. `GET /feedback` already fixed in Phase 9; only the frontend needs building. Tiled shape with a year-over-year monthly trend line chart (defaults to Overall Satisfaction, switchable per parameter) — expected to be the most-viewed report of the batch, designed accordingly. CMO only.
+
+**Orphan-route decision (originally 5 routes: `/fitness`, `/ambulance`, `/trips`, `/vaccination`, `/feedback`) — now resolved for 2 of 5:** Fitness and Feedback both get built (#9, #10 above). Vaccination stays V2 (unchanged). `/ambulance` already has a frontend consumer (`AmbulanceCMOHistoryScreen.js`, Phase 5.8.2) — not actually orphaned in practice, this checkbox appears stale. `/trips` was not explicitly revisited this session as its own orphan-route decision — carry forward and confirm next session whether it's already covered by Trip Day/Range Report's endpoints or is a genuinely separate, still-unaddressed route.
+
+**Open items carried into the next session** (full detail in `docs/PHASE10_DESIGN.md`'s closing section):
+- [ ] Family Report's multiple-spouse handling (mirrors the 5-children collapsible pattern) — proposed, not yet explicitly confirmed
+- [ ] Ambulance KPI Report's `houseNumber` auto-lock: snapshot-at-creation vs. live-lookup — blocks the ambulance request form change, which is a prerequisite for the report itself
+- [ ] Blood Donor Report's CSV→PDF export switch — not explicitly confirmed as acceptable, may have a downstream consumer not reviewed this session
+- [ ] Build order across all 10 reports — not decided, first task of next session
+- [ ] `/trips` orphan-route status — unclear if already covered or still open
+- [ ] `SCHEMA_REFERENCE.md` additions outstanding (doc-only): `employees.dateOfBirth`, `employees.gender`/`familyMembers.gender`, `ambulanceRequests.falseEmergencyFlag`/`falseEmergencyFlaggedAt`/`falseEmergencyFlaggedBy`
 
 ### Phase 11 — Medical Trip review — **CLOSED Day 22**
 Started as the standard write-side gap audit (per the Day 13 scope note — this module had never had its own review phase). Grew substantially once live testing began, the same pattern as Phases 4/5/9.

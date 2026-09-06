@@ -5,7 +5,7 @@ import { webAlert } from '../../utils/webAlert';
 //
 //  Flow:
 //  1. Step 1 — Email + password
-//  2. Step 2 — Full name, employee number, phone, date of birth, CNIC, marital status
+//  2. Step 2 — Full name, employee number, phone, date of birth, gender, CNIC, marital status
 //  3. Step 3 — Residence details + disclaimer checkbox
 //  4. Firebase Auth creates the account
 //  5. Backend /register saves user doc (isActive: false, role: employee)
@@ -23,6 +23,12 @@ import { webAlert } from '../../utils/webAlert';
 //  is admin-entered during approval. CNIC is locked after signup (admin-owned
 //  going forward — see employeeRoutes.js PUT /:employeeId, Step A). Marital
 //  status stays employee-editable afterward via the same route.
+//
+//  Phase 10 fix: added Gender to Step 2. Real, from-scratch capture gap
+//  found while speccing the Population Report — no employee record has
+//  ever had a gender field, not a missing-wiring bug. Self-editable
+//  afterward via employeeRoutes.js PUT /:employeeId, same treatment as
+//  maritalStatus (never locked like cnic).
 // ─────────────────────────────────────────────────────────────
 import React, { useState, useRef } from 'react';
 import {
@@ -35,7 +41,7 @@ import { auth } from '../../config/firebase';
 import axios from 'axios';
 import { API } from '../../config/api';
 import DatePickerField from '../../components/DatePickerField';
-import { MARITAL_STATUSES } from '../../constants';
+import { MARITAL_STATUSES, GENDERS } from '../../constants';
 
 // ── Notification permission (Android 13+, safe to call on older versions)
 const requestNotificationPermission = async () => {
@@ -106,6 +112,7 @@ export default function SignupScreen({ navigation }) {
   const [employeeNumber, setEmployeeNumber] = useState('');
   const [phone,          setPhone]          = useState('');
   const [dob,            setDob]            = useState(null);
+  const [gender,         setGender]         = useState('');        // Phase 10 fix
   const [cnic,           setCnic]           = useState('');         // Day 14, Step C
   const [maritalStatus,  setMaritalStatus]  = useState('');         // Day 14, Step C
   const [isSmoker,       setIsSmoker]       = useState(null);       // Day 14 fix #5
@@ -170,6 +177,10 @@ export default function SignupScreen({ navigation }) {
     }
     if (!dob) {
       webAlert('Required', 'Please select your date of birth.'); return;
+    }
+    // Phase 10 fix
+    if (!gender) {
+      webAlert('Required', 'Please select your gender.'); return;
     }
     // Day 14, Step C
     if (!cnic.trim()) {
@@ -245,6 +256,7 @@ export default function SignupScreen({ navigation }) {
         phoneNumber:    phone.trim(),
         employeeNumber: employeeNumber.trim().toUpperCase(),
         dateOfBirth:    dob ? `${dob.getFullYear()}-${String(dob.getMonth() + 1).padStart(2, '0')}-${String(dob.getDate()).padStart(2, '0')}` : null,
+        gender,                                  // Phase 10 fix
         cnic:           cnic.trim(),           // Day 14, Step C
         maritalStatus,                          // Day 14, Step C
         isSmoker,                               // Day 14 fix #5
@@ -458,6 +470,14 @@ export default function SignupScreen({ navigation }) {
                 value={dob}
                 onChange={setDob}
                 maximumDate={new Date()}
+              />
+
+              {/* Phase 10 fix — Gender */}
+              <DropdownPicker
+                label="Gender"
+                options={GENDERS}
+                selected={gender}
+                onSelect={setGender}
               />
 
               {/* Day 14, Step C — CNIC */}

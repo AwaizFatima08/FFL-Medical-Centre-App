@@ -23,6 +23,13 @@
 // consistent with the rest of the app avoiding blocking modals (same
 // reasoning as the Family tab's tap-in-to-see pattern). The Home tile shows
 // an unconfirmed-state badge so it's still a visible nudge, not silent.
+//
+// Phase 10 fix (Population Report): Gender section added below, mirroring
+// Marital Status exactly — same self-edit route (PUT /:employeeId), same
+// reasoning (not admin-owned identity data, no approval workflow needed).
+// Closes a real capture gap: no employee record has ever had a gender
+// field, this is the only screen where an employee can set/change it
+// post-signup.
 
 import { webAlert } from '../../utils/webAlert';
 import React, { useEffect, useState, useCallback } from 'react';
@@ -35,7 +42,7 @@ import { getFirestore, collection, query, where, getDocs } from 'firebase/firest
 import { API } from '../../config/api';
 import NotificationBell from '../../components/NotificationBell';
 import {
-  MARITAL_STATUSES, DEPARTMENT_GROUPS,
+  MARITAL_STATUSES, GENDERS, DEPARTMENT_GROUPS,
   MANAGEMENT_DESIGNATIONS, NON_MANAGEMENT_DESIGNATIONS, ESB_DESIGNATIONS,
   EMPLOYEE_TYPES,
 } from '../../constants';
@@ -87,6 +94,28 @@ function MaritalStatusPicker({ value, onSelect, disabled }) {
   );
 }
 
+// ─── Gender dropdown (Phase 10 fix) — same chip picker pattern as marital
+// status above, kept as its own small component rather than generalizing
+// MaritalStatusPicker, to avoid touching that already-working component.
+function GenderPicker({ value, onSelect, disabled }) {
+  return (
+    <View style={styles.chipRow}>
+      {GENDERS.map(opt => (
+        <TouchableOpacity
+          key={opt}
+          disabled={disabled}
+          style={[styles.chip, value === opt && styles.chipSelected]}
+          onPress={() => onSelect(opt)}
+        >
+          <Text style={[styles.chipText, value === opt && styles.chipTextSelected]}>
+            {opt.charAt(0).toUpperCase() + opt.slice(1)}
+          </Text>
+        </TouchableOpacity>
+      ))}
+    </View>
+  );
+}
+
 export default function MyProfileScreen({ navigation }) {
   const [loading,      setLoading]      = useState(true);
   const [employeeId,   setEmployeeId]   = useState(null);
@@ -100,6 +129,11 @@ export default function MyProfileScreen({ navigation }) {
   // Post-confirmation editable state
   const [maritalStatus,    setMaritalStatus]    = useState('');
   const [savingMarital,    setSavingMarital]    = useState(false);
+
+  // Phase 10 fix — gender
+  const [gender,        setGender]        = useState('');
+  const [savingGender,  setSavingGender]  = useState(false);
+
   const [savingConsent,    setSavingConsent]    = useState(false);
 
   // Day 14 fix #5 — smoker status
@@ -140,6 +174,7 @@ export default function MyProfileScreen({ navigation }) {
       setEmployee(data);
       setBloodDonorConsent(!!data.bloodDonorConsent);
       setMaritalStatus(data.maritalStatus || '');
+      setGender(data.gender || ''); // Phase 10 fix
       setIsSmoker(!!data.isSmoker); // Day 14 fix #5
       // Day 14 fix #6
       setCorrectionRequested(!!data.correctionRequested);
@@ -213,6 +248,36 @@ export default function MyProfileScreen({ navigation }) {
       setMaritalStatus(employee?.maritalStatus || '');
     } finally {
       setSavingMarital(false);
+    }
+  };
+
+  // ─── Gender self-edit (post-confirmation) — Phase 10 fix ────────────────
+  // Same pattern as handleSaveMaritalStatus above.
+  const handleSaveGender = async (newGender) => {
+    if (newGender === employee?.gender) return; // no change, skip the call
+    setGender(newGender);
+    setSavingGender(true);
+    try {
+      const token = await getToken();
+      const res = await fetch(`${API.employees}/${employeeId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ gender: newGender }),
+      });
+      if (res.ok) {
+        setEmployee(prev => ({ ...prev, gender: newGender }));
+        webAlert('Updated', 'Gender updated.');
+      } else {
+        const data = await res.json();
+        webAlert('Error', data.message || 'Could not update gender.');
+        setGender(employee?.gender || ''); // revert on failure
+      }
+    } catch (err) {
+      console.error('Update gender error:', err);
+      webAlert('Error', 'Network error. Please try again.');
+      setGender(employee?.gender || '');
+    } finally {
+      setSavingGender(false);
     }
   };
 
@@ -479,6 +544,17 @@ export default function MyProfileScreen({ navigation }) {
                 disabled={savingMarital}
               />
               {savingMarital && <ActivityIndicator style={{ marginTop: 8 }} color="#3b82f6" />}
+            </View>
+
+            {/* Phase 10 fix — Gender */}
+            <Text style={styles.sectionTitle}>Gender</Text>
+            <View style={styles.card}>
+              <GenderPicker
+                value={gender}
+                onSelect={handleSaveGender}
+                disabled={savingGender}
+              />
+              {savingGender && <ActivityIndicator style={{ marginTop: 8 }} color="#3b82f6" />}
             </View>
 
             {/* Day 14 fix #5 — Smoker status */}

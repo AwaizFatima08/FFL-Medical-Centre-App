@@ -24,6 +24,22 @@ const verifyToken = async (req, res, next) => {
 };
 
 // ─── MIDDLEWARE — VERIFY ROLE ────────────────────────────
+// Phase 10 fix — added an isActive check. Previously this middleware only
+// checked role membership; a disabled account (users.isActive: false,
+// set via POST /disable-user below) was NOT actually blocked here, only
+// flipped in Firestore. Since POST /disable-user never touches the
+// underlying Firebase Auth account (no admin.auth().updateUser disabled:
+// true call), a disabled user with an already-valid token — or anyone
+// able to sign back in before this fix — could keep passing every route
+// that only checked role. This is the middleware every report and
+// employee-management route runs through, so this one change closes the
+// gap there. It does NOT cover ambulanceRoutes.js, which has its own
+// separate inline role-check pattern (getUserRole() + manual array
+// checks) rather than importing this middleware — flagged as follow-up,
+// not fixed here. Whether trip/fitness/vaccination/feedback/etc. follow
+// the same shared-middleware pattern as this file or the standalone
+// pattern ambulanceRoutes.js uses is still unconfirmed — needs its own
+// review before assuming this fix is complete app-wide.
 const verifyRole = (allowedRoles) => {
   return async (req, res, next) => {
     try {
@@ -33,6 +49,9 @@ const verifyRole = (allowedRoles) => {
         return errorResponse(res, 'User record not found', 404);
       }
       const userData = userDoc.data();
+      if (userData.isActive !== true) {
+        return errorResponse(res, 'Account is disabled or not yet active. Please contact your administrator.', 403);
+      }
       if (!allowedRoles.includes(userData.role)) {
         return errorResponse(res, 'Forbidden — insufficient permissions', 403);
       }
@@ -575,6 +594,17 @@ router.get('/all-users', verifyToken, verifyRole([ROLES.ADMIN_INCHARGE, ROLES.CM
 });
 
 // ─── POST /disable-user ───────────────────────────────────
+// Phase 10 — cascades to family members. Only family members currently
+// isActive:true get cascade-disabled, tagged with disabledReason:
+// 'sponsor_deactivated' — distinct from the 'deceased'/'divorced' reasons
+// FamilyAdminReviewScreen.js's individual-disable path uses. This
+// distinction is what lets POST /enable-user below correctly restore
+// only the family members disabled BECAUSE of this cascade, not someone
+// who happens to also be isActive:false for a real, permanent reason.
+// Matched by employeeId == uid — familyMembers.employeeId stores the
+// sponsoring employee's Auth UID (confirmed against
+// FamilyAdminReviewScreen.js's own query), not the employees
+// collection's own doc ID.
 router.post('/disable-user', verifyToken, verifyRole([ROLES.ADMIN_INCHARGE]), async (req, res) => {
   try {
     const db = admin.firestore();
@@ -595,13 +625,36 @@ router.post('/disable-user', verifyToken, verifyRole([ROLES.ADMIN_INCHARGE]), as
       return errorResponse(res, 'User is already disabled', 409);
     }
 
-    await db.collection('users').doc(uid).update({
+    const batch = db.batch();
+    const now = nowISO();
+
+    batch.update(db.collection('users').doc(uid), {
       isActive:    false,
       disabledBy:  req.user.uid,
-      disabledAt:  nowISO(),
+      disabledAt:  now,
     });
 
-    return successResponse(res, { uid }, 'User disabled successfully');
+    const familySnap = await db.collection('familyMembers')
+      .where('employeeId', '==', uid)
+      .where('isActive', '==', true)
+      .get();
+
+    familySnap.docs.forEach(doc => {
+      batch.update(doc.ref, {
+        isActive:       false,
+        disabledReason: 'sponsor_deactivated',
+        disabledAt:     now,
+        disabledBy:     req.user.uid,
+        updatedAt:      now,
+      });
+    });
+
+    await batch.commit();
+
+    return successResponse(res,
+      { uid, familyMembersDisabled: familySnap.size },
+      'User disabled successfully'
+    );
   } catch (error) {
     console.error('Disable user error:', error);
     return errorResponse(res, 'Failed to disable user', 500);
@@ -609,6 +662,13 @@ router.post('/disable-user', verifyToken, verifyRole([ROLES.ADMIN_INCHARGE]), as
 });
 
 // ─── POST /enable-user ─────────────────────────────────────
+// Phase 10 — re-enable cascade, symmetric with disable above. Only
+// restores family members whose disabledReason is specifically
+// 'sponsor_deactivated' — a family member disabled for their own reason
+// (deceased/divorced, via FamilyAdminReviewScreen.js) stays disabled
+// even if the sponsoring employee is later re-enabled. There's no
+// scenario where re-enabling an employee should undo a real-world death
+// or divorce record.
 router.post('/enable-user', verifyToken, verifyRole([ROLES.ADMIN_INCHARGE]), async (req, res) => {
   try {
     const db = admin.firestore();
@@ -629,13 +689,39 @@ router.post('/enable-user', verifyToken, verifyRole([ROLES.ADMIN_INCHARGE]), asy
       return errorResponse(res, 'User is already active', 409);
     }
 
-    await db.collection('users').doc(uid).update({
+    const batch = db.batch();
+    const now = nowISO();
+
+    batch.update(db.collection('users').doc(uid), {
       isActive:      true,
       reEnabledBy:   req.user.uid,
-      reEnabledAt:   nowISO(),
+      reEnabledAt:   now,
     });
 
-    return successResponse(res, { uid }, 'User re-enabled successfully');
+    const familySnap = await db.collection('familyMembers')
+      .where('employeeId', '==', uid)
+      .where('isActive', '==', false)
+      .where('disabledReason', '==', 'sponsor_deactivated')
+      .get();
+
+    familySnap.docs.forEach(doc => {
+      batch.update(doc.ref, {
+        isActive:       true,
+        disabledReason: null,
+        disabledAt:     null,
+        disabledBy:     null,
+        reEnabledAt:    now,
+        reEnabledBy:    req.user.uid,
+        updatedAt:      now,
+      });
+    });
+
+    await batch.commit();
+
+    return successResponse(res,
+      { uid, familyMembersReEnabled: familySnap.size },
+      'User re-enabled successfully'
+    );
   } catch (error) {
     console.error('Enable user error:', error);
     return errorResponse(res, 'Failed to enable user', 500);

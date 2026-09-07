@@ -10,16 +10,16 @@ const ALL_REPORTS = [
     id: 'trip-day',
     label: 'Trip Day Report',
     icon: '🚌',
-    subtitle: 'Today\'s confirmed bookings',
+    subtitle: 'Any date\'s confirmed bookings',
     screen: 'TripDayReport',
-    roles: ['reception', 'cmo', 'doctor'],
+    roles: ['reception', 'cmo', 'doctor', 'admin_incharge'],
   },
   {
-    id: 'trip-monthly',
-    label: 'Monthly Trip Report',
+    id: 'trip-range',
+    label: 'Trip Range Report',
     icon: '📅',
-    subtitle: 'Monthly employee facilitation',
-    screen: 'TripMonthlyReport',
+    subtitle: 'Historical booking review by date range',
+    screen: 'TripRangeReport',
     roles: ['cmo'],
   },
   {
@@ -31,36 +31,60 @@ const ALL_REPORTS = [
     roles: ['cmo'],
   },
   {
-    id: 'township',
-    label: 'Township Population',
-    icon: '🏘️',
-    subtitle: 'Residents with family details',
-    screen: 'TownshipReport',
-    roles: ['cmo'],
-  },
-  {
-    id: 'non-township',
-    label: 'Non-Township Employees',
-    icon: '🏙️',
-    subtitle: 'Outstation employees',
-    screen: 'NonTownshipReport',
-    roles: ['cmo'],
-  },
-  {
     id: 'employees',
     label: 'Employee Report',
     icon: '👥',
-    subtitle: 'All employees, no family details',
-    screen: 'EmployeeOnlyReport',
+    subtitle: 'All employees, with filters',
+    screen: 'EmployeeReport',
     roles: ['cmo'],
   },
   {
-    id: 'blood-groups',
-    label: 'Blood Group Repository',
+    id: 'blood-donor-report',
+    label: 'Blood Donor Report',
     icon: '🩸',
-    subtitle: 'CSV download by blood group',
-    screen: 'BloodGroupReport',
-    roles: ['admin_incharge', 'cmo'],
+    subtitle: 'Distribution & active donor list',
+    screen: 'BloodDonorReport',
+    roles: ['admin_incharge', 'reception', 'doctor', 'cmo'],
+  },
+  {
+    id: 'annual-fitness',
+    label: 'Annual Fitness Report',
+    icon: '🩺',
+    subtitle: 'Completed exams, fit/unfit breakdown',
+    screen: 'AnnualFitnessReport',
+    roles: ['cmo'],
+  },
+  {
+    id: 'chronic-disease',
+    label: 'Employee Chronic Disease Report',
+    icon: '❤️‍🩹',
+    subtitle: 'Chronic conditions & smoker status',
+    screen: 'EmployeeChronicDiseaseReport',
+    roles: ['cmo'],
+  },
+  {
+    id: 'feedback-report',
+    label: 'Feedback Report',
+    icon: '📊',
+    subtitle: 'Satisfaction ratings & trends',
+    screen: 'FeedbackReport',
+    roles: ['cmo'],
+  },
+  {
+    id: 'population-report',
+    label: 'Population Report',
+    icon: '📈',
+    subtitle: 'Company-wide demographic statistics',
+    screen: 'PopulationStatsReport',
+    roles: ['cmo'],
+  },
+  {
+    id: 'family-report',
+    label: 'Family Report',
+    icon: '👨‍👩‍👧‍👦',
+    subtitle: 'Employee households',
+    screen: 'FamilyReport',
+    roles: ['cmo'],
   },
 ];
 
@@ -71,8 +95,6 @@ export default function ReportsHubScreen({ navigation, route }) {
 
   const handlePress = (report) => {
     const params = { userRole };
-    if (report.id === 'township')     params.type = 'township';
-    if (report.id === 'non-township') params.type = 'non-township';
     navigation.navigate(report.screen, params);
   };
 

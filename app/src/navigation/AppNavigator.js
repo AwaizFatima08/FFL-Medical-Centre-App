@@ -79,11 +79,15 @@ import BloodDonorDirectoryScreen from '../screens/donors/BloodDonorDirectoryScre
 // ─── Reports ──────────────────────────────────────────────────────────────────
 import ReportsHubScreen          from '../screens/reports/ReportsHubScreen';
 import TripDayReportScreen       from '../screens/reports/TripDayReportScreen';
-import TripMonthlyReportScreen   from '../screens/reports/TripMonthlyReportScreen';
+import TripRangeReportScreen     from '../screens/reports/TripRangeReportScreen';
 import AmbulanceKPIReportScreen  from '../screens/reports/AmbulanceKPIReportScreen';
-import PopulationReportScreen    from '../screens/reports/PopulationReportScreen';
-import EmployeeOnlyReportScreen  from '../screens/reports/EmployeeOnlyReportScreen';
-import BloodGroupReportScreen    from '../screens/reports/BloodGroupReportScreen';
+import EmployeeReportScreen       from '../screens/reports/EmployeeReportScreen';
+import BloodDonorReportScreen     from '../screens/reports/BloodDonorReportScreen';
+import AnnualFitnessReportScreen from '../screens/reports/AnnualFitnessReportScreen';
+import EmployeeChronicDiseaseReportScreen from '../screens/reports/EmployeeChronicDiseaseReportScreen';
+import FeedbackReportScreen from '../screens/reports/FeedbackReportScreen';
+import PopulationStatsReportScreen from '../screens/reports/PopulationStatsReportScreen';
+import FamilyReportScreen from '../screens/reports/FamilyReportScreen';
 
 // ─── My Profile (Phase 4, Day 14) ──────────────────────────────────────────────
 import MyProfileScreen from '../screens/profile/MyProfileScreen';
@@ -179,12 +183,15 @@ export default function AppNavigator({ userRole }) {
       {/* Reports */}
       <Stack.Screen name="ReportsHub"        component={ReportsHubScreen} />
       <Stack.Screen name="TripDayReport"     component={TripDayReportScreen} />
-      <Stack.Screen name="TripMonthlyReport" component={TripMonthlyReportScreen} />
+      <Stack.Screen name="TripRangeReport" component={TripRangeReportScreen} />
       <Stack.Screen name="AmbulanceKPIReport" component={AmbulanceKPIReportScreen} />
-      <Stack.Screen name="TownshipReport"    component={PopulationReportScreen} />
-      <Stack.Screen name="NonTownshipReport" component={PopulationReportScreen} />
-      <Stack.Screen name="EmployeeOnlyReport" component={EmployeeOnlyReportScreen} />
-      <Stack.Screen name="BloodGroupReport"  component={BloodGroupReportScreen} />
+      <Stack.Screen name="EmployeeReport" component={EmployeeReportScreen} />
+      <Stack.Screen name="BloodDonorReport" component={BloodDonorReportScreen} />
+      <Stack.Screen name="AnnualFitnessReport" component={AnnualFitnessReportScreen} />
+      <Stack.Screen name="EmployeeChronicDiseaseReport" component={EmployeeChronicDiseaseReportScreen} />
+      <Stack.Screen name="FeedbackReport" component={FeedbackReportScreen} />
+      <Stack.Screen name="PopulationStatsReport" component={PopulationStatsReportScreen} />
+      <Stack.Screen name="FamilyReport" component={FamilyReportScreen} />
 
       {/* My Profile (Phase 4, Day 14) */}
       <Stack.Screen name="MyProfile" component={MyProfileScreen} />

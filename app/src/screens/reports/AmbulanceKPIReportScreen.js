@@ -1,34 +1,48 @@
 // app/src/screens/reports/AmbulanceKPIReportScreen.js
-// Ambulance KPI report — daily and monthly — CMO only
+// Phase 10 redesign — Ambulance KPI Report. Same 12 columns for both
+// Daily and Range modes (unlike Trip Report's day/range split). Past
+// dates only, unlimited span. CMO only.
 
 import React, { useState } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity,
-  ScrollView, ActivityIndicator,
+  ScrollView, ActivityIndicator, TextInput,
 } from 'react-native';
 import { getAuth } from 'firebase/auth';
 import { API } from '../../config/api';
+import { downloadFile } from '../../utils/downloadFile';
 import DatePickerField from '../../components/DatePickerField';
 
-const MONTHS = [
-  'January','February','March','April','May','June',
-  'July','August','September','October','November','December',
-];
+const toDateStr = (d) => (d instanceof Date ? d.toISOString().split('T')[0] : d);
+
+const NATURE_OPTIONS = ['Emergency', 'Routine Consultation', 'Physiotherapy', 'Dental', 'Lab Sample'];
+const RANGE_OPTIONS  = ['Intra-Township', 'Intercity'];
 
 export default function AmbulanceKPIReportScreen({ navigation }) {
-  const now = new Date();
-
-  const [mode,    setMode]    = useState('daily');   // 'daily' | 'monthly'
+  const [mode,    setMode]    = useState('daily');   // 'daily' | 'range'
   const [date,    setDate]    = useState(new Date());
-  const [month,   setMonth]   = useState(now.getMonth() + 1);
-  const [year,    setYear]    = useState(now.getFullYear());
+  const [fromDate, setFromDate] = useState(new Date());
+  const [toDate,   setToDate]   = useState(new Date());
   const [data,    setData]    = useState(null);
   const [loading, setLoading] = useState(false);
+  const [pdfLoading, setPdfLoading] = useState(false);
   const [error,   setError]   = useState('');
+
+  // Filters
+  const [empNumFilter, setEmpNumFilter]   = useState('');
+  const [empNameFilter, setEmpNameFilter] = useState('');
+  const [natureFilter, setNatureFilter]   = useState('');
+  const [rangeFilter, setRangeFilter]     = useState('');
+  const [flagFilter, setFlagFilter]       = useState(''); // '' | 'yes' | 'no'
 
   const getToken = async () => {
     const auth = getAuth();
     return await auth.currentUser.getIdToken();
+  };
+
+  const buildQuery = () => {
+    if (mode === 'daily') return `date=${toDateStr(date)}`;
+    return `fromDate=${toDateStr(fromDate)}&toDate=${toDateStr(toDate)}`;
   };
 
   const fetchReport = async () => {
@@ -37,12 +51,8 @@ export default function AmbulanceKPIReportScreen({ navigation }) {
     setData(null);
     try {
       const token   = await getToken();
-      const dateStr = date instanceof Date ? date.toISOString().split('T')[0] : date;
-      const query   = mode === 'daily'
-        ? `date=${dateStr}`
-        : `month=${month}&year=${year}`;
       const response = await fetch(
-        `${API.reports}/ambulance/kpis?${query}`,
+        `${API.reports}/ambulance/kpis?${buildQuery()}`,
         { headers: { 'Authorization': `Bearer ${token}` } }
       );
       const json = await response.json();
@@ -55,11 +65,37 @@ export default function AmbulanceKPIReportScreen({ navigation }) {
     }
   };
 
+  const handleDownloadPDF = async () => {
+    setPdfLoading(true);
+    try {
+      await downloadFile(
+        `${API.reports}/ambulance/kpis?${buildQuery()}&format=pdf`,
+        'ambulance-kpi-report.pdf'
+      );
+    } catch {
+      setError('Failed to download PDF.');
+    } finally {
+      setPdfLoading(false);
+    }
+  };
+
   const formatMins = (mins) => {
     if (mins === null || mins === undefined) return '—';
     if (mins < 60) return `${mins} min`;
     return `${Math.floor(mins / 60)}h ${mins % 60}m`;
   };
+
+  const rows = data?.kpiRows || [];
+
+  const filtered = rows.filter(r => {
+    if (empNumFilter.trim() && !r.employeeNumber?.toLowerCase().includes(empNumFilter.trim().toLowerCase())) return false;
+    if (empNameFilter.trim() && !r.employeeName?.toLowerCase().includes(empNameFilter.trim().toLowerCase())) return false;
+    if (natureFilter && r.natureOfVisit !== natureFilter) return false;
+    if (rangeFilter && r.tripRange !== rangeFilter) return false;
+    if (flagFilter === 'yes' && !r.falseEmergencyFlag) return false;
+    if (flagFilter === 'no' && r.falseEmergencyFlag) return false;
+    return true;
+  });
 
   return (
     <View style={styles.wrapper}>
@@ -75,65 +111,31 @@ export default function AmbulanceKPIReportScreen({ navigation }) {
 
         {/* Mode toggle */}
         <View style={styles.modeRow}>
-          {['daily', 'monthly'].map(m => (
+          {['daily', 'range'].map(m => (
             <TouchableOpacity
               key={m}
               style={[styles.modeBtn, mode === m && styles.modeBtnActive]}
               onPress={() => { setMode(m); setData(null); }}
             >
               <Text style={[styles.modeBtnText, mode === m && styles.modeBtnTextActive]}>
-                {m === 'daily' ? 'Daily' : 'Monthly'}
+                {m === 'daily' ? 'Daily' : 'Range'}
               </Text>
             </TouchableOpacity>
           ))}
         </View>
 
-        {/* Date picker for daily */}
-        {mode === 'daily' && (
+        {/* Date picker(s) — past only, both modes */}
+        {mode === 'daily' ? (
           <>
-            <DatePickerField
-              label="Select Date"
-              value={date}
-              onChange={setDate}
-              maximumDate={new Date()}
-            />
-            <TouchableOpacity
-              style={styles.todayBtn}
-              onPress={() => setDate(new Date())}
-            >
+            <DatePickerField label="Select Date" value={date} onChange={setDate} maximumDate={new Date()} />
+            <TouchableOpacity style={styles.todayBtn} onPress={() => setDate(new Date())}>
               <Text style={styles.todayBtnText}>Reset to Today</Text>
             </TouchableOpacity>
           </>
-        )}
-
-        {/* Month/Year for monthly */}
-        {mode === 'monthly' && (
+        ) : (
           <>
-            <Text style={styles.sectionLabel}>Month</Text>
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.monthScroll}>
-              {MONTHS.map((m, i) => (
-                <TouchableOpacity
-                  key={m}
-                  style={[styles.chip, month === i + 1 && styles.chipSelected]}
-                  onPress={() => setMonth(i + 1)}
-                >
-                  <Text style={[styles.chipText, month === i + 1 && styles.chipTextSelected]}>
-                    {m.slice(0, 3)}
-                  </Text>
-                </TouchableOpacity>
-              ))}
-            </ScrollView>
-            <View style={styles.yearRow}>
-              {[now.getFullYear() - 1, now.getFullYear()].map(y => (
-                <TouchableOpacity
-                  key={y}
-                  style={[styles.chip, year === y && styles.chipSelected]}
-                  onPress={() => setYear(y)}
-                >
-                  <Text style={[styles.chipText, year === y && styles.chipTextSelected]}>{y}</Text>
-                </TouchableOpacity>
-              ))}
-            </View>
+            <DatePickerField label="From" value={fromDate} onChange={setFromDate} maximumDate={new Date()} />
+            <DatePickerField label="To"   value={toDate}   onChange={setToDate}   maximumDate={new Date()} />
           </>
         )}
 
@@ -161,57 +163,102 @@ export default function AmbulanceKPIReportScreen({ navigation }) {
               Average KPIs ({data.summary?.completed || 0} completed trips)
             </Text>
             <View style={styles.kpiGrid}>
-              <KPICard
-                label="Response Time"
-                subtitle="Request → Dispatch"
-                value={formatMins(data.summary?.avgResponseTime)}
-                color="#3182ce"
-              />
-              <KPICard
-                label="Arrival Time"
-                subtitle="Dispatch → Pickup"
-                value={formatMins(data.summary?.avgArrivalTime)}
-                color="#276749"
-              />
-              <KPICard
-                label="Return Time"
-                subtitle="Pickup → Complete"
-                value={formatMins(data.summary?.avgReturnTime)}
-                color="#6b46c1"
-              />
-              <KPICard
-                label="Total Trip Time"
-                subtitle="Request → Complete"
-                value={formatMins(data.summary?.avgTotalTripTime)}
-                color="#c05621"
-              />
+              <KPICard label="Response Time" subtitle="Request → Dispatch" value={formatMins(data.summary?.avgResponseTime)} color="#3182ce" />
+              <KPICard label="Arrival Time"  subtitle="Dispatch → Pickup"  value={formatMins(data.summary?.avgArrivalTime)}  color="#276749" />
+              <KPICard label="Return Time"   subtitle="Pickup → Complete"  value={formatMins(data.summary?.avgReturnTime)}   color="#6b46c1" />
+              <KPICard label="Total Trip Time" subtitle="Request → Complete" value={formatMins(data.summary?.avgTotalTripTime)} color="#c05621" />
             </View>
 
             <View style={styles.totalBox}>
-              <Text style={styles.totalText}>
-                Total Requests: {data.summary?.totalRequests || 0}
-              </Text>
+              <Text style={styles.totalText}>Total Requests: {data.summary?.totalRequests || 0}</Text>
             </View>
 
-            {/* Per-trip rows */}
-            {(data.kpiRows || []).length > 0 && (
-              <>
-                <Text style={styles.sectionLabel}>Trip Details</Text>
-                {data.kpiRows.map((row, i) => (
-                  <View key={row.id || i} style={styles.tripRow}>
-                    <View style={styles.tripRowHeader}>
-                      <Text style={styles.tripPatient}>{row.patientName}</Text>
-                      <Text style={styles.tripPriority}>{row.priorityFlag}</Text>
-                    </View>
-                    <View style={styles.tripKPIs}>
-                      <MiniKPI label="Response" value={formatMins(row.responseTime)} />
-                      <MiniKPI label="Arrival"  value={formatMins(row.arrivalTime)} />
-                      <MiniKPI label="Return"   value={formatMins(row.returnTime)} />
-                      <MiniKPI label="Total"    value={formatMins(row.totalTripTime)} />
-                    </View>
+            <TouchableOpacity
+              style={[styles.pdfBtn, pdfLoading && styles.btnDisabled]}
+              onPress={handleDownloadPDF}
+              disabled={pdfLoading}
+            >
+              {pdfLoading
+                ? <ActivityIndicator size="small" color="#ffffff" />
+                : <Text style={styles.pdfBtnText}>📄 Download PDF</Text>
+              }
+            </TouchableOpacity>
+
+            {/* Filters */}
+            <View style={styles.filterInputRow}>
+              <TextInput
+                style={styles.searchInput}
+                value={empNumFilter}
+                onChangeText={setEmpNumFilter}
+                placeholder="Filter by employee number..."
+                placeholderTextColor="#a0aec0"
+              />
+              <TextInput
+                style={styles.searchInput}
+                value={empNameFilter}
+                onChangeText={setEmpNameFilter}
+                placeholder="Filter by employee name..."
+                placeholderTextColor="#a0aec0"
+              />
+            </View>
+
+            <Text style={styles.sectionLabel}>Nature of Visit</Text>
+            <ChipRow value={natureFilter} onChange={setNatureFilter} options={NATURE_OPTIONS} />
+
+            <Text style={styles.sectionLabel}>Trip Range</Text>
+            <ChipRow value={rangeFilter} onChange={setRangeFilter} options={RANGE_OPTIONS} />
+
+            <Text style={styles.sectionLabel}>False Emergency Flag</Text>
+            <View style={styles.chipStaticRow}>
+              {['', 'yes', 'no'].map(v => (
+                <TouchableOpacity
+                  key={v || 'all'}
+                  style={[styles.chip, flagFilter === v && styles.chipSelected]}
+                  onPress={() => setFlagFilter(v)}
+                >
+                  <Text style={[styles.chipText, flagFilter === v && styles.chipTextSelected]}>
+                    {v === '' ? 'All' : v === 'yes' ? 'Yes' : 'No'}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+
+            <Text style={styles.resultCount}>
+              {filtered.length} result{filtered.length !== 1 ? 's' : ''}
+            </Text>
+
+            {/* Per-trip rows — all 12 columns */}
+            {filtered.length === 0 ? (
+              <View style={styles.emptyState}>
+                <Text style={styles.emptyIcon}>🚑</Text>
+                <Text style={styles.emptyText}>
+                  {rows.length === 0 ? 'No ambulance requests for this selection' : 'No requests match this filter'}
+                </Text>
+              </View>
+            ) : (
+              filtered.map((row) => (
+                <View key={row.id} style={styles.tripRow}>
+                  <View style={styles.tripRowHeader}>
+                    <Text style={styles.tripPatient}>{row.patientName}</Text>
+                    {row.falseEmergencyFlag && (
+                      <View style={styles.flagBadge}>
+                        <Text style={styles.flagBadgeText}>False Emergency</Text>
+                      </View>
+                    )}
                   </View>
-                ))}
-              </>
+                  <Text style={styles.tripSub}>
+                    {row.employeeName} [{row.employeeNumber}] · {row.relation} · House: {row.houseNumber}
+                  </Text>
+                  <Text style={styles.tripSub}>
+                    {row.natureOfVisit} · {row.tripRange} · Drop Off: {row.dropOff ? 'Yes' : 'No'}
+                  </Text>
+                  <View style={styles.tripKPIs}>
+                    <MiniKPI label="Response" value={formatMins(row.responseTime)} />
+                    <MiniKPI label="Arrival"  value={formatMins(row.arrivalTime)} />
+                    <MiniKPI label="Return"   value={formatMins(row.returnTime)} />
+                  </View>
+                </View>
+              ))
             )}
           </>
         )}
@@ -240,6 +287,28 @@ function MiniKPI({ label, value }) {
   );
 }
 
+function ChipRow({ value, onChange, options }) {
+  return (
+    <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.chipScroll}>
+      <TouchableOpacity
+        style={[styles.chip, !value && styles.chipSelected]}
+        onPress={() => onChange('')}
+      >
+        <Text style={[styles.chipText, !value && styles.chipTextSelected]}>All</Text>
+      </TouchableOpacity>
+      {options.map(o => (
+        <TouchableOpacity
+          key={o}
+          style={[styles.chip, value === o && styles.chipSelected]}
+          onPress={() => onChange(value === o ? '' : o)}
+        >
+          <Text style={[styles.chipText, value === o && styles.chipTextSelected]}>{o}</Text>
+        </TouchableOpacity>
+      ))}
+    </ScrollView>
+  );
+}
+
 const styles = StyleSheet.create({
   wrapper: { flex: 1, backgroundColor: '#f0f4f8' },
   header: {
@@ -254,7 +323,7 @@ const styles = StyleSheet.create({
   scrollContent: { padding: 16, gap: 12 },
   sectionLabel: {
     fontSize: 12, fontWeight: '700', color: '#4a5568',
-    textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 8,
+    textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 4,
   },
   modeRow: { flexDirection: 'row', gap: 12 },
   modeBtn: {
@@ -269,19 +338,8 @@ const styles = StyleSheet.create({
     alignSelf: 'flex-start',
     paddingHorizontal: 16, paddingVertical: 8, borderRadius: 8,
     backgroundColor: '#ebf8ff', borderWidth: 1, borderColor: '#90cdf4',
-    marginBottom: 4,
   },
   todayBtnText:  { fontSize: 13, color: '#2b6cb0', fontWeight: '600' },
-  monthScroll:   { marginBottom: 8 },
-  chip: {
-    paddingHorizontal: 14, paddingVertical: 8, borderRadius: 20,
-    borderWidth: 1.5, borderColor: '#e2e8f0',
-    backgroundColor: '#ffffff', marginRight: 8,
-  },
-  chipSelected:     { backgroundColor: '#3182ce', borderColor: '#3182ce' },
-  chipText:         { fontSize: 13, fontWeight: '600', color: '#4a5568' },
-  chipTextSelected: { color: '#ffffff' },
-  yearRow: { flexDirection: 'row', gap: 12, marginBottom: 4 },
   fetchBtn: {
     backgroundColor: '#3182ce', borderRadius: 8,
     paddingVertical: 12, alignItems: 'center',
@@ -303,20 +361,49 @@ const styles = StyleSheet.create({
   kpiValue: { fontSize: 20, fontWeight: '800', marginBottom: 2 },
   kpiLabel: { fontSize: 12, fontWeight: '700', color: '#2d3748' },
   kpiSub:   { fontSize: 11, color: '#a0aec0', marginTop: 1 },
-  totalBox: {
-    backgroundColor: '#f7fafc', borderRadius: 8, padding: 10,
-  },
+  totalBox: { backgroundColor: '#f7fafc', borderRadius: 8, padding: 10 },
   totalText: { fontSize: 13, color: '#4a5568', fontWeight: '600' },
+  pdfBtn: {
+    backgroundColor: '#276749', borderRadius: 8,
+    paddingVertical: 12, alignItems: 'center',
+  },
+  pdfBtnText: { color: '#ffffff', fontWeight: '700', fontSize: 14 },
+  filterInputRow: { gap: 8 },
+  searchInput: {
+    backgroundColor: '#ffffff', borderWidth: 1.5, borderColor: '#e2e8f0',
+    borderRadius: 8, paddingHorizontal: 12, paddingVertical: 10,
+    fontSize: 14, color: '#2d3748',
+  },
+  chipScroll:     { marginBottom: 4 },
+  chipStaticRow:  { flexDirection: 'row', gap: 8 },
+  chip: {
+    paddingHorizontal: 14, paddingVertical: 8, borderRadius: 20,
+    borderWidth: 1.5, borderColor: '#e2e8f0',
+    backgroundColor: '#ffffff', marginRight: 8,
+  },
+  chipSelected:     { backgroundColor: '#3182ce', borderColor: '#3182ce' },
+  chipText:         { fontSize: 13, fontWeight: '600', color: '#4a5568' },
+  chipTextSelected: { color: '#ffffff' },
+  resultCount: { fontSize: 12, color: '#a0aec0', fontWeight: '600' },
   tripRow: {
     backgroundColor: '#ffffff', borderRadius: 10, padding: 12,
     shadowColor: '#000', shadowOpacity: 0.04, shadowRadius: 2,
-    shadowOffset: { width: 0, height: 1 }, elevation: 1, gap: 8,
+    shadowOffset: { width: 0, height: 1 }, elevation: 1, gap: 4,
   },
-  tripRowHeader: { flexDirection: 'row', justifyContent: 'space-between' },
+  tripRowHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   tripPatient:   { fontSize: 13, fontWeight: '700', color: '#2d3748' },
-  tripPriority:  { fontSize: 11, color: '#718096', fontWeight: '600' },
-  tripKPIs:      { flexDirection: 'row', justifyContent: 'space-between' },
+  tripSub:       { fontSize: 11, color: '#718096' },
+  flagBadge: {
+    backgroundColor: '#fff5f5', borderRadius: 8,
+    paddingHorizontal: 8, paddingVertical: 2,
+    borderWidth: 1, borderColor: '#fc8181',
+  },
+  flagBadgeText: { fontSize: 10, color: '#c53030', fontWeight: '700' },
+  tripKPIs:      { flexDirection: 'row', justifyContent: 'space-between', marginTop: 6 },
   miniKPI:       { alignItems: 'center' },
   miniKPIValue:  { fontSize: 13, fontWeight: '700', color: '#2d3748' },
   miniKPILabel:  { fontSize: 10, color: '#a0aec0' },
+  emptyState: { alignItems: 'center', paddingTop: 40, gap: 10 },
+  emptyIcon:  { fontSize: 40 },
+  emptyText:  { fontSize: 14, color: '#a0aec0', textAlign: 'center', paddingHorizontal: 20 },
 });

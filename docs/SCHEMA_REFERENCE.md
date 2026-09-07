@@ -53,6 +53,9 @@ Generated from live production data review. This reflects the **actual** schema 
 | dropOffOutcome | string / null | **[Day 16–17, new]** one of `"dropped_off"` / `"referred_outside"` / `"patient_declined"` — set when the drop-off leg is resolved (5.6.3) |
 | dropOffTriggeredAt | timestamp / null | **[Day 16–17, new]** set at the same moment as `dropOffOutcome` (5.6.3) |
 | employeeNumber | string | **[Day 16–17, new]** identifies which employee/family the request belongs to, independent of who actually submitted it (employee self, or reception on their behalf) — the actual duplicate-request dedup key (5.5) |
+| falseEmergencyFlag | boolean | **[Day 23, added]** set via a checkbox on the Drop Off action, only available for emergency-flagged requests (5.8.3) — real, live, fully built feature; simply never added to this table until a Phase 10 live-data review caught the gap |
+| falseEmergencyFlaggedAt | timestamp / null | **[Day 23, added]** |
+| falseEmergencyFlaggedBy | string (uid) / null | **[Day 23, added]** |
 | notes | string / null | |
 | overriddenBy | string / null | initialized on every request but never set by any route — likely vestigial |
 | patientCondition | string | e.g. "chest pain" |
@@ -144,11 +147,17 @@ Read access restricted to `doctor` / `cmo` / `reception` / `nurse` via Firestore
 
 | Field | Type | Notes |
 |---|---|---|
-| currentStatus | string | "available" |
+| currentStatus | string | "available" / "not_available" / "on_leave" |
 | fullName | string | |
 | isAvailable | boolean | |
+| role | string / null | **[Day 23, added]** "doctor" / "cmo" — written by `authRoutes.js`'s `POST /approve-user` when the doc is first created; missing from this table until now despite being written since that route's inception, not a new field |
+| scheduledLeave.startDate / endDate | string | **[Day 23, added]** "YYYY-MM-DD" — Phase 6's leave-scheduling capability, live and in use, but never previously added to this table |
+| scheduledLeave.setAt | timestamp | **[Day 23, added]** |
+| scheduledLeave.setBy | string (uid) | **[Day 23, added]** |
 | updatedAt | timestamp | |
 | updatedBy | string (uid) | |
+
+**[Day 23 note]** `scheduledLeave` and `role` were confirmed live via a real doctor's document (`currentStatus: "on_leave"`, active `scheduledLeave` block) during a Phase 10 live-data review — both are real, in-use fields that simply never made it into this table when Phase 6 shipped. No code changed to produce this correction; doc-only catch-up, same shape as the Day 22 `fitnessAppointments` catch-up below.
 
 Subcollection: `statusLog` — **[Day 13 correction]** confirmed live (previously "referenced in design doc, not expanded"); currently empty in test data.
 
@@ -181,6 +190,8 @@ Subcollection: `statusLog` — **[Day 13 correction]** confirmed live (previousl
 | validatedAt | timestamp | |
 | validatedBy | string (uid) | |
 | cnic | string | **[Day 14]** captured at signup, locked afterward — admin-only edit |
+| dateOfBirth | timestamp | **[Day 23, fixed]** captured by `SignupScreen.js` since before this session, but silently dropped by `authRoutes.js`'s `POST /register` — same shape as `purposeOfVisit`/`hospital`. Fixed this session; confirmed live and populated on a real post-fix signup. Employees who signed up before this fix have no recoverable `dateOfBirth` — no source to backfill from |
+| gender | string | **[Day 23, added]** `male` / `female` — genuinely never captured anywhere before this session (not a silent-drop bug like `dateOfBirth`; no capture path existed at all). Self-editable anytime after signup, same treatment as `maritalStatus`. Fixed in code and verified live this session, but not yet visible on any record in this particular screenshot batch, since every employee document reviewed here predates the fix |
 | maritalStatus | string | **[Day 14]** `married` / `unmarried` / `divorced` / `widowed`; captured at signup, self-editable anytime after |
 | isSmoker | boolean | **[Day 14]** captured at signup, self-editable anytime after |
 | employeeType | string | **[Day 14]** `management` / `non_management` / `ESB`; admin-entered at approval |
@@ -227,6 +238,7 @@ Read/write restricted to `admin_incharge` and `cmo` only, enforced at the Firest
 | differentlyAbled | boolean | |
 | employeeId | string (uid) | |
 | employmentStatus | string / null | mandatory 25+ per design doc |
+| gender | string | **[Day 23, added]** `male` / `female` — same Phase 10 gap-close as `employees.gender` above; never captured before this session, no source to backfill for existing records. Routed through the existing `pendingRevision` admin-review flow when edited (same as name/dateOfBirth/cnic/bloodGroup), not a direct write like `bloodDonorConsent` |
 | isActive | boolean | |
 | maritalStatus | string / null | mandatory 25+ per design doc — subject to same `'single'` vs `'unmarried'` drift as employees (Phase 3, now closed both places) |
 | motherId | string / null | optional, supports multi-spouse scenarios |

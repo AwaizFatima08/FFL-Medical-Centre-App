@@ -43,6 +43,20 @@ function calculateAge(dobTimestamp) {
   return `${years}y ${months}m`;
 }
 
+// ─── Disabled-member reason label ─────────────────────────────────────────────
+// Phase 10 fix — was a two-way ternary (deceased / else "Divorced"), which
+// silently mislabeled any member cascade-disabled via the new
+// sponsor-deactivation flow (authRoutes.js POST /disable-user) as
+// "Divorced". Now handles all three real values explicitly.
+const DISABLED_REASON_LABEL = {
+  deceased:            'Deceased',
+  divorced:            'Divorced',
+  sponsor_deactivated: 'Sponsor Deactivated',
+};
+function disabledReasonLabel(reason) {
+  return DISABLED_REASON_LABEL[reason] || 'Disabled';
+}
+
 // ─── Field row for detail view ────────────────────────────────────────────────
 function FieldRow({ label, value, highlight }) {
   if (!value && value !== false) return null;
@@ -775,6 +789,9 @@ export default function FamilyAdminReviewScreen({ navigation }) {
 
                       // Day 14, Step G fix #7 — disabled members stay visible,
                       // blurred, with a reason badge, instead of disappearing.
+                      // Phase 10 fix — badge label now handles all three real
+                      // disabledReason values via disabledReasonLabel(),
+                      // not a two-way deceased/else-"Divorced" ternary.
                       if (isDisabledMember) {
                         return (
                           <View key={member.id} style={[styles.memberRow, styles.memberRowDisabled]}>
@@ -786,7 +803,7 @@ export default function FamilyAdminReviewScreen({ navigation }) {
                             </View>
                             <View style={styles.disabledStatusBadge}>
                               <Text style={styles.disabledStatusText}>
-                                {member.disabledReason === 'deceased' ? 'Deceased' : 'Divorced'}
+                                {disabledReasonLabel(member.disabledReason)}
                               </Text>
                             </View>
                           </View>

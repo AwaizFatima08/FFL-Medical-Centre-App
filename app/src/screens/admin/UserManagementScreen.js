@@ -5,6 +5,15 @@
 // employee's profile data (department/designation/blood group/etc), and no
 // visibility into an employee's request to correct wrong data. Both are
 // added here, in the same expanded panel used for role changes.
+//
+// Phase 10 fix: Disable/Enable Account now cascades to the employee's
+// family members (see authRoutes.js POST /disable-user, /enable-user) —
+// this screen previously said nothing about that in the confirmation
+// dialog, and gave no success feedback at all (only alerted on failure).
+// Both fixed: the confirmation text now mentions the cascade upfront, and
+// a success alert names the family-member count, but only when it's
+// actually greater than 0 — most accounts (drivers, reception, etc.) have
+// no family members, so this stays quiet for the common case.
 import React, { useState, useCallback } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity,
@@ -132,7 +141,7 @@ export default function UserManagementScreen({ navigation }) {
   const handleDisable = (uid, fullName) => {
     webConfirm(
       'Disable User',
-      `Disable ${fullName}? They will not be able to log in until re-enabled. This does not delete their account or data.`,
+      `Disable ${fullName}? They will not be able to log in until re-enabled. This does not delete their account or data. This will also deactivate any registered family members.`,
       async () => {
         setActioning(uid);
         try {
@@ -145,6 +154,17 @@ export default function UserManagementScreen({ navigation }) {
           const data = await res.json();
           if (res.ok) {
             setUsers(prev => prev.map(u => u.uid === uid ? { ...u, isActive: false } : u));
+            // Phase 10 — surface the cascade count, but only when it's
+            // actually relevant. Most accounts (drivers, reception, etc.)
+            // have no family members, so this stays silent for the
+            // common case and only speaks up when something changed.
+            const familyCount = data.data?.familyMembersDisabled || 0;
+            if (familyCount > 0) {
+              webAlert(
+                'User Disabled',
+                `${fullName} has been disabled. ${familyCount} family member${familyCount !== 1 ? 's were' : ' was'} also deactivated.`
+              );
+            }
           } else {
             webAlert('Failed', data.message || 'Could not disable user.');
           }
@@ -161,7 +181,7 @@ export default function UserManagementScreen({ navigation }) {
   const handleEnable = (uid, fullName) => {
     webConfirm(
       'Re-enable User',
-      `Re-enable ${fullName}? They will be able to log in again immediately.`,
+      `Re-enable ${fullName}? They will be able to log in again immediately. This will also re-activate any family members who were deactivated with them.`,
       async () => {
         setActioning(uid);
         try {
@@ -174,6 +194,15 @@ export default function UserManagementScreen({ navigation }) {
           const data = await res.json();
           if (res.ok) {
             setUsers(prev => prev.map(u => u.uid === uid ? { ...u, isActive: true } : u));
+            // Phase 10 — same reasoning as handleDisable above: only
+            // speak up when family members were actually restored.
+            const familyCount = data.data?.familyMembersReEnabled || 0;
+            if (familyCount > 0) {
+              webAlert(
+                'User Re-enabled',
+                `${fullName} has been re-enabled. ${familyCount} family member${familyCount !== 1 ? 's were' : ' was'} also re-activated.`
+              );
+            }
           } else {
             webAlert('Failed', data.message || 'Could not re-enable user.');
           }

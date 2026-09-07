@@ -13,9 +13,17 @@ const READ_ROLES  = ['employee', 'reception', 'doctor', 'cmo', 'admin_incharge']
 const WRITE_ROLES = ['admin_incharge'];
 
 // Helper: get user role from users collection
+// Phase 10 fix — also enforces isActive, closing the same gap fixed in
+// authRoutes.js's verifyRole for reportRoutes.js/employeeRoutes.js. This
+// file has its own local role-check pattern rather than importing that
+// shared middleware, so the fix has to be repeated here (same as
+// ambulanceRoutes.js/tripRoutes.js, same session). Every route in this
+// file calls getUserRole(uid) as the first thing, so this one change
+// protects the whole file — no route bodies needed touching.
 async function getUserRole(uid) {
   const doc = await db.collection('users').doc(uid).get();
   if (!doc.exists) throw new Error('User not found');
+  if (doc.data().isActive !== true) throw new Error('Account is disabled or not yet active');
   return doc.data().role;
 }
 

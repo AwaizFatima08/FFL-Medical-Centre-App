@@ -9,9 +9,17 @@ const router = express.Router();
 const db = getFirestore();
 
 // Helper: get user role
+// Phase 10 fix — also enforces isActive, closing the same gap fixed in
+// authRoutes.js's verifyRole for reportRoutes.js/employeeRoutes.js. This
+// file has its own local role-check pattern rather than importing that
+// shared middleware, so the fix has to be repeated here. Every route in
+// this file calls getUserRole(uid) as the first thing after extracting
+// uid, so this one change protects the whole file — no route bodies
+// needed touching.
 async function getUserRole(uid) {
   const userDoc = await db.collection('users').doc(uid).get();
   if (!userDoc.exists) throw new Error('User not found');
+  if (userDoc.data().isActive !== true) throw new Error('Account is disabled or not yet active');
   return userDoc.data().role;
 }
 
@@ -165,10 +173,16 @@ router.post('/request', async (req, res) => {
     // be able to submit under a different employee's number just by
     // sending different JSON. Used below for the family-level duplicate
     // block and for the employee's own GET /my-active lookup.
+    //
+    // Phase 10 — `ownEmployeeData` hoisted out of the try block below (it
+    // used to be scoped inside with `const`) so the houseNumber auto-lock
+    // further down can reuse it for the self-request path without a
+    // second, redundant lookup.
     let resolvedEmployeeNumber = employeeNumber;
+    let ownEmployeeData = null;
     if (!isReception) {
       try {
-        const ownEmployeeData = await getEmployeeData(uid);
+        ownEmployeeData = await getEmployeeData(uid);
         resolvedEmployeeNumber = ownEmployeeData.officialEmployeeNumber;
       } catch (e) {
         return res.status(400).json({ success: false, message: 'Could not find your employee record.' });
@@ -196,6 +210,34 @@ router.post('/request', async (req, res) => {
       });
     }
 
+    // Phase 10 — houseNumber auto-lock, per PHASE10_DESIGN.md. Snapshot
+    // the employee's houseNumber at request creation, resolved
+    // server-side and NEVER trusted from the client — same pattern as
+    // resolvedEmployeeNumber above. This is a NEW, separate field from
+    // pickupLocation below, which is deliberately left untouched: still
+    // free-text, still defaults to house number but overridable, since
+    // dispatch sometimes genuinely needs a different pickup point than
+    // the patient's registered address (Homi's explicit call). houseNumber
+    // exists purely so the Ambulance KPI Report reflects the address on
+    // file at the time of the request, not wherever the employee has
+    // since moved — same reasoning as the `hospital` snapshot fix on
+    // Trip Booking.
+    let resolvedHouseNumber = null;
+    if (!isReception) {
+      // Self-request — reuse the employee data already fetched above,
+      // no second lookup needed.
+      resolvedHouseNumber = ownEmployeeData?.houseNumber || null;
+    } else {
+      // Reception on-behalf-of — look up by the employee number already
+      // validated as resolvedEmployeeNumber above (the one reception
+      // searched for on their screen).
+      const empSnap = await db.collection('employees')
+        .where('officialEmployeeNumber', '==', resolvedEmployeeNumber.trim())
+        .limit(1)
+        .get();
+      resolvedHouseNumber = empSnap.empty ? null : (empSnap.docs[0].data().houseNumber || null);
+    }
+
     // Day 16 (Phase 5, Step 5.4) — reception's on-behalf-of requests were
     // previously ALWAYS auto-accepted, which let reception bypass the
     // single-active-trip lock just by using their own screen. Now: only
@@ -212,6 +254,7 @@ router.post('/request', async (req, res) => {
       requestedBy:      uid,
       requestedByType:  userRole,
       employeeNumber:   resolvedEmployeeNumber.trim(),
+      houseNumber:      resolvedHouseNumber,   // ← Phase 10 — auto-locked, snapshotted at creation
       patientName:      patientName.trim(),
       patientRelation:  patientRelation?.trim() || 'Self',
       patientCondition: patientCondition.trim(),

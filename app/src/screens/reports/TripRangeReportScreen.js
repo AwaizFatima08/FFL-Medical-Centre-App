@@ -1,5 +1,9 @@
-// app/src/screens/reports/TripMonthlyReportScreen.js
-// Monthly medical trip consolidation — CMO only
+// app/src/screens/reports/TripRangeReportScreen.js
+// Phase 10 — Trip Range Report. Full replacement of the old
+// TripMonthlyReportScreen.js (month+year picker) — a genuinely different
+// query shape, not a variant. From/to date range, past dates only,
+// unlimited span. No summary strip, no within-range filters, table only.
+// CMO only.
 
 import React, { useState } from 'react';
 import {
@@ -8,19 +12,22 @@ import {
 } from 'react-native';
 import { getAuth } from 'firebase/auth';
 import { API } from '../../config/api';
+import { downloadFile } from '../../utils/downloadFile';
+import DatePickerField from '../../components/DatePickerField';
 
-const MONTHS = [
-  'January','February','March','April','May','June',
-  'July','August','September','October','November','December',
-];
+const toDateStr = (d) => (d instanceof Date ? d.toISOString().split('T')[0] : d);
 
-export default function TripMonthlyReportScreen({ navigation }) {
-  const now = new Date();
-  const [month,   setMonth]   = useState(now.getMonth() + 1);
-  const [year,    setYear]    = useState(now.getFullYear());
-  const [data,    setData]    = useState(null);
-  const [loading, setLoading] = useState(false);
-  const [error,   setError]   = useState('');
+export default function TripRangeReportScreen({ navigation }) {
+  const today = new Date();
+  const monthAgo = new Date();
+  monthAgo.setMonth(monthAgo.getMonth() - 1);
+
+  const [fromDate, setFromDate] = useState(monthAgo);
+  const [toDate,   setToDate]   = useState(today);
+  const [data,     setData]     = useState(null);
+  const [loading,  setLoading]  = useState(false);
+  const [pdfLoading, setPdfLoading] = useState(false);
+  const [error,    setError]    = useState('');
 
   const getToken = async () => {
     const auth = getAuth();
@@ -32,9 +39,11 @@ export default function TripMonthlyReportScreen({ navigation }) {
     setError('');
     setData(null);
     try {
-      const token    = await getToken();
+      const token = await getToken();
+      const from  = toDateStr(fromDate);
+      const to    = toDateStr(toDate);
       const response = await fetch(
-        `${API.reports}/trips/monthly?month=${month}&year=${year}`,
+        `${API.reports}/trips/range?fromDate=${from}&toDate=${to}`,
         { headers: { 'Authorization': `Bearer ${token}` } }
       );
       const json = await response.json();
@@ -47,7 +56,23 @@ export default function TripMonthlyReportScreen({ navigation }) {
     }
   };
 
-  const years = [now.getFullYear() - 1, now.getFullYear()];
+  const handleDownloadPDF = async () => {
+    setPdfLoading(true);
+    try {
+      const from = toDateStr(fromDate);
+      const to   = toDateStr(toDate);
+      await downloadFile(
+        `${API.reports}/trips/range?fromDate=${from}&toDate=${to}&format=pdf`,
+        `trip-range-report-${from}-to-${to}.pdf`
+      );
+    } catch {
+      setError('Failed to download PDF.');
+    } finally {
+      setPdfLoading(false);
+    }
+  };
+
+  const rows = data?.rows || [];
 
   return (
     <View style={styles.wrapper}>
@@ -55,43 +80,25 @@ export default function TripMonthlyReportScreen({ navigation }) {
         <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
           <Text style={styles.backText}>← Back</Text>
         </TouchableOpacity>
-        <Text style={styles.title}>Monthly Trip Report</Text>
-        <Text style={styles.subtitle}>Employees facilitated per month</Text>
+        <Text style={styles.title}>Trip Range Report</Text>
+        <Text style={styles.subtitle}>Historical booking review</Text>
       </View>
 
       <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollContent}>
 
-        {/* Month selector */}
-        <Text style={styles.sectionLabel}>Select Month</Text>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.monthScroll}>
-          {MONTHS.map((m, i) => (
-            <TouchableOpacity
-              key={m}
-              style={[styles.monthChip, month === i + 1 && styles.monthChipSelected]}
-              onPress={() => setMonth(i + 1)}
-            >
-              <Text style={[styles.monthChipText, month === i + 1 && styles.monthChipTextSelected]}>
-                {m.slice(0, 3)}
-              </Text>
-            </TouchableOpacity>
-          ))}
-        </ScrollView>
-
-        {/* Year selector */}
-        <Text style={styles.sectionLabel}>Year</Text>
-        <View style={styles.yearRow}>
-          {years.map(y => (
-            <TouchableOpacity
-              key={y}
-              style={[styles.yearChip, year === y && styles.yearChipSelected]}
-              onPress={() => setYear(y)}
-            >
-              <Text style={[styles.yearChipText, year === y && styles.yearChipTextSelected]}>
-                {y}
-              </Text>
-            </TouchableOpacity>
-          ))}
-        </View>
+        {/* Past dates only — no future range for a historical review report */}
+        <DatePickerField
+          label="From"
+          value={fromDate}
+          onChange={setFromDate}
+          maximumDate={new Date()}
+        />
+        <DatePickerField
+          label="To"
+          value={toDate}
+          onChange={setToDate}
+          maximumDate={new Date()}
+        />
 
         <TouchableOpacity
           style={[styles.fetchBtn, loading && styles.btnDisabled]}
@@ -112,24 +119,41 @@ export default function TripMonthlyReportScreen({ navigation }) {
 
         {data && (
           <>
-            <View style={styles.summaryBox}>
-              <Text style={styles.summaryTitle}>{MONTHS[month - 1]} {year}</Text>
-              <Text style={styles.summaryCount}>{data.totalFacilitated} employees facilitated</Text>
+            <View style={styles.totalBox}>
+              <Text style={styles.totalText}>
+                {data.fromDate || 'earliest'} to {data.toDate} · {rows.length} booking{rows.length !== 1 ? 's' : ''}
+              </Text>
             </View>
 
-            {(data.rows || []).length === 0 ? (
+            <TouchableOpacity
+              style={[styles.pdfBtn, pdfLoading && styles.btnDisabled]}
+              onPress={handleDownloadPDF}
+              disabled={pdfLoading}
+            >
+              {pdfLoading
+                ? <ActivityIndicator size="small" color="#ffffff" />
+                : <Text style={styles.pdfBtnText}>📄 Download PDF</Text>
+              }
+            </TouchableOpacity>
+
+            {rows.length === 0 ? (
               <View style={styles.emptyState}>
                 <Text style={styles.emptyIcon}>🚌</Text>
-                <Text style={styles.emptyText}>No trips recorded for this month</Text>
+                <Text style={styles.emptyText}>No confirmed bookings for this range</Text>
               </View>
             ) : (
-              (data.rows || []).map((row, i) => (
-                <View key={i} style={styles.card}>
+              rows.map((row, i) => (
+                <View key={row.id || i} style={styles.card}>
                   <View style={styles.cardHeader}>
                     <Text style={styles.cardDate}>{row.tripDate}</Text>
-                    {row.returnTrip === 'Yes' && (
+                    {row.returnTrip && (
                       <View style={styles.returnBadge}>
                         <Text style={styles.returnBadgeText}>↩ Return</Text>
+                      </View>
+                    )}
+                    {row.referralConfirmed && (
+                      <View style={styles.referralBadge}>
+                        <Text style={styles.referralBadgeText}>Referral</Text>
                       </View>
                     )}
                   </View>
@@ -163,27 +187,6 @@ const styles = StyleSheet.create({
   subtitle:  { fontSize: 13, color: '#718096', marginTop: 2 },
   scroll:        { flex: 1 },
   scrollContent: { padding: 16, gap: 12 },
-  sectionLabel: {
-    fontSize: 12, fontWeight: '700', color: '#4a5568',
-    textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 8,
-  },
-  monthScroll: { marginBottom: 4 },
-  monthChip: {
-    paddingHorizontal: 16, paddingVertical: 8, borderRadius: 20,
-    borderWidth: 1.5, borderColor: '#e2e8f0',
-    backgroundColor: '#ffffff', marginRight: 8,
-  },
-  monthChipSelected:     { backgroundColor: '#3182ce', borderColor: '#3182ce' },
-  monthChipText:         { fontSize: 13, fontWeight: '600', color: '#4a5568' },
-  monthChipTextSelected: { color: '#ffffff' },
-  yearRow: { flexDirection: 'row', gap: 12, marginBottom: 4 },
-  yearChip: {
-    paddingHorizontal: 24, paddingVertical: 10, borderRadius: 8,
-    borderWidth: 1.5, borderColor: '#e2e8f0', backgroundColor: '#ffffff',
-  },
-  yearChipSelected:     { backgroundColor: '#3182ce', borderColor: '#3182ce' },
-  yearChipText:         { fontSize: 14, fontWeight: '600', color: '#4a5568' },
-  yearChipTextSelected: { color: '#ffffff' },
   fetchBtn: {
     backgroundColor: '#3182ce', borderRadius: 8,
     paddingVertical: 12, alignItems: 'center',
@@ -195,25 +198,35 @@ const styles = StyleSheet.create({
     borderLeftWidth: 3, borderLeftColor: '#fc8181',
   },
   errorText: { fontSize: 13, color: '#c53030' },
-  summaryBox: {
-    backgroundColor: '#ebf8ff', borderRadius: 10, padding: 16,
+  totalBox: {
+    backgroundColor: '#ebf8ff', borderRadius: 10, padding: 14,
     borderLeftWidth: 3, borderLeftColor: '#3182ce',
   },
-  summaryTitle: { fontSize: 15, fontWeight: '700', color: '#2b6cb0' },
-  summaryCount: { fontSize: 13, color: '#2b6cb0', marginTop: 2 },
+  totalText: { fontSize: 13, color: '#2b6cb0', fontWeight: '700' },
+  pdfBtn: {
+    backgroundColor: '#276749', borderRadius: 8,
+    paddingVertical: 12, alignItems: 'center',
+  },
+  pdfBtnText: { color: '#ffffff', fontWeight: '700', fontSize: 14 },
   card: {
     backgroundColor: '#ffffff', borderRadius: 10, padding: 14,
     shadowColor: '#000', shadowOpacity: 0.06, shadowRadius: 3,
     shadowOffset: { width: 0, height: 1 }, elevation: 2, gap: 4,
   },
-  cardHeader:   { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  cardDate:     { fontSize: 12, color: '#718096', fontWeight: '600' },
+  cardHeader:   { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  cardDate:     { fontSize: 12, color: '#718096', fontWeight: '600', flex: 1 },
   returnBadge: {
     backgroundColor: '#faf5ff', borderRadius: 8,
     paddingHorizontal: 8, paddingVertical: 2,
     borderWidth: 1, borderColor: '#d6bcfa',
   },
   returnBadgeText: { fontSize: 10, color: '#6b46c1', fontWeight: '600' },
+  referralBadge: {
+    backgroundColor: '#ebf8ff', borderRadius: 8,
+    paddingHorizontal: 8, paddingVertical: 2,
+    borderWidth: 1, borderColor: '#90cdf4',
+  },
+  referralBadgeText: { fontSize: 10, color: '#2b6cb0', fontWeight: '600' },
   cardName:        { fontSize: 14, fontWeight: '700', color: '#2d3748' },
   cardSub:         { fontSize: 12, color: '#718096' },
   cardDoctorRow:   { flexDirection: 'row', gap: 12, marginTop: 4 },

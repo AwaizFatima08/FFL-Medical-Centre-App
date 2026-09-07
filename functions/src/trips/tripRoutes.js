@@ -43,9 +43,17 @@ const STATUS = {
 };
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
+// Phase 10 fix — also enforces isActive, closing the same gap fixed in
+// authRoutes.js's verifyRole for reportRoutes.js/employeeRoutes.js. This
+// file has its own local role-check pattern rather than importing that
+// shared middleware, so the fix has to be repeated here (same as
+// ambulanceRoutes.js, same session). Every route in this file calls
+// getUserRole(uid) as the first thing after extracting uid, so this one
+// change protects the whole file — no route bodies needed touching.
 async function getUserRole(uid) {
   const doc = await db.collection('users').doc(uid).get();
   if (!doc.exists) throw new Error('User not found');
+  if (doc.data().isActive !== true) throw new Error('Account is disabled or not yet active');
   return doc.data().role;
 }
 
@@ -87,11 +95,6 @@ router.post('/book', async (req, res) => {
     if (!pickupHouse?.trim()) return res.status(400).json({ success: false, message: 'Pickup house is required' });
     if (!patientName?.trim()) return res.status(400).json({ success: false, message: 'Patient name is required' });
 
-    // Phase 11 review, Day 22 — relation is no longer free-form. Self needs
-    // nothing further; Spouse/Son/Daughter must point at a real, validated,
-    // active family record belonging to this employee — otherwise the whole
-    // point of linking bookings to real family data is just cosmetic on the
-    // frontend and bypassable by anyone calling this route directly.
     if (!VALID_RELATIONS.includes(patientRelation)) {
       return res.status(400).json({
         success: false,
@@ -110,12 +113,6 @@ router.post('/book', async (req, res) => {
         });
       }
 
-      // Corrected same session as the frontend fix — familyMembers is a
-      // top-level collection keyed by its own doc id, with an `employeeId`
-      // field holding the owning employee's Auth uid. It is NOT a
-      // subcollection under employees/{id} (that path is a separate, dead
-      // route in employeeRoutes.js that nothing else reads from or writes
-      // to — see Command Board note for Phase 11).
       const memberDoc = await db.collection('familyMembers').doc(patientFamilyMemberId).get();
 
       if (!memberDoc.exists) {
@@ -135,9 +132,6 @@ router.post('/book', async (req, res) => {
       verifiedFamilyMemberId = patientFamilyMemberId;
     }
 
-    // If a doctor was picked from the directory (not typed manually),
-    // confirm they're actually Rahimyarkhan-based — same reasoning as the
-    // family-member check above: don't trust the frontend's own filter alone.
     if (doctorId) {
       const doctorDoc = await db.collection('doctorDirectory').doc(doctorId).get();
       if (!doctorDoc.exists) {
@@ -159,7 +153,6 @@ router.post('/book', async (req, res) => {
       });
     }
 
-    // Validate trip date is Mon/Wed/Sat
     const [year, month, day] = tripDate.split('-').map(Number);
     const dayOfWeek = new Date(year, month - 1, day).getDay();
     if (![1, 3, 6].includes(dayOfWeek)) {
@@ -169,7 +162,6 @@ router.post('/book', async (req, res) => {
       });
     }
 
-    // Check employee doesn't already have an active booking for this date
     const existing = await db.collection('tripBookings')
       .where('bookedBy', '==', uid)
       .where('tripDate', '==', tripDate)
@@ -183,7 +175,6 @@ router.post('/book', async (req, res) => {
       });
     }
 
-    // Check seat availability
     const confirmedSeats = await getConfirmedSeats(tripDate);
     if (confirmedSeats + seatCount > SEAT_CAP) {
       const seatsLeft = SEAT_CAP - confirmedSeats;
@@ -224,7 +215,6 @@ router.post('/book', async (req, res) => {
 
     const ref = await db.collection('tripBookings').add(booking);
 
-    // ── Notify all active reception staff of new booking ──────────────────────
     try {
       const receptionSnap = await db.collection('users')
         .where('role', '==', ROLES.RECEPTION)
@@ -372,7 +362,6 @@ router.post('/:id/confirm', async (req, res) => {
       return res.status(400).json({ success: false, message: `Cannot confirm a booking with status: ${booking.status}` });
     }
 
-    // Re-check seat availability at confirm time
     const confirmedSeats = await getConfirmedSeats(booking.tripDate);
     const requestedSeats = booking.seats || 1;
     if (confirmedSeats + requestedSeats > SEAT_CAP) {
@@ -391,7 +380,6 @@ router.post('/:id/confirm', async (req, res) => {
       confirmedBy: uid,
     });
 
-    // ── Notify employee their booking is confirmed ────────────────────────────
     await createNotification({
       recipientUid:  booking.bookedBy,
       recipientRole: ROLES.EMPLOYEE,
@@ -415,9 +403,6 @@ router.post('/:id/cancel', async (req, res) => {
     const { uid } = req.user;
     const role = await getUserRole(uid);
 
-    // Admin's trip access is read-only (Phase 11 review) — cancel intentionally
-    // left out of this list, unlike GET /all, /confirmedCount and /:id which
-    // admin still has for viewing.
     const allowed = [ROLES.EMPLOYEE, ROLES.RECEPTION];
     if (!allowed.includes(role)) {
       return res.status(403).json({ success: false, message: 'Access denied' });
@@ -435,10 +420,6 @@ router.post('/:id/cancel', async (req, res) => {
       return res.status(403).json({ success: false, message: 'You can only cancel your own bookings' });
     }
 
-    // Reception cancelling someone else's booking must give a reason — this
-    // is an internal record only, never shown verbatim to the employee (see
-    // the fixed notification text below). Employees cancelling their own
-    // booking need no reason — it's their own choice.
     if (role === ROLES.RECEPTION && !reason?.trim()) {
       return res.status(400).json({ success: false, message: 'A cancellation reason is required' });
     }
@@ -457,10 +438,6 @@ router.post('/:id/cancel', async (req, res) => {
       cancelReason:  role === ROLES.RECEPTION ? reason.trim() : null,
     });
 
-    // ── Notify employee only if cancelled by someone else (reception) ─────────
-    // Fixed, generic wording by design — the real reason stays internal on the
-    // booking record (cancelReason above), visible to reception/CMO only. The
-    // employee is pointed to a phone call rather than an automated explanation.
     if (booking.bookedBy !== uid) {
       await createNotification({
         recipientUid:  booking.bookedBy,

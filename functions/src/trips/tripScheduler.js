@@ -26,19 +26,26 @@ const sendTripReminders = async (event) => {
     for (const doc of snapshot.docs) {
       const booking = doc.data();
 
-      // Store reminder notification in Firestore
+      // Notification-debugging fix — this write previously used a
+      // completely different, older field schema (title/body/category/
+      // targetEmployeeId/sentBy/sentAt/whatsappDeferred) than every other
+      // notification write in the app. GET /my (notificationRoutes.js)
+      // filters on `recipientUid`, which this document never had — the
+      // reminder was written successfully every single trip day, but no
+      // employee ever actually saw it, silently, since this scheduler
+      // was written. `isRead` was also missing, so even a same-day
+      // partial fix wouldn't have let "mark all read" work on these.
+      // Rewritten to the same flat shape `fitnessScheduler.js` and every
+      // route-triggered notification already use.
       await db.collection('notifications').add({
-        title:              'Medical Trip Reminder',
-        body:               'Your medical trip to RYK departs today at 17:30 from Medical Centre. Please be ready at your pickup point.',
-        category:           'trip_reminder',
-        targetType:         'individual',
-        targetEmployeeId:   booking.bookedBy,
-        bookingId:          doc.id,
-        tripDate:           today,
-        sentBy:             'system',
-        sentByRole:         'system',
-        sentAt:             new Date().toISOString(),
-        whatsappDeferred:   true,
+        recipientUid:  booking.bookedBy,
+        recipientRole: 'employee',
+        title:         'Medical Trip Reminder',
+        body:          'Your medical trip to RYK departs today at 17:30 from Medical Centre. Please be ready at your pickup point.',
+        type:          'trip',
+        referenceId:   doc.id,
+        isRead:        false,
+        createdAt:     new Date().toISOString(),
       });
     }
 

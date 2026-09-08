@@ -2,7 +2,7 @@
 
 Companion to `COMMAND_BOARD.md`'s Phase 10 entry, same relationship `PHASE4_DESIGN.md` and `PHASE5_DESIGN.md` have to their phases. This file is the full record of every decision made while speccing the Reports module — every locked field, every rejected alternative, every open question. The Command Board only summarizes what shipped; this is where the "why" lives.
 
-**Status at time of writing: specs locked, nothing built yet.** This session was requirements discussion and two standalone bug fixes only. Build order for the 10 report screens below is not yet decided — that's the first task of the next session.
+**Status: CLOSED Day 24.** All 10 reports built and live-verified; Homi reviewed every report across two separate passes and confirmed each one working. This file's original Day 23 content (spec session — every locked field, filter, and open question) is preserved below unchanged. A new section, **"Build session (Day 24)"**, has been added after the report specs — it documents what actually happened once building started: bugs found, decisions made, deviations from spec, and the cross-cutting employee-deactivation work that grew out of Blood Donor Report. The "Open items carried into the next session" section at the bottom has been resolved in place, each item updated with its actual outcome rather than left as a stale open question.
 
 ---
 
@@ -282,6 +282,72 @@ patientName, employeeName (joined via `employeeNumber`), employeeNumber, relatio
 
 ---
 
+## Build session (Day 24)
+
+Everything below happened after this document's spec was locked — build order, decisions made mid-build, bugs found, and deviations from the spec above. The spec sections above are left exactly as they were written at lock time, including the parts later corrected here, so this file stays an honest record of what was decided when.
+
+### Build order
+
+Simplest-first, chosen and executed in this sequence: **Annual Fitness Report → Trip Day Report → Trip Range Report → Employee Chronic Disease Report → [Blood Donor Report attempted, deferred] → Feedback Report → Employee Report → Population Report → Family Report → Ambulance KPI Report → [deactivation cascade side-quest] → Blood Donor Report (finally built)**.
+
+### Report-by-report build notes
+
+**Annual Fitness Report.** Built as specced. One open finding on first live test: Department/Unit showed blank for 3 of 4 test employees. Employee number resolved correctly for all 4 (via the same join), which rules out a broken join — the live evidence points to a genuine data gap on those specific pre-fix test accounts, not a join bug. Deferred to fresh-data review rather than resolved outright; not yet re-confirmed either way.
+
+**Trip Day Report, Trip Range Report.** Built as specced. Both confirmed working in live review with no deviations.
+
+**Employee Chronic Disease Report.** Built as specced, confirmed working.
+
+**Blood Donor Report — first attempt.** Building the live-status filter required checking whether a donor's sponsoring employee was currently active. This surfaced that `employees` has **no `isActive` field of its own** — only the linked `users` document does. Rather than patch around this narrowly inside one report, Homi's explicit call was to treat it as its own real design discussion, deferring this report until that was resolved. See the "Employee deactivation cascade" section below for the full resolution; Blood Donor Report itself was finished only after that work was done.
+
+**Feedback Report.** Built as specced with one real deviation: the spec assumed "up to 9 parameters" and named 6 conditional ones, but the spec's own listed names (consultation, dental, laboratory, nursing, pharmacy, physiotherapy, xray) actually total 7 — confirmed against the real schema as 3 mandatory + 7 conditional = 10 total, not 9. Confirmed with Homi directly: build against the real 10, the doc's count label was simply wrong. A second deviation: the trend chart was specced assuming a charting library would be available, but none was confirmed present in the project. Rather than add a new dependency without checking, the trend chart was built as a plain-View grouped bar chart using only core React Native components — a bar per year, per month, not a smooth line. Functionally equivalent, visually different from what the spec implied. Can be upgraded later if a real charting library turns out to already be in the project.
+
+**Employee Report, Population Report, Family Report.** All three initially built joining `familyMembers` against `employees.id` (the `employees` collection's own auto-generated Firestore doc ID) instead of `employees.userId` (the real join key — `familyMembers.employeeId` stores the Auth UID, not the employees doc ID). This silently produced a family count of 0 in all three reports. Caught and fixed before any of the three were used for a real decision — `FamilyAdminReviewScreen.js`'s own existing code comment already stated the correct join key correctly, which is what surfaced the mistake on review of that file for an unrelated reason. Same shape of mistake as Phase 11's `familyMembers`-as-subcollection bug: the correct answer was already sitting in already-reviewed code, and the wrong assumption was made anyway. All three reports confirmed working after the fix. Population Report's figure 9 (marital status breakdown) was built company-wide rather than scoped to township residents — the spec numbered it standalone ("9.") rather than nested under the explicitly-grouped "5–8" township figures, which was the reasoning applied at build time, but this was never put to Homi as an explicit yes/no the way the ESB-bucket question below was. Flagged for awareness; the report passed review overall, but this specific assumption was never directly confirmed.
+
+Population Report figures 7 and 8 (age brackets, gender) named only management/non-management buckets in the spec, but employees actually have a third `employeeType` value, ESB. Confirmed with Homi directly: ESB gets its own third bucket in both figures, not folded into non-management.
+
+**Ambulance KPI Report.** Required its prerequisite — the `houseNumber` auto-lock — before the report itself could be finished. This is where the spec's still-open implementation question got resolved, and it turned out to be a bigger fork than the spec anticipated: the spec's phrasing ("auto-lock houseNumber... currently a free-text field on the ambulance request form") could have meant either adding a new dedicated field, or locking the existing `pickupLocation` field itself. These have very different operational consequences — `pickupLocation` is the field dispatch actually uses, and it's deliberately overridable today because a patient isn't always at their registered address. Locking it would have removed real dispatch flexibility. Resolved via a direct question to Homi: add a **new, separate** field, `houseNumber`, auto-locked and snapshotted server-side at request creation (both the self-request and reception-on-behalf paths, resolved server-side and never trusted from the client — same pattern already used for `employeeNumber`), and leave `pickupLocation` completely untouched. The report itself was then built exactly as specced, confirmed working.
+
+**Blood Donor Report — completed.** Once the deactivation cascade work (below) was done, this report was finished: reads `bloodDonorRegistry`, joins the employee side via `userId` (applying the same join-key lesson learned earlier this session), filters both entry types (employee-keyed and family-keyed) through the now-resolved active-status logic. Export kept as **both CSV and PDF** — the spec had assumed a switch to PDF-only per the universal rule, but Homi's direct call was to keep CSV too, since it's more flexible for downstream analysis. Confirmed working.
+
+### Employee deactivation cascade — grew out of Blood Donor Report, treated as its own mini-project
+
+Matching how Phases 4/5/6 grew from quick gap audits into full design sessions once a genuine gap turned up, this wasn't patched narrowly — it was worked through as a real, separate design discussion before Blood Donor Report was finished.
+
+**What already existed, confirmed by reading the actual code rather than assumed:** `users.isActive` was already toggleable via a "Disable Account"/"Re-enable Account" flow in `UserManagementScreen.js` (`authRoutes.js`'s `POST /disable-user`/`POST /enable-user`). `familyMembers.isActive` was already individually toggleable per member via `FamilyAdminReviewScreen.js`'s "Disable" flow, with a `disabledReason` of `deceased` or `divorced`. The actual gap was narrow: disabling an employee's account did not cascade to their family members at all.
+
+**Decisions confirmed directly with Homi, not assumed:**
+- Cascade should be a **stored write** (each family member's `isActive` physically flipped and tagged), not a live check computed at read time.
+- Re-enabling an employee should **automatically restore** the family members who were disabled by that specific cascade.
+
+**What was built:**
+- `POST /disable-user` now batch-disables every one of that employee's currently-active `familyMembers` in the same request, tagged `disabledReason: 'sponsor_deactivated'` — a value distinct from the existing `deceased`/`divorced` reasons an admin sets on an individual member, so the two can never be confused.
+- `POST /enable-user` reverses it symmetrically, restoring only members carrying that specific `sponsor_deactivated` tag — a genuinely deceased or divorced member stays disabled even if the sponsoring employee is later re-enabled.
+- Matched via `familyMembers.employeeId == uid`, the same query pattern `FamilyAdminReviewScreen.js` already used — confirmed correct, not re-derived from scratch.
+
+**A real security gap found and closed while building this, bigger than the cascade itself:** reading `authRoutes.js`'s `verifyRole` middleware (used across most of the backend) showed it checked role membership only — never `isActive`. A disabled account with an already-valid token, or anyone who managed to sign back in, could keep using any route built on that middleware; `POST /disable-user` only ever flipped a Firestore field, never touched the underlying Firebase Auth account. Fixed directly in `verifyRole`, which protects `reportRoutes.js` and `employeeRoutes.js`. Every other backend file turned out to have its **own separate**, standalone role-check pattern rather than importing that shared middleware, so each needed checking individually — this became a full audit, not a one-file fix:
+- `fitnessRoutes.js` and `notificationRoutes.js` — already had their own independent `authenticate` middleware that already checked `isActive`. No fix needed; verified by reading the actual code, not assumed.
+- `ambulanceRoutes.js`, `tripRoutes.js`, `directoryRoutes.js`, `circularRoutes.js` — each had a standalone `getUserRole(uid)` helper with no `isActive` check. Fixed in every case with a one-line addition inside that helper — every route in each file already called it first, so the fix protects the whole file with no other changes needed.
+- `availabilityRoutes.js` — its three write routes (`/update`, `/schedule-leave`, `/cancel-leave`) use the shared, now-fixed `verifyRole` and are protected. Its read-only `GET /all` uses `verifyToken` alone, with no role or `isActive` check at all. Left open deliberately — no write access, and doctor-availability status isn't sensitive information.
+- `vaccinationRoutes.js` — deliberately not audited; Vaccination is V2 scope, per Homi's explicit call.
+- `LoginScreen.js` was separately confirmed (by reading the actual file, not assumed) to already correctly block sign-in for a disabled account, checking `user.isActive` after authentication and signing the user back out with an "Account Pending" message if false. This means the `verifyRole`/`getUserRole` fixes above are defense-in-depth for an already-active session — closing the gap where someone is disabled *while* still logged in — not the primary access gate, which was already solid.
+
+**Retrofit to the four census reports:** Employee Report, Employee Chronic Disease Report, Population Report, and Family Report were all updated to filter on `activeUserMap[e.userId] === true` in addition to `isValidated` — a shared `getActiveUserMap(db)` helper added to `reportRoutes.js` for this, one `users` read reused across all four rather than duplicated per report. Deliberately **not** applied to the four historical/event-log reports in this batch (Trip Day/Range, Ambulance KPI, Annual Fitness, Feedback) — those record things that already happened, and filtering by an employee's *current* status would hide real past events and skew trend data (a resigned employee's completed fitness exam, or their historical KPI response times, are still real facts).
+
+**Two more bugs found and fixed while building this, both flagged clearly:**
+- `FamilyAdminReviewScreen.js`'s disabled-member badge was a two-way ternary — `deceased` vs. an unconditional "Divorced" for anything else. A member disabled via the new `sponsor_deactivated` cascade would have silently displayed as "Divorced," which is both factually wrong and could be genuinely upsetting to see next to, say, a child's name. Fixed to handle all three real values explicitly via a proper label map.
+- `UserManagementScreen.js`'s Disable/Enable confirmation dialogs said nothing about the cascade — an admin confirming "Disable Account" had no way to know family members would also be affected until after the fact, and there was no success feedback at all (only a failure alert existed). Fixed: both dialogs now mention the cascade upfront, and both actions now show a success message naming the affected family-member count — but only when it's greater than 0, so a driver or reception account with no family members stays quiet, and a married employee sees exactly what changed.
+
+### File cleanup — two passes
+
+**First pass:** `TripMonthlyReportScreen.js`, `EmployeeOnlyReportScreen.js`, `BloodGroupReportScreen.js` — all three confirmed orphaned (fully replaced, nothing in the hub or navigation still pointed to them) and deleted.
+
+**`/trips` orphan-route resolution.** `reportRoutes.js`'s general-purpose `GET /trips` (a date-range/month booking summary, distinct from `/trip-day` and `/trips/range`) was suspected orphaned but not confirmed until traced end-to-end: `TripReportScreen.js` (a separate operational trip-flow screen, not a Phase 10 report) turned out to call `${API.trips}/all`, which — confirmed via `api.js` — resolves to an entirely different Cloud Function (`tripRoutes.js`'s own, unrelated `GET /all`), not `reportRoutes.js`'s `/trips` at all, despite the similarly-named paths. With that ruled out, and no report screen (old or new) calling it either, `GET /trips` was confirmed genuinely orphaned and removed, along with its only-used-there `dayOfWeekFrom` helper (dead once its only caller was gone).
+
+**Second pass, held back deliberately:** `PopulationReportScreen.js` was left in place, along with its two `AppNavigator.js` nav entries (`TownshipReport`/`NonTownshipReport`), as a fallback until Employee Report and Population Report were both independently confirmed working in live review — not deleted at the same time as the other three, since those two new reports hadn't been tested yet at that point. Deleted, along with both nav entries, once that confirmation came in.
+
+---
+
 ## Explicitly out of scope for this phase (V2 or later)
 
 - **residentGuests** (Employee Report) — no capture flow exists; deferred alongside the original V2 backlog item for non-entitled resident relatives.
@@ -289,10 +355,12 @@ patientName, employeeName (joined via `employeeNumber`), employeeNumber, relatio
 
 ---
 
-## Open items carried into the next session
+## Open items — resolved
 
-1. **Family Report's multiple-spouse handling** (mirroring the children collapsible pattern) was proposed but never explicitly confirmed — needs a yes/no before this report is built.
-2. **Ambulance KPI Report's houseNumber auto-lock**: snapshot-at-creation vs. live-lookup-at-report-time is not yet decided. This blocks the ambulance request form change (a prerequisite for the report itself, not part of the report screen).
-3. **Blood Donor Report's CSV-to-PDF export switch** — not explicitly confirmed as acceptable; the old screen's CSV export may serve a downstream consumer not reviewed this session.
-4. **Build order across all 10 reports** — not decided. Next session should open with this.
-5. **`SCHEMA_REFERENCE.md` updates outstanding** (doc-only, no code involved): add `employees.dateOfBirth` (timestamp), `employees.gender` / `familyMembers.gender` (string), and `ambulanceRequests.falseEmergencyFlag`/`falseEmergencyFlaggedAt`/`falseEmergencyFlaggedBy` (all three already live, none currently documented).
+All five items below were open at the end of the Day 23 spec session. Each is resolved as of the Day 24 build session; see "Build session" above for full detail on each.
+
+1. ~~Family Report's multiple-spouse handling (mirroring the children collapsible pattern) was proposed but never explicitly confirmed~~ — **Resolved:** confirmed, same collapsible pattern as children, extending it for the same reason it was proposed (Pakistani family law permits up to four wives).
+2. ~~Ambulance KPI Report's houseNumber auto-lock: snapshot-at-creation vs. live-lookup-at-report-time~~ — **Resolved:** new, separate, auto-locked field, snapshotted server-side at request creation on both the self-request and reception-on-behalf paths. `pickupLocation` deliberately left untouched and still overridable — see the build-session note above for the real design fork this turned out to be.
+3. ~~Blood Donor Report's CSV-to-PDF export switch — not explicitly confirmed as acceptable~~ — **Resolved:** keep both CSV and PDF, not a switch. Homi's direct call — CSV is more flexible for downstream analysis.
+4. ~~Build order across all 10 reports — not decided~~ — **Resolved:** simplest-first; actual sequence documented under "Build order" above.
+5. ~~`SCHEMA_REFERENCE.md` updates outstanding~~ — **Resolved:** done as part of the Day 24 schema revision, along with everything else that came out of the build session itself (`ambulanceRequests.houseNumber`, the `familyMembers.disabledReason`/`reEnabledAt`/`reEnabledBy` additions, the `tripBookings` stale-note correction, and the full `isActive` enforcement writeup).

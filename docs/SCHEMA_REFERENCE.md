@@ -18,6 +18,15 @@ Generated from live production data review. This reflects the **actual** schema 
 
 **(3) Phase 12 (Fitness Scheduling) — closed.** No schema changes from Phase 12's own fix (a frontend-only History tab), but reviewing this collection surfaced that its field list below was itself incomplete: `cancelReason`, `cancelledAt`, `cancelledBy`, and `confirmedAt` are all real, live-written fields (`fitnessRoutes.js`'s cancel and confirm routes) that had never been documented here. Added below.
 
+**Day 24 revision note (Phase 10 build session — closed):** All 10 Phase 10 reports built, live-verified, and reviewed by Homi across two sessions. Several real schema-adjacent findings came out of the build itself, distinct from the pre-build spec session already reflected above (Day 23 additions). Summarized here; full detail in `COMMAND_BOARD.md`'s Phase 10 entry and `PHASE10_DESIGN.md`'s build-session addendum.
+
+- **`ambulanceRequests.houseNumber`** — new field, added this session. See its own entry below.
+- **`tripBookings`'s stale `medicalTrips` note — corrected.** The Day 13 note claiming `/trip-day`/`/trips/monthly`/`/trips` query a nonexistent `medicalTrips` collection was itself stale by this session — both `/trip-day` and the replacement for `/trips/monthly` (`/trips/range`) already correctly queried the real flat `tripBookings` collection. The third route, `reportRoutes.js`'s general `GET /trips`, was confirmed genuinely orphaned (traced end-to-end via `api.js` and `tripRoutes.js` — nothing in the app calls it) and removed this session, along with its only-used-there `dayOfWeekFrom` helper.
+- **`familyMembers.disabledReason`** gains a third real value, `sponsor_deactivated` — see the deactivation-cascade note under `familyMembers` below.
+- **Employee deactivation cascade — new, cross-cutting.** Disabling a `users` account (`POST /disable-user`) now cascades to disable that employee's family members too, and re-enabling reverses it. This surfaced from Blood Donor Report needing to check whether a donor's sponsoring employee was still active — no `isActive` field exists directly on `employees`, only on the linked `users` doc. Full detail under `users` and `familyMembers` below.
+- **`isActive` enforcement audited across every backend route file.** `authRoutes.js`'s shared `verifyRole` middleware previously checked role membership only, never `isActive` — meaning a disabled account with a still-valid token could keep using any route built on that middleware. Fixed there (protects `reportRoutes.js`, `employeeRoutes.js`). Files with their own standalone role-check pattern needed the same fix repeated individually: `ambulanceRoutes.js`, `tripRoutes.js`, `directoryRoutes.js`, `circularRoutes.js`. `fitnessRoutes.js` and `notificationRoutes.js` already enforced this independently via their own `authenticate` middleware — no fix needed. `availabilityRoutes.js`'s write routes are protected (shared `verifyRole`); its read-only `GET /all` uses `verifyToken` alone — flagged as a minor, low-priority gap, left open. `vaccinationRoutes.js` intentionally not audited — V2 scope.
+- **Four census-shaped reports now filter on live employee status, not just `isValidated`:** Employee Report, Employee Chronic Disease Report, Population Report, Family Report all now exclude an employee whose linked `users.isActive` is `false`. Deliberately *not* applied to historical/event-log reports (Trip Day/Range, Ambulance KPI, Annual Fitness, Feedback) — those record things that already happened, and filtering by current status would hide real past events.
+
 ---
 
 ## Top-Level Collections
@@ -56,6 +65,7 @@ Generated from live production data review. This reflects the **actual** schema 
 | falseEmergencyFlag | boolean | **[Day 23, added]** set via a checkbox on the Drop Off action, only available for emergency-flagged requests (5.8.3) — real, live, fully built feature; simply never added to this table until a Phase 10 live-data review caught the gap |
 | falseEmergencyFlaggedAt | timestamp / null | **[Day 23, added]** |
 | falseEmergencyFlaggedBy | string (uid) / null | **[Day 23, added]** |
+| houseNumber | string / null | **[Day 24, new]** auto-locked snapshot of the requesting employee's `employees.houseNumber` at request creation — resolved server-side in `POST /request`, never trusted from the client, same pattern as `employeeNumber`. Deliberately separate from `pickupLocation` below, which stays free-text and overridable for real dispatch flexibility (a patient isn't always at their registered address). Powers Ambulance KPI Report's houseNumber column. Requests created before this fix have `houseNumber: null` — a permanent gap, no way to backfill |
 | notes | string / null | |
 | overriddenBy | string / null | initialized on every request but never set by any route — likely vestigial |
 | patientCondition | string | e.g. "chest pain" |
@@ -143,6 +153,8 @@ Single document holding shared dropdown option lists. Structure confirmed live, 
 
 Read access restricted to `doctor` / `cmo` / `reception` / `nurse` via Firestore rules — but in practice the Directory screen reads via the backend (`GET /blood-donors/:bloodGroup`), which uses the Admin SDK and bypasses this rule entirely. The rule matters for write access and for any future direct-client read.
 
+**[Day 24 — Blood Donor Report]** This collection is read passively, with no automatic cleanup when a donor (or their sponsoring employee) is deactivated or withdraws consent — a stale registry entry can outlive the person's actual eligibility. Blood Donor Report's backend route (`GET /blood-donors/report`) actively filters at read time rather than trusting the collection as-is: an employee-keyed entry is included only if that employee is `isValidated` and their linked `users.isActive` is `true`; a family-keyed entry additionally requires the family member's own record to be `isActive: true` and `status: "validated"`. Belt-and-suspenders by design — this guarantees the report's "who can actually be reached right now" promise regardless of whether some other cleanup mechanism exists elsewhere. Note the mismatch against the Firestore rule above: the rule doesn't list `admin_incharge`, but the report route (which uses the Admin SDK, bypassing the rule) does grant `admin_incharge` access, per the report's own spec — worth reconciling if this collection's rules are ever revisited.
+
 ## doctorAvailability
 
 | Field | Type | Notes |
@@ -213,6 +225,8 @@ Subcollection: `statusLog` — **[Day 13 correction]** confirmed live (previousl
 | roomNumber | string / null | pre-existing (signup) |
 | cityOfResidence | string / null | pre-existing (signup) |
 
+**[Day 24 — important]** `employees` has **no `isActive` field of its own.** Active/disabled status lives only on the linked `users` document (`users.isActive`, keyed by `employees.userId`) — a real gap discovered while building Blood Donor Report, which needed to check whether a donor's sponsoring employee was still active and had nothing on `employees` itself to check. Any future report or feature that needs "is this employee currently active" must join to `users` via `userId`, not look for a field directly on this collection. See `users` and `familyMembers` below for the disable/enable cascade this discovery led to.
+
 **[Day 14 note — still likely unused]** `emergencyPhoneNumber`, `landlineExtension` are still accepted by `PUT /:employeeId` but no screen collects them yet, same as the Day 13 note originally flagged — Phase 4 didn't address these.
 
 **[Day 14 note — status unclear, worth checking]** `communityGroup` (admin-only) is set via a separate route, `POST /validate/:employeeId`, which predates Phase 4 and was **not** touched this session. Phase 4's new approval flow (`POST /approve-user` + the profile-data `PUT`) does not call this route. Unclear whether anything currently calls `/validate/:employeeId` at all — worth confirming during Phase 5+ rather than assuming it's still part of the live approval path.
@@ -250,11 +264,17 @@ Read/write restricted to `admin_incharge` and `cmo` only, enforced at the Firest
 | status | string | "validated" / "pending" / "rejected" |
 | updatedAt | timestamp | |
 | bloodDonorConsent | boolean | **[Day 14]** self-editable (no admin review), disabled for members under 18; feeds `bloodDonorRegistry` (family-keyed entry) |
-| disabledReason | string / null | **[Day 14]** `deceased` / `divorced` — spouse only; children only ever get `deceased`; set when admin disables the member |
+| disabledReason | string / null | **[Day 14; Day 24 addition]** `deceased` / `divorced` — spouse only; children only ever get `deceased`; set when admin manually disables an individual member via `FamilyAdminReviewScreen.js`. **`sponsor_deactivated`** — **[Day 24, new]** — set instead when the member was disabled automatically because the *sponsoring employee's* `users` account was disabled (`authRoutes.js`'s `POST /disable-user` cascade), not because of anything specific to the member themselves. This distinction is what lets the re-enable cascade (`POST /enable-user`) restore only the members it disabled, leaving a genuinely deceased or divorced member untouched even if the sponsor is later re-enabled |
 | disabledAt | timestamp / null | **[Day 14]** |
-| disabledBy | string (uid) / null | **[Day 14]** admin who disabled the record |
+| disabledBy | string (uid) / null | **[Day 14]** admin who disabled the record — for a `sponsor_deactivated` entry, this is the admin who disabled the *employee's* account, not a per-member action |
+| reEnabledAt | timestamp / null | **[Day 24, new]** set only on members restored via the `sponsor_deactivated` re-enable cascade |
+| reEnabledBy | string (uid) / null | **[Day 24, new]** admin who re-enabled the sponsoring employee's account |
+
+**[Day 24 — new] Employee deactivation cascade.** `authRoutes.js`'s `POST /disable-user` and `POST /enable-user` (admin-only, toggle `users.isActive`) now cascade to this collection: disabling an employee batch-disables every one of their currently-active family members (tagged `disabledReason: 'sponsor_deactivated'`), and re-enabling restores only the members carrying that specific tag. Matched via `employeeId == uid`, the same join key as everywhere else in this collection — see the note directly below. This surfaced from Blood Donor Report needing a real "is this donor still reachable" check, and from discovering `employees` itself has no `isActive` field of its own (only the linked `users` doc does).
 
 **[Day 22 — important, read before touching this collection]** This is confirmed as a **top-level** collection — `employeeId` (a string holding the owning employee's Auth uid) is how a document is linked back to its employee, not collection nesting. This was gotten wrong mid-build during Phase 11 despite being correctly stated in this table all along: `employeeRoutes.js` has routes shaped `POST/GET/PUT /:employeeId/family-members` that write to and read from `employees/{employeeId}/familyMembers` as a **subcollection** — a completely different, empty location that nothing real populates. `EmployeeHome.js` queries this collection correctly (top-level, filtered by `employeeId`); `TripBookingScreen.js` initially did not, and was corrected once live data showed the subcollection route returning nothing despite real, validated family records existing. Treat those `employeeRoutes.js` subcollection routes as dead code, not a second valid access path, until someone investigates and either removes or repurposes them.
+
+**[Day 24 — same lesson, independently re-learned]** A closely related but distinct mistake happened again during Phase 10: `familyMembers.employeeId` holds the employee's Auth **UID**, not the `employees` collection's own auto-generated doc ID (`employees` docs are keyed by `db.collection('employees').doc()`, an unrelated random ID — the UID only lives inside the document as the `userId` field). Employee Report, Population Report, and Family Report were all initially built joining `familyMembers` against `employees.id` instead of `employees.userId`, which silently produced a family count of 0 everywhere. Caught and fixed same session, before any of the three reports were used for a real decision — `FamilyAdminReviewScreen.js`'s own code comment already stated this correctly, which is what caught the mistake on review. Worth remembering as a standing gotcha for this specific field, not just a one-time Phase 11 fix: `familyMembers.employeeId` = UID, always join via `employees.userId`, never `employees.id`.
 
 ## feedback
 
@@ -416,7 +436,9 @@ Trigger collection for the email extension (Firebase Send Email pattern).
 | status | string | "confirmed" |
 | tripDate | string | YYYY-MM-DD |
 
-**[Day 13 correction — important]** This is a **flat, top-level collection** — each document is a booking directly, confirmed live. `reportRoutes.js`'s trip report routes (`/trip-day`, `/trips/monthly`, `/trips`) instead query a `medicalTrips` collection with a `bookings` subcollection, which **does not exist in live Firestore**. Trip Day Report and Monthly Trip Report have almost certainly never returned real data (Phase 2 item, top priority).
+**[Day 13 correction — important; superseded, see Day 24 below]** This is a **flat, top-level collection** — each document is a booking directly, confirmed live. `reportRoutes.js`'s trip report routes (`/trip-day`, `/trips/monthly`, `/trips`) instead query a `medicalTrips` collection with a `bookings` subcollection, which **does not exist in live Firestore**. Trip Day Report and Monthly Trip Report have almost certainly never returned real data (Phase 2 item, top priority).
+
+**[Day 24 — this note was itself stale]** By the time Phase 10 built its reports, the claim above no longer held. `/trip-day` and `/trips/monthly`'s eventual full replacement, `/trips/range`, both already correctly queried the real flat `tripBookings` collection directly — the underlying Phase 2 bug this note describes had already been fixed at some earlier, unrecorded point. The third route, `reportRoutes.js`'s general-purpose `GET /trips` (a date-range/month summary with no single report screen behind it), was checked and confirmed genuinely orphaned this session — traced end-to-end through `api.js` and `tripRoutes.js`'s own separate `GET /all` (a different Cloud Function entirely, despite the similar name) — and removed, along with its only-used-there `dayOfWeekFrom` helper.
 
 **[Day 22 correction]** The line above used to end with "`tripBookings` has no `hospital` field — reports needing it must look it up via `doctorId` → `doctorDirectory.hospital`." That's no longer accurate. A locked design decision called for `hospital` to be saved as a snapshot at booking time, the same way `doctorName` already is — but `tripRoutes.js`'s `POST /book` was never updated to actually do it. The frontend (`TripBookingScreen.js`) had already been built to capture and send `hospital`; the backend silently dropped it on every submission, exactly the same shape of bug as `purposeOfVisit` in `feedback` (Day 21). Fixed this session. **Bookings created before this fix will have `hospital: null`** — there is no way to backfill it after the fact except by cross-referencing `doctorId` against `doctorDirectory.hospital`, which still works as a fallback for old records. Phase 10 (Reports) should prefer the snapshot on the booking itself for anything created after this fix, and fall back to the `doctorDirectory` lookup only for older bookings.
 
@@ -435,18 +457,26 @@ Trigger collection for the email extension (Firebase Send Email pattern).
 | approvedAt | timestamp | |
 | approvedBy | string (uid) | |
 | createdAt | timestamp | |
-| disabledAt | timestamp / null | set by `POST /disable-user` (admin only) |
+| disabledAt | timestamp / null | set by `POST /disable-user` (admin only). **[Day 24]** now also cascades: disables every one of this employee's currently-active `familyMembers` in the same batch — see `familyMembers.disabledReason` |
 | disabledBy | string (uid) / null | |
 | email | string | |
-| isActive | boolean | |
+| isActive | boolean | **[Day 24]** now genuinely enforced on every request, not just checked at login. Previously `authRoutes.js`'s shared `verifyRole` middleware checked role membership only — a disabled account with an already-valid token could keep passing any route built on that middleware. Fixed; see the standalone note below for which route files needed the same fix repeated and which already had it |
 | lastLoginAt | timestamp | |
 | onDuty | boolean | **[Day 16–17, new]** driver role only — set `true` on login, `false` on logout (`/update-last-login`, `/set-off-duty` in `authRoutes.js`). Powers ambulance auto-assign on dispatch (5.6.2) and the on-duty info box shown to reception |
 | phone | string | |
-| reEnabledAt | timestamp / null | set by `POST /enable-user` (admin only) |
+| reEnabledAt | timestamp / null | set by `POST /enable-user` (admin only). **[Day 24]** now also cascades: re-activates every `familyMembers` record disabled by this employee's own disable cascade (tagged `disabledReason: 'sponsor_deactivated'`) — never a member disabled for a genuine, unrelated reason like `deceased`/`divorced` |
 | reEnabledBy | string (uid) / null | |
 | role | string | "employee" / "reception" / etc. — **[Day 21]** also "dentist" / "physiotherapist" (Phase 9) — see `doctorAvailability` note above; these two are deliberately excluded from that collection |
 | roleChangedAt | timestamp / null | set by `POST /change-role` (admin only) |
 | roleChangedBy | string (uid) / null | |
+
+**[Day 24 — `isActive` enforcement audit]** Found while building Blood Donor Report: `authRoutes.js`'s shared `verifyRole` middleware never checked `isActive`, only role — a disabled account whose token was still valid (or who managed to sign back in — `LoginScreen.js` does correctly block sign-in on `isActive: false`, confirmed by reading that file directly) could keep using any route built on that middleware. Fixed in `verifyRole` itself, which protects `reportRoutes.js` and `employeeRoutes.js`. Every other backend file has its **own separate** role-check pattern rather than importing that shared middleware, so each needed checking individually:
+- **Already protected independently** — `fitnessRoutes.js`, `notificationRoutes.js` (both have their own `authenticate` middleware that already checked `isActive` before this audit; no changes needed).
+- **Fixed this session** — `ambulanceRoutes.js`, `tripRoutes.js`, `directoryRoutes.js`, `circularRoutes.js` (all had a standalone `getUserRole(uid)` helper with no `isActive` check; in every case, every route in the file calls that helper first, so a one-line fix inside the helper protects the whole file).
+- **Partially protected, known minor gap** — `availabilityRoutes.js`: its three write routes (`/update`, `/schedule-leave`, `/cancel-leave`) use the shared `verifyRole` and are protected; `GET /all` (read-only doctor-availability status) uses `verifyToken` alone. Left open — low-risk, no write access, and the information itself (which doctors are currently available) isn't sensitive.
+- **Not audited** — `vaccinationRoutes.js`, deliberately, since Vaccination is V2 scope.
+
+
 
 ## vaccinationRecords
 
@@ -502,4 +532,4 @@ Trigger collection for the email extension (Firebase Send Email pattern).
 
 ---
 
-*Generated Day 10, corrected Day 13 from live Firestore console screenshots reviewed in session, updated Day 14 from Phase 4 code + live testing screenshots, updated Day 22 from Phase 11/12 code + live testing (not full fresh re-exports — see each day's revision note above for basis). Update this file if the schema changes — treat as a living reference, not a locked spec.*
+*Generated Day 10, corrected Day 13 from live Firestore console screenshots reviewed in session, updated Day 14 from Phase 4 code + live testing screenshots, updated Day 22 from Phase 11/12 code + live testing, updated Day 24 from the Phase 10 build session (reports built, live-verified, employee deactivation cascade, `isActive` enforcement audit) — not full fresh re-exports, see each day's revision note above for basis. Update this file if the schema changes — treat as a living reference, not a locked spec.*

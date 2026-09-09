@@ -20,6 +20,13 @@
 // for a contracted provider, so it's skipped entirely for these two roles,
 // both in the UI and in the approval validation. Homi's call — no
 // over-engineering a fit where none exists.
+//
+// This revision: duplicate house/room number warning. GET /pending-users
+// now returns houseNumber/roomNumber plus duplicateAddressMatches (any
+// other employee — active, disabled, or pending — sharing that same
+// house/room number). Purely informational, never blocks Approve/Reject —
+// a shared address is often legitimate (e.g. a working couple in one
+// company house), so this is a judgment aid for the admin, not a rule.
 import React, { useState, useCallback } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity,
@@ -70,6 +77,15 @@ const DEPARTMENT_OPTIONS = [
 ];
 
 const ESB_DEPARTMENT_VALUE = DEPARTMENT_GROUPS.ESB.departments[0].value; // 'ESB'
+
+// This revision — human-readable labels for the status Chip inside each
+// duplicate-address match line.
+const ADDRESS_MATCH_STATUS_LABELS = {
+  active:   'active employee',
+  disabled: 'disabled account',
+  pending:  'also pending approval',
+  unknown:  'status unknown',
+};
 
 // Alert.alert is silent on Expo web — use window.confirm instead.
 // On native (Android/iOS) Alert.alert works normally.
@@ -405,6 +421,11 @@ export default function UserApprovalScreen({ navigation }) {
           const currentRole = roles[user.uid] || 'employee';
           const isLightweightRole = LIGHTWEIGHT_ROLES.includes(currentRole);
 
+          // This revision — duplicate address warning
+          const hasAddressMatch = user.duplicateAddressMatches && user.duplicateAddressMatches.length > 0;
+          const addressFieldLabel = user.houseNumber ? 'house number' : 'room number';
+          const addressValue = user.houseNumber || user.roomNumber;
+
           return (
             <View key={user.uid} style={styles.card}>
 
@@ -423,6 +444,11 @@ export default function UserApprovalScreen({ navigation }) {
                     <Text style={styles.submittedAt}>Submitted: {formatDate(user.createdAt)}</Text>
                   </View>
                   <View style={styles.cardHeaderRight}>
+                    {hasAddressMatch && (
+                      <View style={styles.addressBadge}>
+                        <Text style={styles.addressBadgeText}>⚠️ Address match</Text>
+                      </View>
+                    )}
                     <View style={styles.pendingBadge}>
                       <Text style={styles.pendingBadgeText}>Pending</Text>
                     </View>
@@ -442,6 +468,27 @@ export default function UserApprovalScreen({ navigation }) {
                       Call <Text style={styles.verifyBold}>{user.phoneNumber}</Text> to verify identity before approving.
                     </Text>
                   </View>
+
+                  {/* This revision — duplicate house/room number warning.
+                      Informational only, never blocks Approve/Reject —
+                      a shared address can be legitimate (e.g. a working
+                      couple in one company house), so this is a judgment
+                      aid for the admin, not a hard rule. */}
+                  {hasAddressMatch && (
+                    <View style={styles.addressWarningBox}>
+                      <Text style={styles.addressWarningIcon}>⚠️</Text>
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.addressWarningTitle}>
+                          Same {addressFieldLabel} ({addressValue}) already registered
+                        </Text>
+                        {user.duplicateAddressMatches.map((match) => (
+                          <Text key={match.employeeId} style={styles.addressWarningLine}>
+                            • {match.fullName} ({match.officialEmployeeNumber}) — {ADDRESS_MATCH_STATUS_LABELS[match.status] || match.status}
+                          </Text>
+                        ))}
+                      </View>
+                    </View>
+                  )}
 
                   <Text style={styles.roleLabel}>Assign Role</Text>
                   <View style={styles.roleGrid}>
@@ -689,6 +736,24 @@ const styles = StyleSheet.create({
   },
   pendingBadgeText: { fontSize: 11, color: '#92400e', fontWeight: '700' },
   chevron:          { fontSize: 12, color: '#a0aec0', marginTop: 4 },
+
+  // This revision — duplicate address badge (card header) + warning box
+  // (expanded panel). Red-toned, distinct from the amber Pending badge,
+  // since this is a "look closer" signal, not a status label.
+  addressBadge: {
+    backgroundColor: '#fed7d7', paddingHorizontal: 8,
+    paddingVertical: 3, borderRadius: 10,
+  },
+  addressBadgeText: { fontSize: 11, color: '#c53030', fontWeight: '700' },
+  addressWarningBox: {
+    flexDirection: 'row', alignItems: 'flex-start',
+    backgroundColor: '#fff5f5', borderRadius: 8,
+    padding: 12, marginBottom: 16,
+    borderLeftWidth: 3, borderLeftColor: '#e53e3e',
+  },
+  addressWarningIcon:  { fontSize: 16, marginRight: 8 },
+  addressWarningTitle: { fontSize: 13, fontWeight: '700', color: '#c53030', marginBottom: 4 },
+  addressWarningLine:  { fontSize: 12, color: '#742a2a', lineHeight: 18 },
 
   expandedPanel: { marginTop: 12 },
   divider:       { height: 1, backgroundColor: '#e2e8f0', marginBottom: 14 },

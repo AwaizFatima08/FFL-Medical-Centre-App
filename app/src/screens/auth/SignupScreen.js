@@ -29,12 +29,19 @@ import { webAlert } from '../../utils/webAlert';
 //  ever had a gender field, not a missing-wiring bug. Self-editable
 //  afterward via employeeRoutes.js PUT /:employeeId, same treatment as
 //  maritalStatus (never locked like cnic).
+//
+//  Logo fix (this revision): header logo swapped from the "FFL / MEDICAL
+//  CENTRE" text badge to the FFCL_Logo.png asset. Scope: this screen only
+//  (Login and any other screens are untouched, per explicit instruction).
+//  The logo block sits outside the STEP_ACCOUNT/STEP_IDENTITY/STEP_RESIDENCE
+//  conditionals, so this single swap covers all 3 steps — no duplication
+//  needed.
 // ─────────────────────────────────────────────────────────────
 import React, { useState, useRef } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, StyleSheet,
   StatusBar, KeyboardAvoidingView, Platform, ActivityIndicator,
-  ScrollView, Switch,
+  ScrollView, Switch, Image,
 } from 'react-native';
 import { createUserWithEmailAndPassword } from 'firebase/auth';
 import { auth } from '../../config/firebase';
@@ -348,17 +355,21 @@ export default function SignupScreen({ navigation }) {
       >
         {/* ── Header ── */}
         <View style={styles.header}>
-          <TouchableOpacity onPress={() => {
-            if (step === STEP_IDENTITY)  setStep(STEP_ACCOUNT);
-            else if (step === STEP_RESIDENCE) setStep(STEP_IDENTITY);
-            else navigation.goBack();
-          }}>
+          <TouchableOpacity
+            style={styles.backBtnWrapper}
+            onPress={() => {
+              if (step === STEP_IDENTITY)  setStep(STEP_ACCOUNT);
+              else if (step === STEP_RESIDENCE) setStep(STEP_IDENTITY);
+              else navigation.goBack();
+            }}
+          >
             <Text style={styles.backBtn}>← Back</Text>
           </TouchableOpacity>
-          <View style={styles.logoBox}>
-            <Text style={styles.logoText}>FFL</Text>
-            <Text style={styles.logoSub}>MEDICAL CENTRE</Text>
-          </View>
+          <Image
+            source={require('../../../assets/FFCL_Logo.png')}
+            style={styles.logoImage}
+            resizeMode="contain"
+          />
         </View>
 
         {/* ── Step Indicator ── */}
@@ -663,15 +674,16 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#003049' },
   scroll:    { flexGrow: 1, padding: 24, paddingTop: 48 },
 
-  header:    { flexDirection: 'row', alignItems: 'center', marginBottom: 24 },
-  backBtn:   { color: '#fdf0d5', fontSize: 15, fontWeight: '600', marginRight: 16 },
-  logoBox: {
-    width: 48, height: 48, borderRadius: 12,
-    backgroundColor: '#c1121f',
-    alignItems: 'center', justifyContent: 'center',
+  header: {
+    position: 'relative',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 24,
+    minHeight: 60,
   },
-  logoText: { color: '#fff', fontSize: 13, fontWeight: '900', letterSpacing: 1.5 },
-  logoSub:  { color: '#fff', fontSize: 4.5, fontWeight: '700', letterSpacing: 1 },
+  backBtnWrapper: { position: 'absolute', left: 0, top: 4, zIndex: 1 },
+  backBtn:   { color: '#fdf0d5', fontSize: 15, fontWeight: '600' },
+  logoImage: { width: 100, height: 100 },
 
   stepRow:        { flexDirection: 'row', alignItems: 'center', marginBottom: 4, paddingHorizontal: 40 },
   stepDot:        { width: 14, height: 14, borderRadius: 7, backgroundColor: '#334155' },

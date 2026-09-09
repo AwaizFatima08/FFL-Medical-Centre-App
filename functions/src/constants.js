@@ -1,4 +1,4 @@
-// app/src/constants.js
+// functions/src/constants.js
 // Fallback constants — dynamic lists managed in Firestore config/dropdowns
 
 // ─── ROLES ────────────────────────────────────────────────────────────────────

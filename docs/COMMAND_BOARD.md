@@ -28,6 +28,8 @@ Both fixes still need one follow-up whenever `SCHEMA_REFERENCE.md` is next touch
 
 Build order across the 10 specced reports: simplest-first, decided and fully executed Day 24 — see the Phase 10 entry below for the actual sequence used.
 
+**Note on this revision (Day 25):** Post-Phase-10 pre-launch hardening session, following directly from Day 24's data wipe and real-account creation. Four things closed: the signup-notification email was still hardcoded to a single dead `admin@ffl.com` address — fixed to dynamically notify every active `admin_incharge` account instead. That fix's own test then surfaced a genuinely broken SMTP setup (root cause: the Trigger Email extension's app password had never actually existed in Google's system — not a URI-encoding issue, which was ruled out first and wrongly suspected initially); fixed with a freshly generated, verified Gmail App Password, confirmed working end-to-end in both real admin inboxes. A new duplicate house/room-number warning was designed, built, and live-verified on the Pending Approvals screen — informational only, never blocks approval, since shared addresses are often legitimate (e.g. a working couple in one company house). SignupScreen's header branding swapped from a text placeholder to the real `FFCL_Logo.png` asset, centered and enlarged. Full detail in the new Pre-Launch Hardening section below. Several rounds of test accounts were created across this session's live verification — see the cleanup list at the end of that section, still pending removal.
+
 ---
 
 ## Quick Paths
@@ -42,6 +44,8 @@ Build order across the 10 specced reports: simplest-first, decided and fully exe
 *(unchanged — see repo history for full command list: dev server, deploy web/functions/rules, EAS build, backup script)*
 
 **Reminder added Day 14:** `firebase deploy --only firestore:rules` is a separate deploy from functions/hosting and is easy to forget — a rules-only fix (as happened this session with the blood donor registry bug) does nothing live until this runs.
+
+**Reminder added Day 25:** `authRoutes.js` deploys under the Cloud Function named **`auth`**, not `employees` — confirmed directly from a real `firebase deploy --only functions` log. The two are separate function groups; targeting the wrong one silently ships nothing. When unsure which function group a file belongs to, deploying all functions (`firebase deploy --only functions`, no target suffix) is the safer default over guessing a narrower one.
 
 ---
 
@@ -165,7 +169,6 @@ Originally scoped as a standard gap/bug audit. Live testing (screenshots coverin
 **Files touched across Phase 5 (final list):**
 `firestore.rules`; `functions/src/ambulance/ambulanceRoutes.js`; `functions/src/auth/authRoutes.js`; `functions/src/reports/reportRoutes.js`; `functions/src/constants.js` + `app/src/constants.js`; `app/src/screens/ambulance/AmbulanceRequestScreen.js`, `AmbulanceRequestReceptionScreen.js`, `AmbulanceReceptionHubScreen.js`, `AmbulanceRequestDetailScreen.js`, `MyAmbulanceRequestScreen.js`, `AmbulanceHistoryScreen.js` (new, 5.9), `AmbulanceCMOHistoryScreen.js` (new, 5.8.2); `app/src/screens/home/DriverHome.js`, `CMOHome.js`, `DoctorHome.js`; `app/src/navigation/AppNavigator.js`.
 
-### Phase 6 — Doctor Availability review
 ### Phase 6 — Doctor Availability review — **CLOSED Day 21**
 Started as a standard gap/bug audit. Live testing surfaced a real bug chain rooted in a single cause, and a follow-up conversation with Homi turned the back half of this phase into a genuine feature build (leave scheduling) plus two smaller enhancements discovered through testing the feature itself.
 
@@ -328,6 +331,31 @@ Small, contained review as expected — Homi confirmed other features already ch
 
 ---
 
+## Pre-Launch Hardening — Day 25
+
+Follows directly from Day 24's data wipe and real-account creation. Not a new phase — all 12 V1 phases stay closed — but real bugs and one real feature turned up during pre-launch verification of the two real admin accounts, so tracked here rather than left implicit.
+
+**Admin signup-notification routing — fixed:** `authRoutes.js`'s `POST /register` had sent the new-signup admin notification to a single hardcoded string, `'admin@ffl.com'`, since it was written — not a real, checked inbox. Fixed to query all active `admin_incharge` accounts at send time and notify every one of them, as an array passed to the `mail` collection's `to` field. Scoped to `ADMIN_INCHARGE` only, not `CMO` — confirmed by checking `POST /approve-user`/`POST /reject-user`, which only `ADMIN_INCHARGE` can actually call; notifying a role that can't act on the request would just be noise. Guards against the (currently impossible, but worth having) case of zero active admins by logging a warning instead of silently sending nowhere.
+
+**SMTP delivery — root cause found and fixed, genuinely verified working:** testing the routing fix above surfaced that email delivery itself was broken — every attempt failed with `535-5.7.8 Username and Password not accepted`. Two hypotheses were tried in order:
+- **First hypothesis (wrong, but worth recording so it isn't re-tried):** the SMTP connection URI embedded the sending Gmail address unencoded (`homi55@gmail.com` inside a `user:pass@host` URL, which itself contains an `@`). Percent-encoded to `homi55%40gmail.com` and redeployed — did not fix it. Ruled out cleanly: same error, same account, after the change.
+- **Actual root cause:** the app password in the URI had never existed in Google's system — confirmed directly via the account's own "App Passwords" page, which showed zero passwords ever created. 2-Step Verification was independently confirmed ON (since 2019), ruling that out as a contributing factor. A fresh App Password was generated and swapped in.
+- **Verified fixed, not just assumed** — confirmed at three separate levels on a real test signup: the `mail` document's `delivery.state` read `SUCCESS` with `error: null`; Gmail's own `info.accepted` listed both admin addresses; and the actual email was found sitting in both real inboxes (`homi55@gmail.com` directly, `humayun.shahzad@fatima-group.com` via a phone screenshot).
+- **Takeaway worth keeping:** this exact symptom (535 auth rejected) will look identical if the app password is ever revoked or regenerated in the future. Check the account's App Passwords list first before suspecting anything else.
+
+**New feature — duplicate house/room number warning on Pending Approvals:** built after Homi found 4 of his own test accounts had accidentally shared one house number, with nothing in the system to catch it. Deliberately informational, never blocking — a shared address is often legitimate (e.g. a married couple who are both employees, sharing one company house), so this is a judgment aid for the admin at approval time, not a hard rule. Design locked before building, two decisions confirmed directly with Homi: checks **both** `houseNumber` (family residents) and `roomNumber` (bachelor residents); matches against **any** other employee record regardless of status (active, disabled, or still pending) — resolved to a single query against the `employees` collection itself, since a doc only ever disappears via Reject, so every remaining doc is a real, current record of some status. `GET /pending-users` now returns `houseNumber`/`roomNumber`/`duplicateAddressMatches` (each match's name, employee number, and resolved status) per pending signup; `UserApprovalScreen.js` shows a red "⚠️ Address match" badge on the card plus a detail box listing every match when expanded. **Live-verified working correctly**, including a state-transition case not originally planned for: after approving one of two colliding pending signups, the *other* still-pending one correctly kept showing the warning against the now-active account — confirming the check genuinely spans all three statuses, not just a snapshot at query time. (One earlier round of testing appeared to show the badge failing to fire; root-caused to the test accounts already being approved and no longer in the pending pool by the time they were inspected — not a code bug. Worth remembering for future testing of this feature: it can only be observed on genuinely still-pending accounts.)
+
+**SignupScreen branding — logo swapped, centered, enlarged:** header's placeholder "FFL / MEDICAL CENTRE" text badge replaced with the real `FFCL_Logo.png` asset (`app/assets/FFCL_Logo.png`), sized up from 48×48 to 100×100, `resizeMode="contain"` so it can't distort. Back button moved to an absolutely-positioned top-left element so it no longer occupies row space and blocks the logo from truly centering. `borderRadius` deliberately dropped from the old style — it existed to crop a solid color box, and would risk clipping a real logo asset unless confirmed square. Scope confirmed explicitly limited to this one screen (not Login or any other header) — the block sits outside the 3-step conditionals, so one edit covers all 3 signup steps without duplication. **Not yet checked:** the logo file itself is 478 KB per the last hosting deploy log — likely an oversized/uncompressed source image being scaled down at display time, not actually broken, but worth compressing before Play Store submission for load-time reasons.
+
+**Files touched this session:** `functions/src/auth/authRoutes.js` (admin notification routing, `GET /pending-users` duplicate-address check); `app/src/screens/admin/UserApprovalScreen.js` (duplicate-address badge + detail box); `app/src/screens/auth/SignupScreen.js` (logo swap/center/enlarge). SMTP fix was Firebase Console configuration only (Trigger Email extension), no code touched.
+
+**Test accounts created during this session's live verification — pending cleanup, not yet done:**
+- Multiple rounds of duplicate-house-number test signups (various `FFL-00102`–`FFL-00106`-range employee numbers, `homi55.home@gmail.com`/`homitvaccouny@gmail.com`/`homisumaira@gmail.com`/`homi5@msn.com` and similar) — mix of approved-and-active and still-pending at time of writing; all need review and removal before launch, not just the ones still marked pending.
+- `homi55@gmail.com` itself — explicitly noted as a temporary admin account created only to test the Gmail-domain delivery path; per Homi's own earlier statement, this should be cleaned up once no longer needed for testing, not carried into launch as a real admin account.
+- Two genuinely-intended-to-stay accounts, not for cleanup: `humayun.shahzad@fatima-group.com` (FFL-00100, real `admin_incharge`) — this is Homi's real production account.
+
+---
+
 ## Design decisions — CLOSED, unchanged
 - [x] Header/logout layout — driver accepted as intentional one-off
 - [x] Employee pink tiles vs. white — kept as-is per Homi's stated priority (employee = actual customer, gets design investment)
@@ -337,6 +365,7 @@ Small, contained review as expected — Homi confirmed other features already ch
 - One issue at a time, full verification after each
 - Complete file replacements over partial edits remains the default; surgical edits only for genuinely minor single-line changes
 - **Added Day 14:** live-testing in rounds (build → test → fix → re-test) surfaced real bugs at every round in Phase 4, including a security issue in round 3 that wouldn't have been caught by code review alone — this round-based testing discipline is worth keeping for future phases, not just Phase 4
+- **Added Day 25:** when a live test appears to show a fix not working, check whether the test setup itself is still valid (e.g. test data already approved/moved out of the state being checked) before assuming the code is wrong — cost real back-and-forth this session on the duplicate-address feature, which turned out to be working correctly the whole time.
 
 ## Explicitly out of scope for V1
 - **Vaccination flow (full — catch-up, adult, nurse-driven).** As of Day 24 pre-launch review: **deliberately left unreviewed**, not overlooked — Homi's explicit call to hold this module out of every V1 review pass, including the `isActive`-enforcement audit (see Phase 10 entry) and the pre-launch data wipe (see below). Its current Firestore data (`vaccinationRecords`, `vaccinationReports`, `vaccineSchedule`) is treated the same as every other module's test data for wipe purposes, despite `vaccineSchedule` looking structural/config-like — none of it is being carried forward as real launch data. Whatever exists here at V2 kickoff should be treated as needing its own full review from scratch, not assumed current or trustworthy.
@@ -345,9 +374,13 @@ Small, contained review as expected — Homi confirmed other features already ch
 - Homecare Medical Services Requirement (logged to V2 backlog Day 14, concept only)
 - Any other new module or idea raised during this review, however small
 
-## Other pending (unchanged from before)
+## Other pending
 - ~~Notification debugging — deferred to final pre-production testing round.~~ **Resolved Day 24**, ahead of the pre-production round it was originally deferred to: audited all notification-sending code paths and found one real, silent bug — `tripScheduler.js`'s trip-day reminder wrote notifications in an old field schema (`targetEmployeeId` etc.) that predated the flat `recipientUid`/`type`/`isRead` shape every other notification write uses. `GET /my` filters on `recipientUid`, which those documents never had — the reminder had been silently failing to reach any employee since the scheduler was written, despite logging success. Fixed to match the standard schema. All other notification-sending code paths (Ambulance, Trip booking/confirm/cancel, Fitness scheduling + daily reminders, Circulars) confirmed correctly built. `availabilityScheduler.js` confirmed to intentionally send none. Phases 10, 11, and 12 all now closed (Day 24) — the full original "after Phases 10–12" trio is done.
-- **Pre-launch Firestore data wipe** — in progress Day 24. All current data across every collection is test data (per `SCHEMA_REFERENCE.md`'s standing note); before launch, everything gets cleared except one surviving admin account and the two structural config collections the app depends on to function (`config/dropdowns`, required; `vaccineSchedule` — despite looking structural, explicitly included in the wipe per Homi's call, since Vaccination is deliberately unreviewed V2 scope and nothing in it is trusted as real). Two real employee accounts to be created immediately after, specifically to give SMTP a real test — the earlier "dummy email, not a real bug" finding from the Phase 10 build session was never actually retested with real addresses.
+- ~~Pre-launch Firestore data wipe~~ — **complete as of Day 24**: all collections cleared except `config/dropdowns` (required) and the surviving admin account, per plan. Two real employee accounts then created specifically to give SMTP a genuine test — see Day 25 Pre-Launch Hardening section above for how that test actually went (found and fixed a real, previously-undiscovered SMTP failure, not just confirmed the earlier "dummy email" theory).
+- **Test-account cleanup** — new, Day 25. Several rounds of duplicate-house-number and SMTP-delivery test accounts now exist in live Firestore/Auth from this session's verification work. Full list in the Day 25 Pre-Launch Hardening section above. Needs a dedicated cleanup pass before launch, same as the Day 24 wipe — not yet scheduled.
+- **`FFCL_Logo.png` file size** — new, Day 25. 478 KB, confirmed from a real hosting deploy log — large for a header icon rendered at 100×100. Not broken, just worth compressing before Play Store submission.
+- **Firebase Extensions deprecation notice** — new, Day 25, noticed while fixing the SMTP config. Google states Firebase Extensions (which the Trigger Email extension the whole notification system depends on) will shut down March 31, 2027, with migration guidance promised "September 2026." Over a year out, not urgent, but the entire admin-notification-email system runs through this extension — worth a placeholder line on the long-term backlog so it isn't a surprise later. A "new version available" prompt on the same extension screen was deliberately left un-clicked this session, right after finally getting the current version working — revisit deliberately, not as a side effect of another fix.
+- **`firebase-functions` package outdated** — noticed in deploy logs across this session, not yet acted on. `npm install --save firebase-functions@latest` inside `functions/`, then redeploy to confirm nothing breaks. Low priority, just a nag warning, not a failure.
 
 ## Important Commands
 
@@ -364,8 +397,15 @@ npx expo export --platform web
 cd /mnt/storage/projects/ffl-medical-centre
 firebase deploy --only hosting
 
-# Functions Deploy
+# Functions Deploy — full, safe default when unsure which function group a file belongs to
 cd /mnt/storage/projects/ffl-medical-centre/functions
+firebase deploy --only functions
+
+# Functions Deploy — narrower, only when certain of the target
+# (confirmed Day 25 via a real deploy log: authRoutes.js lives under the
+# `auth` function, NOT `employees` — the two are separate Cloud Functions.
+# Guessing wrong here silently ships nothing.)
+firebase deploy --only functions:auth
 firebase deploy --only functions:employees
 
 # Firestore rules deploy (separate from the above — easy to forget)

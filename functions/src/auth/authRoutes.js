@@ -23,23 +23,6 @@ const verifyToken = async (req, res, next) => {
   }
 };
 
-// ─── MIDDLEWARE — VERIFY ROLE ────────────────────────────
-// Phase 10 fix — added an isActive check. Previously this middleware only
-// checked role membership; a disabled account (users.isActive: false,
-// set via POST /disable-user below) was NOT actually blocked here, only
-// flipped in Firestore. Since POST /disable-user never touches the
-// underlying Firebase Auth account (no admin.auth().updateUser disabled:
-// true call), a disabled user with an already-valid token — or anyone
-// able to sign back in before this fix — could keep passing every route
-// that only checked role. This is the middleware every report and
-// employee-management route runs through, so this one change closes the
-// gap there. It does NOT cover ambulanceRoutes.js, which has its own
-// separate inline role-check pattern (getUserRole() + manual array
-// checks) rather than importing this middleware — flagged as follow-up,
-// not fixed here. Whether trip/fitness/vaccination/feedback/etc. follow
-// the same shared-middleware pattern as this file or the standalone
-// pattern ambulanceRoutes.js uses is still unconfirmed — needs its own
-// review before assuming this fix is complete app-wide.
 const verifyRole = (allowedRoles) => {
   return async (req, res, next) => {
     try {
@@ -64,36 +47,6 @@ const verifyRole = (allowedRoles) => {
   };
 };
 
-// ─── POST /register ──────────────────────────────────────
-// Day 14 (Phase 4, Step C): cnic and maritalStatus added — captured at
-// signup per PHASE4_DESIGN.md §3. Both required, same as the other
-// identity fields below. cnic is admin-owned after this point (see
-// employeeRoutes.js PUT /:employeeId, Step A) — this is the only place
-// it's ever self-entered. maritalStatus stays employee-editable later.
-//
-// Day 22 (Phase 10 bug fix): dateOfBirth was captured by SignupScreen.js
-// Step 2 and sent in this route's request body from day one, but was
-// never destructured or written here — identical silent-drop shape to
-// the purposeOfVisit (Feedback, Day 21) and hospital (Trip Booking,
-// Phase 11) bugs. Fixed by adding it below, with the same required-field
-// treatment as cnic/maritalStatus/isSmoker (frontend already requires
-// it before submit; backend now enforces it too rather than silently
-// accepting its absence). Stored as a Firestore Timestamp, matching
-// familyMembers.dateOfBirth's type — SCHEMA_REFERENCE.md documents that
-// field as a timestamp, so employees.dateOfBirth is kept the same type
-// rather than left as the raw "YYYY-MM-DD" string the frontend sends,
-// to avoid two different types for the same kind of field across
-// collections. Employees who signed up before this fix have no
-// recoverable dateOfBirth — there is no source to backfill it from,
-// unlike hospital which could fall back to a doctorDirectory lookup.
-//
-// Phase 10 fix (Population Report): gender added, same required-field
-// treatment as dateOfBirth above. Unlike dateOfBirth, this is not a
-// silent-drop bug — no employee record has ever had a gender field
-// anywhere, so there was nothing to fix on the write side beyond adding
-// it fresh. Self-editable afterward via employeeRoutes.js
-// PUT /:employeeId, same treatment as maritalStatus — never locked
-// like cnic.
 router.post('/register', verifyToken, async (req, res) => {
   try {
     const db = admin.firestore();
@@ -101,11 +54,11 @@ router.post('/register', verifyToken, async (req, res) => {
       fullName,
       phoneNumber,
       employeeNumber,
-      dateOfBirth,     // ← Day 22, Phase 10 bug fix
-      gender,          // ← Phase 10 fix (Population Report)
-      cnic,           // ← Day 14, Step C
-      maritalStatus,  // ← Day 14, Step C
-      isSmoker,       // ← Day 14 fix #5
+      dateOfBirth,
+      gender,
+      cnic,
+      maritalStatus,
+      isSmoker,
       townshipResidentWithFamily,
       townshipResidentBachelor,
       residenceType,
@@ -118,9 +71,6 @@ router.post('/register', verifyToken, async (req, res) => {
       return errorResponse(res, 'fullName, phoneNumber, employeeNumber, dateOfBirth, gender, cnic, maritalStatus and isSmoker are required', 400);
     }
 
-    // Day 22 — validate the incoming "YYYY-MM-DD" string before conversion,
-    // so a malformed value fails loudly here rather than being silently
-    // stored as an Invalid Date timestamp.
     const parsedDob = new Date(dateOfBirth);
     if (isNaN(parsedDob.getTime())) {
       return errorResponse(res, 'dateOfBirth must be a valid date', 400);
@@ -138,8 +88,6 @@ router.post('/register', verifyToken, async (req, res) => {
       return errorResponse(res, 'Employee number already registered', 409);
     }
 
-    // Day 14, Step C — CNIC is identity data, same duplicate-guard treatment
-    // as employee number above.
     const cnicCheck = await db.collection('employees')
       .where('cnic', '==', cnic)
       .get();
@@ -165,16 +113,11 @@ router.post('/register', verifyToken, async (req, res) => {
       fullName,
       officialEmployeeNumber: employeeNumber,
       phoneNumber,
-      dateOfBirth:         admin.firestore.Timestamp.fromDate(parsedDob), // ← Day 22, Phase 10 bug fix
-      gender,              // ← Phase 10 fix (Population Report)
-      cnic,           // ← Day 14, Step C
-      maritalStatus,  // ← Day 14, Step C
-      isSmoker:            isSmoker === true, // ← Day 14 fix #5
-      // Day 14, Fix #2 — set explicitly at signup, not left undefined.
-      // A married-at-signup employee needs this set to 'needs_update' so
-      // they actually show up in admin's flagged-employee query later
-      // (Firestore's 'in' filter never matches a field that's simply
-      // missing from the document).
+      dateOfBirth:         admin.firestore.Timestamp.fromDate(parsedDob),
+      gender,
+      cnic,
+      maritalStatus,
+      isSmoker:            isSmoker === true,
       familyDataStatus:    maritalStatus === 'married' ? 'needs_update' : 'not_applicable',
       familyDataFlagNote:  null,
       isValidated:            false,
@@ -193,30 +136,43 @@ router.post('/register', verifyToken, async (req, res) => {
     await batch.commit();
 
     try {
-      await db.collection('mail').add({
-        to:      'admin@ffl.com',
-        message: {
-          subject: '🔔 New Signup Request — FFL Medical Centre',
-          html: `
-            <p>A new employee has registered and is awaiting your approval.</p>
-            <table style="border-collapse:collapse;font-family:sans-serif;font-size:14px;">
-              <tr><td style="padding:6px 12px;color:#555;">Name</td>
-                  <td style="padding:6px 12px;font-weight:bold;">${fullName}</td></tr>
-              <tr><td style="padding:6px 12px;color:#555;">Employee No.</td>
-                  <td style="padding:6px 12px;font-weight:bold;">${employeeNumber}</td></tr>
-              <tr><td style="padding:6px 12px;color:#555;">Phone</td>
-                  <td style="padding:6px 12px;">${phoneNumber}</td></tr>
-              <tr><td style="padding:6px 12px;color:#555;">Email</td>
-                  <td style="padding:6px 12px;">${req.user.email || '—'}</td></tr>
-              <tr><td style="padding:6px 12px;color:#555;">Submitted</td>
-                  <td style="padding:6px 12px;">${nowISO()}</td></tr>
-            </table>
-            <br/>
-            <p>Please open the <strong>FFL Medical Centre Admin Dashboard</strong>
-               and go to <strong>User Approvals</strong> to review this request.</p>
-          `,
-        },
-      });
+      const adminSnap = await db.collection('users')
+        .where('role', '==', ROLES.ADMIN_INCHARGE)
+        .where('isActive', '==', true)
+        .get();
+
+      const adminEmails = adminSnap.docs
+        .map(doc => doc.data().email)
+        .filter(email => !!email);
+
+      if (adminEmails.length === 0) {
+        console.warn('No active admin_incharge account with an email found — signup notification not sent.');
+      } else {
+        await db.collection('mail').add({
+          to: adminEmails,
+          message: {
+            subject: '🔔 New Signup Request — FFL Medical Centre',
+            html: `
+              <p>A new employee has registered and is awaiting your approval.</p>
+              <table style="border-collapse:collapse;font-family:sans-serif;font-size:14px;">
+                <tr><td style="padding:6px 12px;color:#555;">Name</td>
+                    <td style="padding:6px 12px;font-weight:bold;">${fullName}</td></tr>
+                <tr><td style="padding:6px 12px;color:#555;">Employee No.</td>
+                    <td style="padding:6px 12px;font-weight:bold;">${employeeNumber}</td></tr>
+                <tr><td style="padding:6px 12px;color:#555;">Phone</td>
+                    <td style="padding:6px 12px;">${phoneNumber}</td></tr>
+                <tr><td style="padding:6px 12px;color:#555;">Email</td>
+                    <td style="padding:6px 12px;">${req.user.email || '—'}</td></tr>
+                <tr><td style="padding:6px 12px;color:#555;">Submitted</td>
+                    <td style="padding:6px 12px;">${nowISO()}</td></tr>
+              </table>
+              <br/>
+              <p>Please open the <strong>FFL Medical Centre Admin Dashboard</strong>
+                 and go to <strong>User Approvals</strong> to review this request.</p>
+            `,
+          },
+        });
+      }
     } catch (mailErr) {
       console.warn('Admin email notification failed:', mailErr.message);
     }
@@ -232,22 +188,6 @@ router.post('/register', verifyToken, async (req, res) => {
   }
 });
 
-// ─── POST /confirm-profile ────────────────────────────────
-// Day 14 (Phase 4, Step B): repurposed from the old, unused /complete-profile
-// route. That route let an employee self-write cnic/designation/department/
-// bloodGroup/maritalStatus/houseNumber/etc in one unguarded call — but per
-// the Phase 4 design, admin enters that data (medical centre already holds
-// it), and the employee's only job post-approval is to CONFIRM it's correct
-// and set their blood donor consent. Nothing called the old route, so this
-// is a clean repurpose, not a breaking change.
-//
-// dataConfirmed must be explicitly true — this is the employee ticking
-// "I confirm the data above is correct" (see PHASE4_DESIGN.md §5).
-//
-// bloodDonorConsent write logic below intentionally mirrors employeeRoutes.js
-// PUT /:employeeId's blood donor registry handling — kept manually in sync
-// rather than extracted into a shared helper, to keep this file simple. If
-// you change one, check the other.
 router.post('/confirm-profile', verifyToken, async (req, res) => {
   try {
     const db = admin.firestore();
@@ -303,7 +243,6 @@ router.post('/confirm-profile', verifyToken, async (req, res) => {
   }
 });
 
-// ─── GET /me ─────────────────────────────────────────────
 router.get('/me', verifyToken, async (req, res) => {
   try {
     const db = admin.firestore();
@@ -337,12 +276,6 @@ router.get('/me', verifyToken, async (req, res) => {
   }
 });
 
-// ─── POST /update-last-login ──────────────────────────────
-// Day 16 (Phase 5, Step 5.6.1) — also marks a driver on-duty at login.
-// Only meaningful for the driver role; harmless no-op field for everyone
-// else. This is the natural, already-existing hook LoginScreen.js calls
-// right after every successful sign-in, so no new call site was needed on
-// the login side — only the off-duty counterpart below is new.
 router.post('/update-last-login', verifyToken, async (req, res) => {
   try {
     const db = admin.firestore();
@@ -361,11 +294,6 @@ router.post('/update-last-login', verifyToken, async (req, res) => {
   }
 });
 
-// ─── POST /set-off-duty ────────────────────────────────────
-// Day 16 (Phase 5, Step 5.6.1) — called by DriverHome.js immediately
-// before signOut, so the on-duty flag doesn't stay stuck true after a
-// driver logs out. Driver-only. Powers ambulance auto-assign
-// (ambulanceRoutes.js) and the on-duty info box shown to reception.
 router.post('/set-off-duty', verifyToken, async (req, res) => {
   try {
     const db = admin.firestore();
@@ -383,7 +311,19 @@ router.post('/set-off-duty', verifyToken, async (req, res) => {
   }
 });
 
-// ─── GET /pending-users ───────────────────────────────────
+// Address-duplicate check (this revision) — houseNumber (family
+// residents) or roomNumber (bachelor residents), whichever this signup
+// has, checked against every OTHER employee record for the same value.
+// This is informational only — never blocks approval — since a shared
+// address is often legitimate (e.g. a working couple sharing one
+// company house), not automatically a mistake. Deliberately queries
+// the `employees` collection directly rather than `users`: an employees
+// doc only ever disappears when POST /reject-user deletes it, so every
+// remaining doc — whether its account is active, disabled, or still
+// pending approval — is a real, current record. One query therefore
+// naturally covers all three statuses without three separate queries.
+// Status per match is resolved from the matched employee's own `users`
+// doc so the admin can see *why* it's flagged, not just that it matched.
 router.get('/pending-users', verifyToken, verifyRole([ROLES.ADMIN_INCHARGE, ROLES.CMO]), async (req, res) => {
   try {
     const db = admin.firestore();
@@ -405,6 +345,41 @@ router.get('/pending-users', verifyToken, verifyRole([ROLES.ADMIN_INCHARGE, ROLE
         .limit(1)
         .get();
       const empData = empSnap.empty ? {} : empSnap.docs[0].data();
+      const employeeId = empSnap.empty ? null : empSnap.docs[0].id;
+
+      let duplicateAddressMatches = [];
+      const addressField = empData.houseNumber ? 'houseNumber' : (empData.roomNumber ? 'roomNumber' : null);
+      const addressValue = addressField ? empData[addressField] : null;
+
+      if (addressField && addressValue) {
+        const dupSnap = await db.collection('employees')
+          .where(addressField, '==', addressValue)
+          .get();
+
+        const otherDocs = dupSnap.docs.filter(d => d.id !== employeeId);
+
+        duplicateAddressMatches = await Promise.all(otherDocs.map(async (dupDoc) => {
+          const dupData = dupDoc.data();
+          let status = 'unknown';
+          try {
+            const dupUserDoc = await db.collection('users').doc(dupData.userId).get();
+            if (dupUserDoc.exists) {
+              const dUserData = dupUserDoc.data();
+              status = !dUserData.approvedAt ? 'pending' : (dUserData.isActive ? 'active' : 'disabled');
+            }
+          } catch (_) {
+            // Leave status as 'unknown' — the match itself still matters
+            // even if the linked user lookup fails for some reason.
+          }
+
+          return {
+            employeeId:             dupDoc.id,
+            fullName:               dupData.fullName || '—',
+            officialEmployeeNumber: dupData.officialEmployeeNumber || '—',
+            status,
+          };
+        }));
+      }
 
       return {
         uid:                    userDoc.id,
@@ -415,7 +390,10 @@ router.get('/pending-users', verifyToken, verifyRole([ROLES.ADMIN_INCHARGE, ROLE
         fullName:               empData.fullName               || '—',
         officialEmployeeNumber: empData.officialEmployeeNumber || '—',
         phoneNumber:            empData.phoneNumber || userData.phone || '—',
-        employeeId:             empSnap.empty ? null : empSnap.docs[0].id,
+        employeeId,
+        houseNumber:             empData.houseNumber || null,
+        roomNumber:              empData.roomNumber || null,
+        duplicateAddressMatches,
       };
     }));
 
@@ -428,7 +406,6 @@ router.get('/pending-users', verifyToken, verifyRole([ROLES.ADMIN_INCHARGE, ROLE
   }
 });
 
-// ─── POST /approve-user ───────────────────────────────────
 router.post('/approve-user', verifyToken, verifyRole([ROLES.ADMIN_INCHARGE]), async (req, res) => {
   try {
     const db = admin.firestore();
@@ -470,13 +447,6 @@ router.post('/approve-user', verifyToken, verifyRole([ROLES.ADMIN_INCHARGE]), as
       });
     }
 
-    // Day 21+ (Phase 6 fix) — auto-create the doctorAvailability doc for
-    // doctor/CMO approvals, keyed by the doctor's own uid (never
-    // hand-typed, so it can't drift from the real uid the way the
-    // Jamil bug did). Only fires at initial approval — a later role
-    // change via /change-role is a known, accepted gap, not handled here
-    // per Phase 6 decision. If a doc already exists at this uid (e.g.
-    // re-approving after a disable/enable cycle), it's left untouched.
     if (role === ROLES.DOCTOR || role === ROLES.CMO) {
       const availRef = db.collection('doctorAvailability').doc(uid);
       const availSnap = await availRef.get();
@@ -510,7 +480,6 @@ router.post('/approve-user', verifyToken, verifyRole([ROLES.ADMIN_INCHARGE]), as
   }
 });
 
-// ─── POST /reject-user ────────────────────────────────────
 router.post('/reject-user', verifyToken, verifyRole([ROLES.ADMIN_INCHARGE]), async (req, res) => {
   try {
     const db = admin.firestore();
@@ -549,7 +518,6 @@ router.post('/reject-user', verifyToken, verifyRole([ROLES.ADMIN_INCHARGE]), asy
   }
 });
 
-// ─── GET /all-users ────────────────────────────────────────
 router.get('/all-users', verifyToken, verifyRole([ROLES.ADMIN_INCHARGE, ROLES.CMO]), async (req, res) => {
   try {
     const db = admin.firestore();
@@ -577,8 +545,6 @@ router.get('/all-users', verifyToken, verifyRole([ROLES.ADMIN_INCHARGE, ROLES.CM
         officialEmployeeNumber: empData.officialEmployeeNumber || '—',
         phoneNumber:            empData.phoneNumber || userData.phone || '—',
         employeeId:             empSnap.empty ? null : empSnap.docs[0].id,
-        // Day 14 fix #6 — surfaced here so Manage Users can flag it without
-        // an extra read per employee.
         correctionRequested:    empData.correctionRequested || false,
         correctionRequestNote:  empData.correctionRequestNote || null,
       };
@@ -593,18 +559,6 @@ router.get('/all-users', verifyToken, verifyRole([ROLES.ADMIN_INCHARGE, ROLES.CM
   }
 });
 
-// ─── POST /disable-user ───────────────────────────────────
-// Phase 10 — cascades to family members. Only family members currently
-// isActive:true get cascade-disabled, tagged with disabledReason:
-// 'sponsor_deactivated' — distinct from the 'deceased'/'divorced' reasons
-// FamilyAdminReviewScreen.js's individual-disable path uses. This
-// distinction is what lets POST /enable-user below correctly restore
-// only the family members disabled BECAUSE of this cascade, not someone
-// who happens to also be isActive:false for a real, permanent reason.
-// Matched by employeeId == uid — familyMembers.employeeId stores the
-// sponsoring employee's Auth UID (confirmed against
-// FamilyAdminReviewScreen.js's own query), not the employees
-// collection's own doc ID.
 router.post('/disable-user', verifyToken, verifyRole([ROLES.ADMIN_INCHARGE]), async (req, res) => {
   try {
     const db = admin.firestore();
@@ -661,14 +615,6 @@ router.post('/disable-user', verifyToken, verifyRole([ROLES.ADMIN_INCHARGE]), as
   }
 });
 
-// ─── POST /enable-user ─────────────────────────────────────
-// Phase 10 — re-enable cascade, symmetric with disable above. Only
-// restores family members whose disabledReason is specifically
-// 'sponsor_deactivated' — a family member disabled for their own reason
-// (deceased/divorced, via FamilyAdminReviewScreen.js) stays disabled
-// even if the sponsoring employee is later re-enabled. There's no
-// scenario where re-enabling an employee should undo a real-world death
-// or divorce record.
 router.post('/enable-user', verifyToken, verifyRole([ROLES.ADMIN_INCHARGE]), async (req, res) => {
   try {
     const db = admin.firestore();
@@ -728,7 +674,6 @@ router.post('/enable-user', verifyToken, verifyRole([ROLES.ADMIN_INCHARGE]), asy
   }
 });
 
-// ─── POST /change-role ─────────────────────────────────────
 router.post('/change-role', verifyToken, verifyRole([ROLES.ADMIN_INCHARGE]), async (req, res) => {
   try {
     const db = admin.firestore();
@@ -764,7 +709,6 @@ router.post('/change-role', verifyToken, verifyRole([ROLES.ADMIN_INCHARGE]), asy
   }
 });
 
-// ─── Export verifyToken & verifyRole for use in other routes
 module.exports = router;
 module.exports.verifyToken = verifyToken;
 module.exports.verifyRole  = verifyRole;

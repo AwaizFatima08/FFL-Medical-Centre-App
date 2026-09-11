@@ -52,7 +52,7 @@ router.get('/list', async (req, res) => {
 
   } catch (error) {
     console.error('Circulars list error:', error);
-    res.status(500).json({ success: false, message: 'Failed to load circulars', error: error.message });
+    res.status(500).json({ success: false, message: 'Failed to load circulars' });
   }
 });
 
@@ -117,7 +117,7 @@ router.post('/save', async (req, res) => {
 
   } catch (error) {
     console.error('Circular save error:', error);
-    res.status(500).json({ success: false, message: 'Failed to save circular', error: error.message });
+    res.status(500).json({ success: false, message: 'Failed to save circular' });
   }
 });
 
@@ -150,7 +150,7 @@ router.delete('/:id', async (req, res) => {
 
   } catch (error) {
     console.error('Circular delete error:', error);
-    res.status(500).json({ success: false, message: 'Delete failed', error: error.message });
+    res.status(500).json({ success: false, message: 'Delete failed' });
   }
 });
 

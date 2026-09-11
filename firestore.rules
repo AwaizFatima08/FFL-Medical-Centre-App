@@ -216,7 +216,16 @@ service cloud.firestore {
     }
 
     // ─── DOCTORS DIRECTORY ───────────────────────────────
-    match /doctorsDirectory/{entryId} {
+    // Renamed to match the actual collection name every backend route in
+    // directoryRoutes.js/tripRoutes.js/reportRoutes.js reads and writes
+    // ('doctorDirectory', singular) — this rule previously named
+    // 'doctorsDirectory' (with an s), which protected a collection
+    // nothing in the codebase ever touches. Harmless in practice since
+    // all access to this data goes through the Cloud Functions API
+    // (Admin SDK, which bypasses these rules entirely), but the rule
+    // should name the real collection in case direct client access is
+    // ever added.
+    match /doctorDirectory/{entryId} {
       allow read: if isAuthenticated();
       allow write: if isAnyRole(['doctor', 'cmo', 'nurse', 'reception']);
     }

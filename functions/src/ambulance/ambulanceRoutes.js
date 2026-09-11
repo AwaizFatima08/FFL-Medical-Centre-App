@@ -133,7 +133,7 @@ router.get("/on-duty-driver", async (req, res) => {
     res.json({ success: true, data: onDutyDriver });
   } catch (error) {
     console.error("Fetch on-duty driver error:", error);
-    res.status(500).json({ success: false, message: "Failed to fetch on-duty driver", error: error.message });
+    res.status(500).json({ success: false, message: "Failed to fetch on-duty driver" });
   }
 });
 
@@ -327,7 +327,7 @@ router.post('/request', async (req, res) => {
 
   } catch (error) {
     console.error('Submit request error:', error);
-    res.status(500).json({ success: false, message: 'Failed to submit request', error: error.message });
+    res.status(500).json({ success: false, message: 'Failed to submit request' });
   }
 });
 
@@ -363,7 +363,7 @@ router.get('/active', async (req, res) => {
 
   } catch (error) {
     console.error('Fetch active requests error:', error);
-    res.status(500).json({ success: false, message: 'Failed to fetch active requests', error: error.message });
+    res.status(500).json({ success: false, message: 'Failed to fetch active requests' });
   }
 });
 
@@ -440,7 +440,7 @@ router.get('/my-active', async (req, res) => {
 
   } catch (error) {
     console.error('Fetch my-active request error:', error);
-    res.status(500).json({ success: false, message: 'Failed to fetch your active request', error: error.message });
+    res.status(500).json({ success: false, message: 'Failed to fetch your active request' });
   }
 });
 
@@ -467,7 +467,7 @@ router.get('/:id', async (req, res) => {
 
   } catch (error) {
     console.error('Fetch request error:', error);
-    res.status(500).json({ success: false, message: 'Failed to fetch request', error: error.message });
+    res.status(500).json({ success: false, message: 'Failed to fetch request' });
   }
 });
 
@@ -541,7 +541,7 @@ router.post('/:id/accept', async (req, res) => {
 
   } catch (error) {
     console.error('Accept request error:', error);
-    res.status(500).json({ success: false, message: 'Failed to accept request', error: error.message });
+    res.status(500).json({ success: false, message: 'Failed to accept request' });
   }
 });
 
@@ -593,7 +593,7 @@ router.post('/:id/assign', async (req, res) => {
 
   } catch (error) {
     console.error('Assign driver error:', error);
-    res.status(500).json({ success: false, message: 'Failed to assign driver', error: error.message });
+    res.status(500).json({ success: false, message: 'Failed to assign driver' });
   }
 });
 
@@ -662,7 +662,7 @@ router.post('/:id/dispatch', async (req, res) => {
 
   } catch (error) {
     console.error('Dispatch error:', error);
-    res.status(500).json({ success: false, message: 'Failed to dispatch ambulance', error: error.message });
+    res.status(500).json({ success: false, message: 'Failed to dispatch ambulance' });
   }
 });
 
@@ -708,7 +708,7 @@ router.post('/:id/pickup', async (req, res) => {
 
   } catch (error) {
     console.error('Pickup error:', error);
-    res.status(500).json({ success: false, message: 'Failed to update pickup status', error: error.message });
+    res.status(500).json({ success: false, message: 'Failed to update pickup status' });
   }
 });
 
@@ -754,7 +754,7 @@ router.post('/:id/return', async (req, res) => {
 
   } catch (error) {
     console.error('Return error:', error);
-    res.status(500).json({ success: false, message: 'Failed to update return status', error: error.message });
+    res.status(500).json({ success: false, message: 'Failed to update return status' });
   }
 });
 
@@ -808,7 +808,7 @@ router.post('/:id/arrive', async (req, res) => {
 
   } catch (error) {
     console.error('Arrive error:', error);
-    res.status(500).json({ success: false, message: 'Failed to confirm arrival', error: error.message });
+    res.status(500).json({ success: false, message: 'Failed to confirm arrival' });
   }
 });
 
@@ -901,7 +901,7 @@ router.post('/:id/dropoff', async (req, res) => {
 
   } catch (error) {
     console.error('Dropoff error:', error);
-    res.status(500).json({ success: false, message: 'Failed to close drop-off', error: error.message });
+    res.status(500).json({ success: false, message: 'Failed to close drop-off' });
   }
 });
 
@@ -994,7 +994,7 @@ router.post('/:id/cancel', async (req, res) => {
 
   } catch (error) {
     console.error('Cancel error:', error);
-    res.status(500).json({ success: false, message: 'Failed to cancel request', error: error.message });
+    res.status(500).json({ success: false, message: 'Failed to cancel request' });
   }
 });
 
@@ -1024,7 +1024,7 @@ router.get('/driver/active', async (req, res) => {
 
   } catch (error) {
     console.error('Driver active trip error:', error);
-    res.status(500).json({ success: false, message: 'Failed to fetch active trip', error: error.message });
+    res.status(500).json({ success: false, message: 'Failed to fetch active trip' });
   }
 });
 

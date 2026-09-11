@@ -34,6 +34,7 @@ export default function NotificationScreen({ navigation }) {
   const [loading, setLoading]             = useState(true);
   const [refreshing, setRefreshing]       = useState(false);
   const [markingAll, setMarkingAll]       = useState(false);
+  const [loadError, setLoadError]         = useState(false);
 
   const getToken = async () => {
     const auth = getAuth();
@@ -49,9 +50,14 @@ export default function NotificationScreen({ navigation }) {
       const data = await response.json();
       if (response.ok) {
         setNotifications(data.data || []);
+        setLoadError(false);
+      } else {
+        setLoadError(true);
       }
     } catch (error) {
-      // Silent fail
+      // A network failure previously looked identical to "No notifications
+      // yet" — surfaced as a distinct error state instead.
+      setLoadError(true);
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -188,7 +194,15 @@ export default function NotificationScreen({ navigation }) {
           contentContainerStyle={styles.listContent}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
         >
-          {notifications.length === 0 ? (
+          {loadError ? (
+            <View style={styles.emptyState}>
+              <Text style={styles.emptyIcon}>⚠️</Text>
+              <Text style={styles.emptyTitle}>Couldn't Load Notifications</Text>
+              <Text style={styles.emptySubtitle}>
+                Check your connection and pull down to retry.
+              </Text>
+            </View>
+          ) : notifications.length === 0 ? (
             <View style={styles.emptyState}>
               <Text style={styles.emptyIcon}>🔔</Text>
               <Text style={styles.emptyTitle}>No notifications yet</Text>

@@ -31,13 +31,17 @@ const SERVICES = [
 
 const RELATIONS = ['Self', 'Spouse', 'Child', 'Parent', 'Other'];
 
-// ── Purpose of Visit — matches ambulance request flow exactly
+// ── Purpose of Visit — matches ambulance request flow exactly.
+// The lab option's key was 'laboratory' here but 'lab_sample' everywhere
+// else (ambulance requests, constants.js PURPOSE_OF_VISIT_OPTIONS), so
+// lab-related feedback was stored under a different enum value than
+// lab-related ambulance requests — fixed to the shared 'lab_sample' value.
 const PURPOSE_OF_VISIT = [
   { key: 'emergency',            label: 'Emergency',             icon: '🚨' },
   { key: 'routine_consultation', label: 'Routine Consultation',  icon: '🏥' },
   { key: 'physiotherapy',        label: 'Physiotherapy Visit',   icon: '🦴' },
   { key: 'dental',               label: 'Dental Treatment Visit',icon: '🦷' },
-  { key: 'laboratory',           label: 'Laboratory Sample',     icon: '🧪' },
+  { key: 'lab_sample',           label: 'Laboratory Sample',     icon: '🧪' },
 ];
 
 const SERVICE_QUESTIONS = {

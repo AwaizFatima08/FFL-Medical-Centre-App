@@ -4,7 +4,7 @@ const admin   = require('firebase-admin');
 const PDFDocument = require('pdfkit');
 const { Parser }  = require('json2csv');
 const { verifyToken, verifyRole } = require('../auth/authRoutes');
-const { successResponse, errorResponse } = require('../utils');
+const { successResponse, errorResponse, sanitizeCsvRow } = require('../utils');
 const {
   ROLES,
   AMBULANCE_STATUS,
@@ -542,9 +542,23 @@ router.get('/employees', verifyToken, verifyRole([
     let employees = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
     if (department) employees = employees.filter(e => e.department === department);
     if (bloodGroup)  employees = employees.filter(e => e.bloodGroup === bloodGroup);
-    const employeesWithFamily = await Promise.all(employees.map(async (emp) => {
-      const familySnapshot = await db.collection('employees').doc(emp.id).collection('familyMembers').get();
-      return { ...emp, familyMemberCount: familySnapshot.size };
+    // Was reading employees/{id}/familyMembers — a dead subcollection path
+    // (see /employees/report above), so familyMemberCount here always
+    // returned 0. Fixed to the same top-level `familyMembers` collection,
+    // fetched once and grouped by employeeId (== employees.userId), that
+    // /employees/report already uses correctly.
+    const familySnapshot = await db.collection('familyMembers').get();
+    const familyRelations = ['spouse', 'son', 'daughter'];
+    const familyCountByEmployee = {};
+    familySnapshot.docs.forEach(doc => {
+      const f = doc.data();
+      if (!familyRelations.includes((f.relation || '').toLowerCase())) return;
+      if (!f.isActive || f.status !== 'validated') return;
+      familyCountByEmployee[f.employeeId] = (familyCountByEmployee[f.employeeId] || 0) + 1;
+    });
+    const employeesWithFamily = employees.map(emp => ({
+      ...emp,
+      familyMemberCount: familyCountByEmployee[emp.userId] || 0,
     }));
     const summary = { total: employees.length, validated: employees.filter(e => e.isValidated).length,
       pending: employees.filter(e => !e.isValidated).length, bloodDonors: employees.filter(e => e.bloodDonorConsent).length,
@@ -1978,7 +1992,7 @@ router.get('/blood-donors/report', verifyToken, verifyRole([
       const parser = new Parser({
         fields: ['Donor Name', 'Employee Number', 'Relation', 'Age', 'Blood Group', 'Phone Number', 'Residential Status'],
       });
-      const csv = parser.parse(csvRows);
+      const csv = parser.parse(csvRows.map(sanitizeCsvRow));
       res.setHeader('Content-Type', 'text/csv');
       res.setHeader('Content-Disposition', 'attachment; filename="blood-donor-report.csv"');
       return res.send(csv);
@@ -2076,7 +2090,7 @@ router.get('/blood-groups/csv', verifyToken, verifyRole([
     const parser = new Parser({
       fields: ['Employee Number', 'Full Name', 'Blood Group', 'Phone Number', 'Department', 'Designation', 'Donor Consent'],
     });
-    const csv = parser.parse(rows);
+    const csv = parser.parse(rows.map(sanitizeCsvRow));
 
     res.setHeader('Content-Type', 'text/csv');
     res.setHeader('Content-Disposition', 'attachment; filename="blood-group-repository.csv"');

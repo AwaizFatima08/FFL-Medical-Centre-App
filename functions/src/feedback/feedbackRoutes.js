@@ -3,7 +3,7 @@ const express = require('express');
 const router = express.Router();
 const admin = require('firebase-admin');
 const { verifyToken, verifyRole } = require('../auth/authRoutes');
-const { successResponse, errorResponse, nowISO } = require('../utils');
+const { successResponse, errorResponse, nowISO, chunkArray } = require('../utils');
 const { ROLES } = require('../constants');
 
 const isValidRating = (r) => Number.isInteger(r) && r >= 1 && r <= 5;
@@ -192,9 +192,9 @@ router.get('/all', verifyToken, verifyRole([
     const availSnapshot = await db.collection('doctorAvailability').get();
     const doctorUserIds = availSnapshot.docs.map(doc => doc.id);
     let doctorNameMap = {};
-    if (doctorUserIds.length > 0) {
+    for (const chunk of chunkArray(doctorUserIds)) {
       const empSnapshot = await db.collection('employees')
-        .where('userId', 'in', doctorUserIds).get();
+        .where('userId', 'in', chunk).get();
       empSnapshot.docs.forEach(doc => {
         const data = doc.data();
         doctorNameMap[data.userId] = data.fullName || 'Unknown';
@@ -207,9 +207,9 @@ router.get('/all', verifyToken, verifyRole([
       const submitterIds = [...new Set(
         snapshot.docs.map(doc => doc.data().submittedBy).filter(Boolean)
       )];
-      if (submitterIds.length > 0) {
+      for (const chunk of chunkArray(submitterIds)) {
         const empSnapshot = await db.collection('employees')
-          .where('userId', 'in', submitterIds).get();
+          .where('userId', 'in', chunk).get();
         empSnapshot.docs.forEach(doc => {
           const data = doc.data();
           employeeNameMap[data.userId] = data.fullName || 'Unknown';
@@ -382,9 +382,9 @@ router.get('/suggestions/all', verifyToken, verifyRole([ROLES.CMO]),
         snapshot.docs.map(doc => doc.data().submittedBy).filter(Boolean)
       )];
       let nameMap = {};
-      if (submitterIds.length > 0) {
+      for (const chunk of chunkArray(submitterIds)) {
         const empSnapshot = await db.collection('employees')
-          .where('userId', 'in', submitterIds).get();
+          .where('userId', 'in', chunk).get();
         empSnapshot.docs.forEach(doc => {
           const data = doc.data();
           nameMap[data.userId] = data.fullName || 'Unknown';

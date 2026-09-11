@@ -26,7 +26,7 @@ import { API } from '../../config/api';
 import NotificationBell from '../../components/NotificationBell';
 import {
   EMPLOYEE_TYPES, DEPARTMENT_GROUPS, UNITS,
-  getDesignationsByType, BLOOD_GROUPS, CHRONIC_DISEASE_OPTIONS,
+  getDesignationsByType, BLOOD_GROUPS, CHRONIC_DISEASE_OPTIONS, CNIC_PATTERN,
 } from '../../constants';
 
 const ROLE_OPTIONS = [
@@ -338,6 +338,10 @@ export default function UserManagementScreen({ navigation }) {
   // ─── Day 14 fix #1 — save edited profile data ────────────────────────────
   const handleSaveProfile = async (employeeId, fullName) => {
     const profile = getProfile(employeeId);
+    if (profile.cnic && profile.cnic.trim() && !CNIC_PATTERN.test(profile.cnic.trim())) {
+      webAlert('Invalid CNIC', 'CNIC must be in the format 12345-1234567-1.');
+      return;
+    }
     webConfirm(
       'Save Changes',
       `Update employee profile data for ${fullName}?`,

@@ -25,6 +25,7 @@ import {
   MARITAL_STATUSES, EMPLOYMENT_STATUSES,
 } from '../../constants';
 import DatePickerField from '../../components/DatePickerField';
+import { CNIC_PATTERN } from '../../constants';
 
 function DropdownField({ label, value, options, onSelect, required, disabled }) {
   const [open, setOpen] = useState(false);
@@ -142,6 +143,10 @@ export default function FamilyMemberAddScreen({ navigation }) {
     if (!gender) { webAlert('Required', 'Please select gender.'); return false; }
     if (needsCnic && !cnic.trim()) {
       webAlert('Required', 'CNIC is mandatory for family members aged 18 and above.');
+      return false;
+    }
+    if (needsCnic && cnic.trim() && !CNIC_PATTERN.test(cnic.trim())) {
+      webAlert('Invalid CNIC', 'CNIC must be in the format 12345-1234567-1.');
       return false;
     }
     if (isAdult && !maritalStatus) {

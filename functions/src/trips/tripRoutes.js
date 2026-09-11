@@ -243,7 +243,7 @@ router.post('/book', async (req, res) => {
 
   } catch (error) {
     console.error('Trip book error:', error);
-    res.status(500).json({ success: false, message: 'Failed to submit booking', error: error.message });
+    res.status(500).json({ success: false, message: 'Failed to submit booking' });
   }
 });
 
@@ -267,7 +267,7 @@ router.get('/my', async (req, res) => {
 
   } catch (error) {
     console.error('Trip my bookings error:', error);
-    res.status(500).json({ success: false, message: 'Failed to load bookings', error: error.message });
+    res.status(500).json({ success: false, message: 'Failed to load bookings' });
   }
 });
 
@@ -288,7 +288,7 @@ router.get('/confirmedCount', async (req, res) => {
 
   } catch (error) {
     console.error('Confirmed count error:', error);
-    res.status(500).json({ success: false, message: 'Failed to get seat count', error: error.message });
+    res.status(500).json({ success: false, message: 'Failed to get seat count' });
   }
 });
 
@@ -313,7 +313,7 @@ router.get('/all', async (req, res) => {
 
   } catch (error) {
     console.error('Trip all error:', error);
-    res.status(500).json({ success: false, message: 'Failed to load bookings', error: error.message });
+    res.status(500).json({ success: false, message: 'Failed to load bookings' });
   }
 });
 
@@ -339,7 +339,7 @@ router.get('/:id', async (req, res) => {
 
   } catch (error) {
     console.error('Trip get error:', error);
-    res.status(500).json({ success: false, message: 'Failed to load booking', error: error.message });
+    res.status(500).json({ success: false, message: 'Failed to load booking' });
   }
 });
 
@@ -393,7 +393,7 @@ router.post('/:id/confirm', async (req, res) => {
 
   } catch (error) {
     console.error('Trip confirm error:', error);
-    res.status(500).json({ success: false, message: 'Failed to confirm booking', error: error.message });
+    res.status(500).json({ success: false, message: 'Failed to confirm booking' });
   }
 });
 
@@ -453,7 +453,7 @@ router.post('/:id/cancel', async (req, res) => {
 
   } catch (error) {
     console.error('Trip cancel error:', error);
-    res.status(500).json({ success: false, message: 'Failed to cancel booking', error: error.message });
+    res.status(500).json({ success: false, message: 'Failed to cancel booking' });
   }
 });
 

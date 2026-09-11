@@ -27,6 +27,7 @@ export default function DriverHome({ navigation }) {
   const [loading, setLoading]             = useState(true);
   const [refreshing, setRefreshing]       = useState(false);
   const [actionLoading, setActionLoading] = useState(false);
+  const [loadError, setLoadError]         = useState(false);
 
   const getToken = async () => {
     const auth = getAuth();
@@ -40,8 +41,18 @@ export default function DriverHome({ navigation }) {
         headers: { 'Authorization': `Bearer ${token}` },
       });
       const data = await response.json();
-      if (response.ok) setTrip(data.data || null);
-    } catch { /* silently fail */ }
+      if (response.ok) {
+        setTrip(data.data || null);
+        setLoadError(false);
+      } else {
+        setLoadError(true);
+      }
+    } catch {
+      // A network failure previously looked identical to "No Active Trip"
+      // — a driver who should be en route to an emergency dispatch had no
+      // way to tell a real outage apart from having no assignment.
+      setLoadError(true);
+    }
     finally { setLoading(false); setRefreshing(false); }
   };
 
@@ -109,12 +120,21 @@ export default function DriverHome({ navigation }) {
   };
 
   const renderNoTrip = () => (
-    <View style={styles.noTripContainer}>
-      <Text style={styles.noTripIcon}>🚐</Text>
-      <Text style={styles.noTripTitle}>No Active Trip</Text>
-      <Text style={styles.noTripSubtitle}>You will be notified when a trip is assigned</Text>
-      <Text style={styles.pullHint}>Pull down to refresh</Text>
-    </View>
+    loadError ? (
+      <View style={styles.noTripContainer}>
+        <Text style={styles.noTripIcon}>⚠️</Text>
+        <Text style={styles.noTripTitle}>Couldn't Load Trip Status</Text>
+        <Text style={styles.noTripSubtitle}>Check your connection and pull down to retry</Text>
+        <Text style={styles.pullHint}>Pull down to refresh</Text>
+      </View>
+    ) : (
+      <View style={styles.noTripContainer}>
+        <Text style={styles.noTripIcon}>🚐</Text>
+        <Text style={styles.noTripTitle}>No Active Trip</Text>
+        <Text style={styles.noTripSubtitle}>You will be notified when a trip is assigned</Text>
+        <Text style={styles.pullHint}>Pull down to refresh</Text>
+      </View>
+    )
   );
 
   const renderTrip = () => {

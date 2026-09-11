@@ -300,21 +300,21 @@ const styles = StyleSheet.create({
   headerRight: { flexDirection: 'row', alignItems: 'center', gap: 8 },
 
   // Web header: logo truly centered regardless of icon width, icons pinned top-right
-  headerRowWeb: {
+    headerRowWeb: {
     position: 'relative',
-    width: '100%', height: 140, marginBottom: 32,
+    width: '100%', height: 190, marginBottom: 32, paddingTop: 10,
     justifyContent: 'center', alignItems: 'center',
   },
-  headerLogoWeb: { width: 300, height: 300 },
+  headerLogoWeb: { width: 160, height: 160 },
   headerRightWeb: {
     position: 'absolute', right: 0, top: 0, bottom: 0,
     flexDirection: 'row', alignItems: 'center', gap: 8,
   },
 
   dashboard: { alignItems: 'center', width: '100%', maxWidth: 500, alignSelf: 'center' },
-  greeting: { fontSize: 22, fontWeight: 'bold', color: '#2d3748', marginBottom: 4, textAlign: 'center' },
-  dateText: { fontSize: 16, color: '#4a5568', textAlign: 'center' },
-  timeText: { fontSize: 16, color: '#4a5568', marginBottom: 24, textAlign: 'center' },
+  greeting: { fontSize: 22, fontWeight: 'bold', color: '#2d3748', marginBottom: 6, textAlign: 'center' },
+  dateText: { fontSize: 16, color: '#4a5568', textAlign: 'center', marginBottom: 2 },
+  timeText: { fontSize: 16, color: '#4a5568', marginBottom: 32, textAlign: 'center' },
 
   tipCard: {
     backgroundColor: '#f7eaea', borderRadius: 12, padding: 20,
@@ -336,7 +336,7 @@ const styles = StyleSheet.create({
   healthGraphic: {
   width: 280,
   height: 114,
-  marginTop: 12,
+  marginTop: 24,
 },
   
   webPanel: {

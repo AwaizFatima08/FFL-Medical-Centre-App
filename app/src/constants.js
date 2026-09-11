@@ -1,6 +1,13 @@
 // app/src/constants.js
 // Fallback constants — dynamic lists managed in Firestore config/dropdowns
 
+// ─── VALIDATION ───────────────────────────────────────────────────────────────
+// Single source of truth for CNIC format (#####-#######-#). Previously only
+// enforced in SignupScreen.js — family-member add/edit and the admin
+// profile editor accepted any non-empty string, letting malformed CNICs
+// into the system via those paths.
+export const CNIC_PATTERN = /^\d{5}-\d{7}-\d{1}$/;
+
 // ─── ROLES ────────────────────────────────────────────────────────────────────
 export const ROLES = {
   EMPLOYEE:         'employee',

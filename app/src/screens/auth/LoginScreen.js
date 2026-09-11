@@ -269,9 +269,9 @@ const styles = StyleSheet.create({
   },
 
   topLogo: {
-    width: 190, height: 76,
+    width: 150, height: 150,
     alignSelf: 'center',
-    marginBottom: 14,
+    marginBottom: 20,
   },
 
   card: {

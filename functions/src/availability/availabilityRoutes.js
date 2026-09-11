@@ -3,7 +3,7 @@ const express = require('express');
 const router = express.Router();
 const admin = require('firebase-admin');
 const { verifyToken, verifyRole } = require('../auth/authRoutes');
-const { successResponse, errorResponse, nowISO, getPakistanToday } = require('../utils');
+const { successResponse, errorResponse, nowISO, getPakistanToday, chunkArray } = require('../utils');
 const { ROLES, AVAILABILITY_STATUS } = require('../constants');
 // ─── GET /all ─────────────────────────────────────────────
 // Everyone can view all doctors' availability
@@ -17,16 +17,17 @@ router.get('/all', verifyToken, async (req, res) => {
     }
     // Collect all userIds to fetch names from employees collection
     const userIds = availSnapshot.docs.map(doc => doc.id);
-    // Fetch employee records for these userIds
-    const empSnapshot = await db.collection('employees')
-      .where('userId', 'in', userIds)
-      .get();
-    // Build a map: userId -> fullName
+    // Build a map: userId -> fullName (chunked — Firestore 'in' caps at 10)
     const nameMap = {};
-    empSnapshot.docs.forEach(doc => {
-      const data = doc.data();
-      nameMap[data.userId] = data.fullName || 'Unknown';
-    });
+    for (const chunk of chunkArray(userIds)) {
+      const empSnapshot = await db.collection('employees')
+        .where('userId', 'in', chunk)
+        .get();
+      empSnapshot.docs.forEach(doc => {
+        const data = doc.data();
+        nameMap[data.userId] = data.fullName || 'Unknown';
+      });
+    }
     // Phase 6 — leave scheduling. today's date (PKT) is checked against
     // each doc's scheduledLeave window, if one exists, to decide whether
     // the displayed status should be overridden to "on_leave". This is

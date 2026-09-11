@@ -11,6 +11,7 @@ import {
   collection, query, where, getDocs, Timestamp,
 } from 'firebase/firestore';
 import { VACCINATION_NURSE } from '../../constants';
+import { auth } from '../../config/firebase';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 function formatDate(timestamp) {
@@ -65,8 +66,26 @@ export default function VaccinationAdministerScreen({ route, navigation }) {
   const [overrideNextDate, setOverrideNextDate] = useState('');
   const [overrideReason,   setOverrideReason]   = useState('');
   const [showNextOverride, setShowNextOverride] = useState(false);
+  // Was hardcoded to VACCINATION_NURSE.name everywhere below, so every
+  // administered record was permanently attributed to the same one named
+  // nurse regardless of who actually logged in and gave the dose. Now
+  // resolved from the logged-in user's own `users` doc, falling back to
+  // the constant only if that lookup fails.
+  const [administeredByName, setAdministeredByName] = useState(VACCINATION_NURSE.name);
 
   const db = getFirestore();
+
+  useEffect(() => {
+    const uid = auth.currentUser?.uid;
+    if (!uid) return;
+    getDoc(doc(db, 'users', uid))
+      .then(snap => {
+        if (snap.exists() && snap.data().fullName) {
+          setAdministeredByName(snap.data().fullName);
+        }
+      })
+      .catch(err => console.error('Failed to load current user name:', err));
+  }, [db]);
 
   // ─── Load record and schedule entry ───────────────────────────────────────
   useEffect(() => {
@@ -180,7 +199,7 @@ export default function VaccinationAdministerScreen({ route, navigation }) {
       await updateDoc(doc(db, 'vaccinationRecords', recordId), {
         status:          'administered',
         actualDate:      Timestamp.fromDate(adminDate),
-        administeredBy:  VACCINATION_NURSE.name,
+        administeredBy:  administeredByName,
         adverseReaction: adverseReaction.trim() || null,
         nurseOverride:   isBacklog,
         overrideReason:  isBacklog ? (overrideReason.trim() || 'Backlog entry') : null,
@@ -325,7 +344,7 @@ export default function VaccinationAdministerScreen({ route, navigation }) {
         <View style={styles.fieldGroup}>
           <Text style={styles.label}>Administered By</Text>
           <View style={styles.readOnly}>
-            <Text style={styles.readOnlyText}>{VACCINATION_NURSE.name}</Text>
+            <Text style={styles.readOnlyText}>{administeredByName}</Text>
           </View>
         </View>
 

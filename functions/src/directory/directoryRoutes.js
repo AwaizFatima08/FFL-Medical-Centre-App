@@ -44,7 +44,7 @@ router.get('/list', async (req, res) => {
 
   } catch (error) {
     console.error('Directory list error:', error);
-    res.status(500).json({ success: false, message: 'Failed to load directory', error: error.message });
+    res.status(500).json({ success: false, message: 'Failed to load directory' });
   }
 });
 
@@ -65,7 +65,7 @@ router.get('/:id', async (req, res) => {
 
   } catch (error) {
     console.error('Directory get error:', error);
-    res.status(500).json({ success: false, message: 'Failed to load entry', error: error.message });
+    res.status(500).json({ success: false, message: 'Failed to load entry' });
   }
 });
 
@@ -102,7 +102,7 @@ router.post('/add', async (req, res) => {
 
   } catch (error) {
     console.error('Directory add error:', error);
-    res.status(500).json({ success: false, message: 'Failed to add entry', error: error.message });
+    res.status(500).json({ success: false, message: 'Failed to add entry' });
   }
 });
 
@@ -144,7 +144,7 @@ router.put('/:id', async (req, res) => {
 
   } catch (error) {
     console.error('Directory update error:', error);
-    res.status(500).json({ success: false, message: 'Failed to update entry', error: error.message });
+    res.status(500).json({ success: false, message: 'Failed to update entry' });
   }
 });
 
@@ -167,7 +167,7 @@ router.delete('/:id', async (req, res) => {
 
   } catch (error) {
     console.error('Directory delete error:', error);
-    res.status(500).json({ success: false, message: 'Failed to delete entry', error: error.message });
+    res.status(500).json({ success: false, message: 'Failed to delete entry' });
   }
 });
 

@@ -317,7 +317,11 @@ exports.onVaccinationAdministered = onDocumentUpdated(
 // Every day at 08:00 PKT — notifies nurse of today's scheduled vaccines
 // ─────────────────────────────────────────────────────────────────────────────
 exports.dailyVaccinationReminder = onSchedule(
-  { schedule: '0 3 * * *', timeZone: 'Asia/Karachi', region: REGION },
+  // Cron was UTC-offset math ('0 3' = 08:00 PKT in UTC) left over from
+  // before timeZone was added below — with timeZone set, the scheduler
+  // reads '0 3' as 3:00 AM Karachi time directly, firing 5 hours early.
+  // Fixed to state the intended local time plainly.
+  { schedule: '0 8 * * *', timeZone: 'Asia/Karachi', region: REGION },
   async () => {
     const db    = admin.firestore();
     const today = new Date();
@@ -371,7 +375,9 @@ exports.dailyVaccinationReminder = onSchedule(
 // Every day at 23:00 PKT — marks overdue scheduled records as 'missed'
 // ─────────────────────────────────────────────────────────────────────────────
 exports.missedAppointmentDetector = onSchedule(
-  { schedule: '0 18 * * *', timeZone: 'Asia/Karachi', region: REGION },
+  // Same UTC/local mismatch as dailyVaccinationReminder above — fixed to
+  // the intended 23:00 PKT.
+  { schedule: '0 23 * * *', timeZone: 'Asia/Karachi', region: REGION },
   async () => {
     const db    = admin.firestore();
     const today = new Date();
@@ -409,7 +415,9 @@ exports.missedAppointmentDetector = onSchedule(
 // Saves URL to vaccinationReports collection — nurse downloads in app
 // ─────────────────────────────────────────────────────────────────────────────
 exports.fridayWeeklyReport = onSchedule(
-  { schedule: '0 2 * * 5', timeZone: 'Asia/Karachi', region: REGION },
+  // Same UTC/local mismatch as dailyVaccinationReminder above — fixed to
+  // the intended 07:00 PKT on Fridays.
+  { schedule: '0 7 * * 5', timeZone: 'Asia/Karachi', region: REGION },
   async () => {
     const db    = admin.firestore();
     const today = new Date();
@@ -579,7 +587,9 @@ Generated: ${new Date().toLocaleDateString('en-GB',{day:'2-digit',month:'long',y
 // Record stays validated — no flag, no disruption to employee
 // ─────────────────────────────────────────────────────────────────────────────
 exports.childTurns25Notifier = onSchedule(
-  { schedule: '5 3 * * *', timeZone: 'Asia/Karachi', region: REGION },
+  // Same UTC/local mismatch as dailyVaccinationReminder above — fixed to
+  // the intended 08:05 PKT.
+  { schedule: '5 8 * * *', timeZone: 'Asia/Karachi', region: REGION },
   async () => {
     const db    = admin.firestore();
     const today = new Date();

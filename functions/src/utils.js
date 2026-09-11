@@ -130,6 +130,34 @@ const getPaginationParams = (query) => {
   return { page, limit, offset };
 };
 
+// Firestore 'in'/'not-in' queries cap at 10 values. Splits an array into
+// chunks of (at most) 10 so a caller can issue one query per chunk instead
+// of silently dropping results once the array grows past 10 items.
+const chunkArray = (array, size = 10) => {
+  const chunks = [];
+  for (let i = 0; i < array.length; i += size) {
+    chunks.push(array.slice(i, i + size));
+  }
+  return chunks;
+};
+
+// Neutralizes CSV formula injection: a string value starting with
+// =, +, -, or @ is interpreted as a formula by Excel/Sheets when the
+// exported CSV is opened. Prefixing with a leading apostrophe forces it
+// to be read as plain text. Applied to every string field in a row right
+// before handing rows to json2csv.
+const sanitizeCsvRow = (row) => {
+  const out = {};
+  for (const [key, value] of Object.entries(row)) {
+    if (typeof value === 'string' && /^[=+\-@]/.test(value)) {
+      out[key] = `'${value}`;
+    } else {
+      out[key] = value;
+    }
+  }
+  return out;
+};
+
 module.exports = {
   nowISO,
   successResponse,
@@ -143,4 +171,6 @@ module.exports = {
   getPakistanToday,
   getNextTripDates,
   getPaginationParams,
+  chunkArray,
+  sanitizeCsvRow,
 };

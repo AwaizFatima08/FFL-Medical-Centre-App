@@ -124,9 +124,13 @@ router.get('/log', authenticate, async (req, res) => {
     }
 
     const { type, limit = 100 } = req.query;
+    const parsedLimit = parseInt(limit, 10);
+    const safeLimit = Number.isFinite(parsedLimit) && parsedLimit > 0
+      ? Math.min(parsedLimit, 500)
+      : 100;
     const snapshot = await db().collection('notifications')
       .orderBy('createdAt', 'desc')
-      .limit(parseInt(limit))
+      .limit(safeLimit)
       .get();
 
     let notifications = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));

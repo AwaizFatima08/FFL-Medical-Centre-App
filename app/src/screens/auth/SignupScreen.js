@@ -48,7 +48,7 @@ import { auth } from '../../config/firebase';
 import axios from 'axios';
 import { API } from '../../config/api';
 import DatePickerField from '../../components/DatePickerField';
-import { MARITAL_STATUSES, GENDERS } from '../../constants';
+import { MARITAL_STATUSES, GENDERS, CNIC_PATTERN } from '../../constants';
 
 // ── Notification permission (Android 13+, safe to call on older versions)
 const requestNotificationPermission = async () => {
@@ -103,7 +103,8 @@ const formatCnic = (text) => {
 
 const VALID_PREFIXES = ['FFL', 'ESB', 'OSL', 'FAS'];
 const EMP_PATTERN = /^(FFL|ESB|OSL|FAS)-\d{5}$/;
-const CNIC_PATTERN = /^\d{5}-\d{7}-\d{1}$/; // Day 14, Step C
+// CNIC_PATTERN now shared via constants.js so family-member and admin
+// profile-edit screens can enforce the same format.
 
 export default function SignupScreen({ navigation }) {
   const [step,           setStep]           = useState(STEP_ACCOUNT);
@@ -679,11 +680,11 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     marginBottom: 24,
-    minHeight: 60,
+    minHeight: 150,
   },
   backBtnWrapper: { position: 'absolute', left: 0, top: 4, zIndex: 1 },
   backBtn:   { color: '#fdf0d5', fontSize: 15, fontWeight: '600' },
-  logoImage: { width: 100, height: 100 },
+  logoImage: { width: 130, height: 130 },
 
   stepRow:        { flexDirection: 'row', alignItems: 'center', marginBottom: 4, paddingHorizontal: 40 },
   stepDot:        { width: 14, height: 14, borderRadius: 7, backgroundColor: '#334155' },

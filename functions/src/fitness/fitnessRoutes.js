@@ -161,7 +161,7 @@ router.post('/schedule', authenticate, async (req, res) => {
     });
   } catch (error) {
     console.error('Schedule fitness error:', error);
-    return res.status(500).json({ success: false, message: 'Failed to schedule appointment', error: error.message });
+    return res.status(500).json({ success: false, message: 'Failed to schedule appointment' });
   }
 });
 
@@ -220,8 +220,14 @@ router.get('/:id', authenticate, async (req, res) => {
 
     const data = doc.data();
 
-    // Employee can only view their own
-    if (req.user.role === ROLES.EMPLOYEE && data.employeeUid !== req.user.uid) {
+    // Same access model as GET /all: admin/CMO/doctor can view any
+    // appointment, everyone else only their own. Previously only the
+    // 'employee' role was restricted to self, so driver/reception/
+    // pharmacy_incharge/etc. could read any employee's fitness outcome
+    // and remarks (medical data) for any appointment by guessing/
+    // enumerating IDs.
+    const allowedRoles = [ROLES.ADMIN_INCHARGE, ROLES.CMO, ROLES.DOCTOR];
+    if (!allowedRoles.includes(req.user.role) && data.employeeUid !== req.user.uid) {
       return res.status(403).json({ success: false, message: 'Forbidden' });
     }
 

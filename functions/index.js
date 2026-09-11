@@ -25,6 +25,7 @@ const reportRoutes       = require('./src/reports/reportRoutes');
 const { sendVaccinationReminders } = require('./src/vaccination/vaccinationScheduler');
 const { sendTripReminders }        = require('./src/trips/tripScheduler');
 const { sendFitnessReminders }     = require('./src/fitness/fitnessScheduler');
+const { autoUpdateAvailability }   = require('./src/availability/availabilityScheduler');
 
 // ─── CORS MIDDLEWARE ──────────────────────────────────────────────────────────
 // Allow requests from any origin — required for web and mobile clients
@@ -86,6 +87,12 @@ exports.scheduledTripReminders = onSchedule(
 exports.scheduledFitnessReminders = onSchedule(
   { schedule: '0 4 * * *', region: 'asia-south1' },
   sendFitnessReminders
+);
+// Previously defined but never scheduled — doctors' availability status
+// never auto-reverted to "not available" outside working hours.
+exports.scheduledAvailabilityUpdate = onSchedule(
+  { schedule: '*/15 * * * *', region: 'asia-south1' },
+  autoUpdateAvailability
 );
 
 // ─── VACCINATION + FAMILY CLOUD FUNCTIONS ────────────────────────────────────

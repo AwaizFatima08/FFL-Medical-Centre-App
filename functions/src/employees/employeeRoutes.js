@@ -149,7 +149,18 @@ router.get('/profile', verifyToken, async (req, res) => {
 });
 
 // ─── GET /:employeeId ─────────────────────────────────────
-router.get('/:employeeId', verifyToken, async (req, res) => {
+// verifyRole(Object.values(ROLES)) accepts every real role — it exists here
+// purely to populate req.userRole/req.userRecord (and reject disabled
+// accounts) for the ownership check below, not to gate the route to a
+// role subset. Without it req.userRole was always undefined, so the
+// "employee can only view own record" check below never actually fired
+// for real employee-role callers, and every other role (driver,
+// lab_technologist, pharmacy_incharge, dentist, physiotherapist) fell
+// through with unrestricted read access to any employee's full PII
+// (CNIC, phone, DOB, address, blood group). Fixed to match GET /all's
+// access model: admin/CMO/reception/doctor/nurse can view any record,
+// everyone else only their own.
+router.get('/:employeeId', verifyToken, verifyRole(Object.values(ROLES)), async (req, res) => {
   try {
     const db = admin.firestore();
     const doc = await db.collection('employees').doc(req.params.employeeId).get();
@@ -165,8 +176,8 @@ router.get('/:employeeId', verifyToken, async (req, res) => {
       delete data.communityGroup;
     }
 
-    // Employee can only view own record
-    if (req.userRole === ROLES.EMPLOYEE && data.userId !== req.user.uid) {
+    const PRIVILEGED_ROLES = [ROLES.ADMIN_INCHARGE, ROLES.CMO, ROLES.RECEPTION, ROLES.DOCTOR, ROLES.NURSE];
+    if (!PRIVILEGED_ROLES.includes(req.userRole) && data.userId !== req.user.uid) {
       return errorResponse(res, 'Forbidden', 403);
     }
 
@@ -454,7 +465,12 @@ router.get('/:employeeId/medical', verifyToken,
 );
 
 // ─── POST /:employeeId/family-members ────────────────────
-router.post('/:employeeId/family-members', verifyToken, async (req, res) => {
+// verifyRole(Object.values(ROLES)) populates req.userRole for the ownership
+// check below — without it req.userRole was always undefined, so
+// "req.userRole === ROLES.EMPLOYEE" never matched and ANY authenticated
+// user could add family members to ANY employee's record, not just admins
+// and the employee themselves.
+router.post('/:employeeId/family-members', verifyToken, verifyRole(Object.values(ROLES)), async (req, res) => {
   try {
     const db = admin.firestore();
     const empDoc = await db.collection('employees')
@@ -465,7 +481,7 @@ router.post('/:employeeId/family-members', verifyToken, async (req, res) => {
     }
 
     // Only own employee or admin can add family members
-    if (req.userRole === ROLES.EMPLOYEE &&
+    if (req.userRole !== ROLES.ADMIN_INCHARGE &&
         empDoc.data().userId !== req.user.uid) {
       return errorResponse(res, 'Forbidden', 403);
     }
@@ -548,8 +564,14 @@ router.get('/:employeeId/family-members', verifyToken, async (req, res) => {
 });
 
 // ─── PUT /:employeeId/family-members/:memberId ────────────
+// verifyRole(Object.values(ROLES)) populates req.userRole (see the same
+// fix on POST .../family-members above — without it, ownership was never
+// actually enforced). The update body is now whitelisted to the same
+// editable fields POST accepts instead of spreading req.body directly
+// into Firestore .update(), which previously let a caller set arbitrary
+// fields (e.g. status/isActive) on a family-member document.
 router.put('/:employeeId/family-members/:memberId',
-  verifyToken, async (req, res) => {
+  verifyToken, verifyRole(Object.values(ROLES)), async (req, res) => {
     try {
       const db = admin.firestore();
       const empDoc = await db.collection('employees')
@@ -559,7 +581,7 @@ router.put('/:employeeId/family-members/:memberId',
         return errorResponse(res, 'Employee not found', 404);
       }
 
-      if (req.userRole === ROLES.EMPLOYEE &&
+      if (req.userRole !== ROLES.ADMIN_INCHARGE &&
           empDoc.data().userId !== req.user.uid) {
         return errorResponse(res, 'Forbidden', 403);
       }
@@ -574,7 +596,29 @@ router.put('/:employeeId/family-members/:memberId',
         return errorResponse(res, 'Family member not found', 404);
       }
 
-      const updates = { ...req.body, updatedAt: nowISO() };
+      const {
+        fullName,
+        relation,
+        dateOfBirth,
+        gender,
+        bloodGroup,
+        maritalStatus,
+        employmentStatus,
+        differentlyAbled,
+        differentlyAbledDetails,
+      } = req.body;
+
+      const updates = { updatedAt: nowISO() };
+      if (fullName                 !== undefined) updates.fullName = fullName;
+      if (relation                 !== undefined) updates.relation = relation;
+      if (dateOfBirth              !== undefined) updates.dateOfBirth = dateOfBirth;
+      if (gender                   !== undefined) updates.gender = gender;
+      if (bloodGroup               !== undefined) updates.bloodGroup = bloodGroup;
+      if (maritalStatus            !== undefined) updates.maritalStatus = maritalStatus;
+      if (employmentStatus         !== undefined) updates.employmentStatus = employmentStatus;
+      if (differentlyAbled         !== undefined) updates.differentlyAbled = differentlyAbled;
+      if (differentlyAbledDetails  !== undefined) updates.differentlyAbledDetails = differentlyAbledDetails;
+
       await memberRef.update(updates);
 
       return successResponse(res, null, 'Family member updated successfully');

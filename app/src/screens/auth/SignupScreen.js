@@ -41,7 +41,7 @@ import React, { useState, useRef } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, StyleSheet,
   StatusBar, KeyboardAvoidingView, Platform, ActivityIndicator,
-  ScrollView, Switch, Image,
+  ScrollView, Switch, Image, Linking,
 } from 'react-native';
 import { createUserWithEmailAndPassword } from 'firebase/auth';
 import { auth } from '../../config/firebase';
@@ -100,6 +100,8 @@ const formatCnic = (text) => {
   if (digits.length <= 12) return `${digits.slice(0, 5)}-${digits.slice(5)}`;
   return `${digits.slice(0, 5)}-${digits.slice(5, 12)}-${digits.slice(12)}`;
 };
+
+const PRIVACY_POLICY_URL = 'https://sahulat.homilabs.org/privacypolicy.html';
 
 const VALID_PREFIXES = ['FFL', 'ESB', 'OSL', 'FAS'];
 const EMP_PATTERN = /^(FFL|ESB|OSL|FAS)-\d{5}$/;
@@ -618,6 +620,12 @@ export default function SignupScreen({ navigation }) {
                   for medical alerts, appointments, and updates.
                 </Text>
                 <TouchableOpacity
+                  onPress={() => Linking.openURL(PRIVACY_POLICY_URL)}
+                  style={styles.privacyLinkRow}
+                >
+                  <Text style={styles.privacyLinkText}>Read our full Privacy Policy →</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
                   style={styles.checkRow}
                   onPress={() => setDisclaimerAccepted(!disclaimerAccepted)}
                   activeOpacity={0.7}
@@ -742,7 +750,9 @@ const styles = StyleSheet.create({
     borderLeftWidth: 3, borderLeftColor: '#f59e0b', marginBottom: 16,
   },
   disclaimerTitle: { fontSize: 13, fontWeight: '700', color: '#92400e', marginBottom: 6 },
-  disclaimerText:  { fontSize: 12, color: '#78350f', lineHeight: 18, marginBottom: 12 },
+  disclaimerText:  { fontSize: 12, color: '#78350f', lineHeight: 18, marginBottom: 10 },
+  privacyLinkRow:  { marginBottom: 12 },
+  privacyLinkText: { fontSize: 12, fontWeight: '700', color: '#b45309', textDecorationLine: 'underline' },
   checkRow:        { flexDirection: 'row', alignItems: 'center' },
   checkbox: {
     width: 22, height: 22, borderRadius: 5,

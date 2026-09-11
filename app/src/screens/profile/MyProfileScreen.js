@@ -35,7 +35,7 @@ import { webAlert } from '../../utils/webAlert';
 import React, { useEffect, useState, useCallback } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, ScrollView,
-  ActivityIndicator, Switch, TextInput,
+  ActivityIndicator, Switch, TextInput, Linking,
 } from 'react-native';
 import { getAuth } from 'firebase/auth';
 import { getFirestore, collection, query, where, getDocs } from 'firebase/firestore';
@@ -63,6 +63,8 @@ const EMPLOYEE_TYPE_LABELS = {
 };
 
 const labelFor = (list, value) => list.find(o => o.value === value)?.label || value || '—';
+
+const PRIVACY_POLICY_URL = 'https://sahulat.homilabs.org/privacypolicy.html';
 
 // ─── Read-only field row ──────────────────────────────────────────────────
 function FieldRow({ label, value }) {
@@ -586,6 +588,13 @@ export default function MyProfileScreen({ navigation }) {
           </>
         )}
 
+        <TouchableOpacity
+          onPress={() => Linking.openURL(PRIVACY_POLICY_URL)}
+          style={styles.privacyLinkRow}
+        >
+          <Text style={styles.privacyLinkText}>Privacy Policy</Text>
+        </TouchableOpacity>
+
         <View style={{ height: 40 }} />
       </ScrollView>
     </View>
@@ -609,6 +618,9 @@ const styles = StyleSheet.create({
   headerTitle: { fontSize: 18, fontWeight: 'bold', color: '#2d3748' },
 
   container: { padding: 16 },
+
+  privacyLinkRow:  { alignItems: 'center', marginTop: 28, paddingVertical: 6 },
+  privacyLinkText: { fontSize: 13, fontWeight: '600', color: '#3b82f6', textDecorationLine: 'underline' },
 
   welcomeCard: {
     backgroundColor: '#eff6ff', borderRadius: 12, padding: 18,

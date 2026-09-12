@@ -1,12 +1,12 @@
 // ─────────────────────────────────────────────────────────────
 import { webAlert, webConfirm } from '../../utils/webAlert';
-//  FFL Medical Centre — ForgotPasswordScreen.js
-//  Path: ffl-medical-centre-app/src/screens/auth/ForgotPasswordScreen.js
+//  Sahulat — ForgotPasswordScreen.js
+//  Path: app/src/screens/auth/ForgotPasswordScreen.js
 // ─────────────────────────────────────────────────────────────
 import React, { useState } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, StyleSheet,
-  StatusBar, KeyboardAvoidingView, Platform, ActivityIndicator,
+  StatusBar, KeyboardAvoidingView, Platform, ActivityIndicator, Image,
 } from 'react-native';
 import { sendPasswordResetEmail } from 'firebase/auth';
 import { auth } from '../../config/firebase';
@@ -57,10 +57,11 @@ export default function ForgotPasswordScreen({ navigation }) {
         </TouchableOpacity>
 
         {/* ── Logo ── */}
-        <View style={styles.logoBox}>
-          <Text style={styles.logoText}>FFL</Text>
-          <Text style={styles.logoSub}>MEDICAL CENTRE</Text>
-        </View>
+        <Image
+          source={require('../../../assets/FFCL_Logo.png')}
+          style={styles.topLogo}
+          resizeMode="contain"
+        />
 
         {/* ── Card ── */}
         <View style={styles.card}>
@@ -74,7 +75,7 @@ export default function ForgotPasswordScreen({ navigation }) {
               <Text style={styles.label}>Email Address</Text>
               <TextInput
                 style={styles.input}
-                placeholder="you@fatima-group.com"
+                placeholder="Use your personal email address"
                 placeholderTextColor="#94a3b8"
                 keyboardType="email-address"
                 autoCapitalize="none"
@@ -136,16 +137,11 @@ const styles = StyleSheet.create({
   backRow:   { marginBottom: 32 },
   backBtn:   { color: '#fdf0d5', fontSize: 14, fontWeight: '600' },
 
-  logoBox: {
-    width: 64, height: 64, borderRadius: 16,
-    backgroundColor: '#c1121f',
-    alignItems: 'center', justifyContent: 'center',
-    alignSelf: 'center', marginBottom: 24,
-    elevation: 8, shadowColor: '#c1121f',
-    shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.5, shadowRadius: 8,
+  topLogo: {
+    width: 150, height: 150,
+    alignSelf: 'center',
+    marginBottom: 20,
   },
-  logoText: { color: '#fff', fontSize: 18, fontWeight: '900', letterSpacing: 2 },
-  logoSub:  { color: '#fff', fontSize: 5.5, fontWeight: '700', letterSpacing: 1.5 },
 
   card: {
     backgroundColor: '#fff', borderRadius: 20, padding: 28,

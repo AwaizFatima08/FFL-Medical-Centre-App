@@ -1,0 +1,157 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sahulat — Delete Your Account</title>
+<meta name="description" content="How to request deletion of your Sahulat account and data.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#f5f8f7; --surface:#ffffff; --surface-2:#eef3f1;
+    --ink:#16231f; --ink-dim:#4d5f59; --ink-faint:#7c8c86;
+    --line:#dde5e2; --line-strong:#c6d2ce;
+    --accent:#0e7c7b; --accent-soft:#e2f2f0; --accent-line:#bfe0dc;
+    --warn:#b3261e; --warn-soft:#fbeae9; --warn-line:#f0c6c3;
+  }
+  @media (prefers-color-scheme: dark){
+    :root{
+      --bg:#101815; --surface:#16211d; --surface-2:#1c2925;
+      --ink:#eaf2ef; --ink-dim:#a9bab4; --ink-faint:#7e9089;
+      --line:#28362f; --line-strong:#37483f;
+      --accent:#3fbdb2; --accent-soft:#173330; --accent-line:#2a5450;
+      --warn:#f2867d; --warn-soft:#3a1f1c; --warn-line:#5c2e29;
+    }
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0; background:var(--bg); color:var(--ink);
+    font-family:'IBM Plex Sans', ui-sans-serif, system-ui, sans-serif;
+    font-size:16.5px; line-height:1.65;
+  }
+  h1,h2{ font-family:'Fraunces', Georgia, serif; text-wrap:balance; color:var(--ink); font-weight:600; }
+  code{ font-family:'IBM Plex Mono', ui-monospace, monospace; font-size:.92em; background:var(--surface-2); padding:1px 6px; border-radius:5px; }
+  a{ color:var(--accent); }
+
+  .shell{ max-width:680px; margin:0 auto; padding:0 24px 90px; }
+
+  header{ padding:52px 0 30px; border-bottom:1px solid var(--line); margin-bottom:34px; }
+  .wordmark{ display:flex; align-items:center; gap:10px; margin-bottom:22px; }
+  .wordmark .mark{
+    width:34px; height:34px; border-radius:9px; background:var(--accent);
+    display:flex; align-items:center; justify-content:center; color:var(--surface); font-size:17px;
+  }
+  .wordmark span{ font-family:'Fraunces',serif; font-weight:600; font-size:18px; letter-spacing:.01em; }
+  h1{ font-size:clamp(26px,4vw,34px); margin:0 0 8px; line-height:1.1; }
+  .tagline{ color:var(--ink-dim); font-size:15.5px; margin:0; max-width:58ch; }
+
+  section{ margin-bottom:34px; }
+  section h2{ font-size:19px; margin:0 0 14px; display:flex; align-items:baseline; gap:10px; }
+  section h2 .num{ color:var(--accent); font-family:'IBM Plex Mono',monospace; font-size:15px; font-weight:500; }
+  section p{ margin:0 0 14px; }
+  section p:last-child{ margin-bottom:0; }
+
+  .steps{ display:grid; gap:14px; counter-reset:step; }
+  .step{
+    display:grid; grid-template-columns:32px 1fr; gap:14px;
+    background:var(--surface); border:1px solid var(--line); border-radius:10px; padding:16px 18px;
+  }
+  .step .n{
+    counter-increment:step; width:28px; height:28px; border-radius:50%;
+    background:var(--accent-soft); border:1px solid var(--accent-line); color:var(--accent);
+    display:flex; align-items:center; justify-content:center; font-weight:700; font-size:13px;
+  }
+  .step .n::before{ content: counter(step); }
+  .step .body b{ display:block; font-size:15px; margin-bottom:3px; }
+  .step .body p{ margin:0; font-size:14px; color:var(--ink-dim); }
+
+  .mail-box{
+    background:var(--accent-soft); border:1px solid var(--accent-line); border-radius:10px;
+    padding:16px 18px; display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap;
+  }
+  .mail-box a{ font-size:16px; font-weight:700; }
+  .mail-box .hint{ font-size:13px; color:var(--ink-dim); }
+
+  .note{
+    background:var(--warn-soft); border-left:3px solid var(--warn); border-radius:0 8px 8px 0;
+    padding:12px 16px; font-size:14px; color:var(--ink-dim); margin:16px 0 0;
+  }
+  .note b{ color:var(--ink); }
+
+  .field-list{ display:grid; gap:12px; margin:0; }
+  .field{ background:var(--surface); border:1px solid var(--line); border-radius:10px; padding:13px 18px; }
+  .field .k{ font-weight:600; font-size:14.5px; margin:0 0 3px; }
+  .field .v{ font-size:14px; color:var(--ink-dim); margin:0; }
+
+  footer{
+    margin-top:56px; padding-top:24px; border-top:1px solid var(--line);
+    display:flex; flex-wrap:wrap; justify-content:space-between; gap:16px; align-items:center;
+  }
+  footer .org{ font-family:'Fraunces',serif; font-weight:600; font-size:15px; color:var(--ink-dim); }
+  footer .links{ font-size:14px; }
+  footer .links a{ font-weight:600; }
+</style>
+</head>
+<body>
+<div class="shell">
+
+  <header>
+    <div class="wordmark"><div class="mark">♥</div><span>SAHULAT</span></div>
+    <h1>Delete Your Account</h1>
+    <p class="tagline">How to permanently delete your Sahulat account and the personal data linked to it.</p>
+  </header>
+
+  <section>
+    <h2><span class="num">01</span> Request deletion</h2>
+    <p>Sahulat doesn't yet have a self-service delete button in the app — deletion requests are handled directly by our team to make sure the right account is removed. Email us from the address registered on your account:</p>
+    <div class="mail-box">
+      <a href="mailto:homilabs.smc@gmail.com?subject=Delete%20my%20Sahulat%20account">homilabs.smc@gmail.com</a>
+      <span class="hint">Subject: "Delete my Sahulat account"</span>
+    </div>
+  </section>
+
+  <section>
+    <h2><span class="num">02</span> What happens next</h2>
+    <div class="steps">
+      <div class="step">
+        <div class="n"></div>
+        <div class="body"><b>We confirm it's you</b><p>We verify the request comes from the email address on file for the account before making any change.</p></div>
+      </div>
+      <div class="step">
+        <div class="n"></div>
+        <div class="body"><b>Your account and data are deleted</b><p>Your login, profile, and the personal information tied to your account are permanently removed from our systems.</p></div>
+      </div>
+      <div class="step">
+        <div class="n"></div>
+        <div class="body"><b>We confirm by email</b><p>You'll get a reply once deletion is complete, typically within a few working days.</p></div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2><span class="num">03</span> What gets deleted</h2>
+    <div class="field-list">
+      <div class="field">
+        <p class="k">Deleted</p>
+        <p class="v">Your login credentials, profile, family member records you added, feedback you submitted, fitness and blood donor records, and trip/ambulance request history.</p>
+      </div>
+      <div class="field">
+        <p class="k">Partial deletion is also available</p>
+        <p class="v">If you only want a specific piece of information removed (for example, a family member's record) rather than your whole account, mention that in your email instead — we can action partial requests the same way.</p>
+      </div>
+    </div>
+    <div class="note">
+      <b>Note:</b> this deletes your app account. Any care you've already received at the Medical Centre is recorded separately in its own clinical records system, which this request does not affect — see our <a href="/privacypolicy.html">Privacy Policy</a>, section 9.
+    </div>
+  </section>
+
+  <footer>
+    <div class="org">Sahulat — Community Wellbeing<br><span style="font-family:'IBM Plex Sans',sans-serif; font-weight:400; font-size:13px; color:var(--ink-faint);">Built by Homi Labs</span></div>
+    <div class="links"><a href="/privacypolicy.html">Privacy Policy</a> · <a href="mailto:homilabs.smc@gmail.com">homilabs.smc@gmail.com</a></div>
+  </footer>
+
+</div>
+</body>
+</html>

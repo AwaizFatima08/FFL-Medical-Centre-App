@@ -1,0 +1,248 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sahulat — Privacy Policy</title>
+<meta name="description" content="Privacy Policy for the Sahulat mobile and web app, a community welfare tool for FFL Medical Centre, Rahim Yar Khan.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#f5f8f7; --surface:#ffffff; --surface-2:#eef3f1;
+    --ink:#16231f; --ink-dim:#4d5f59; --ink-faint:#7c8c86;
+    --line:#dde5e2; --line-strong:#c6d2ce;
+    --accent:#0e7c7b; --accent-soft:#e2f2f0; --accent-line:#bfe0dc;
+    --fix:#b3261e; --fix-soft:#fbeae9;
+  }
+  @media (prefers-color-scheme: dark){
+    :root{
+      --bg:#101815; --surface:#16211d; --surface-2:#1c2925;
+      --ink:#eaf2ef; --ink-dim:#a9bab4; --ink-faint:#7e9089;
+      --line:#28362f; --line-strong:#37483f;
+      --accent:#3fbdb2; --accent-soft:#173330; --accent-line:#2a5450;
+      --fix:#f2867d; --fix-soft:#3a1f1c;
+    }
+  }
+  *{box-sizing:border-box;}
+  html{scroll-behavior:smooth;}
+  body{
+    margin:0; background:var(--bg); color:var(--ink);
+    font-family:'IBM Plex Sans', ui-sans-serif, system-ui, sans-serif;
+    font-size:16.5px; line-height:1.65;
+  }
+  h1,h2,h3{ font-family:'Fraunces', Georgia, serif; text-wrap:balance; color:var(--ink); font-weight:600; }
+  code{ font-family:'IBM Plex Mono', ui-monospace, monospace; font-size:.92em; background:var(--surface-2); padding:1px 6px; border-radius:5px; }
+  a{ color:var(--accent); }
+
+  .shell{ max-width:760px; margin:0 auto; padding:0 24px 90px; }
+
+  header{ padding:52px 0 30px; border-bottom:1px solid var(--line); margin-bottom:34px; }
+  .wordmark{ display:flex; align-items:center; gap:10px; margin-bottom:22px; }
+  .wordmark .mark{
+    width:34px; height:34px; border-radius:9px; background:var(--accent);
+    display:flex; align-items:center; justify-content:center; color:var(--surface); font-size:17px;
+  }
+  .wordmark span{ font-family:'Fraunces',serif; font-weight:600; font-size:18px; letter-spacing:.01em; }
+  h1{ font-size:clamp(28px,4.2vw,38px); margin:0 0 8px; line-height:1.1; }
+  .tagline{ color:var(--ink-dim); font-size:15.5px; margin:0 0 18px; max-width:60ch; }
+  .updated{
+    display:inline-flex; align-items:center; gap:7px; font-size:13px; font-weight:600;
+    color:var(--accent); background:var(--accent-soft); border:1px solid var(--accent-line);
+    padding:5px 12px; border-radius:99px;
+  }
+
+  nav.toc{
+    background:var(--surface); border:1px solid var(--line); border-radius:12px;
+    padding:18px 22px; margin-bottom:40px;
+  }
+  nav.toc h2{ font-size:13px; text-transform:uppercase; letter-spacing:.06em; margin:0 0 12px; color:var(--ink-faint); font-family:'IBM Plex Sans',sans-serif; font-weight:600; }
+  nav.toc ol{ margin:0; padding-left:0; list-style:none; columns:2; column-gap:24px; }
+  nav.toc li{ break-inside:avoid; margin-bottom:8px; }
+  nav.toc a{ text-decoration:none; font-size:14px; color:var(--ink-dim); }
+  nav.toc a:hover{ color:var(--accent); }
+
+  section{ margin-bottom:38px; scroll-margin-top:24px; }
+  section h2{ font-size:21px; margin:0 0 14px; display:flex; align-items:baseline; gap:10px; }
+  section h2 .num{ color:var(--accent); font-family:'IBM Plex Mono',monospace; font-size:15px; font-weight:500; }
+  section p{ margin:0 0 14px; color:var(--ink); }
+  section p:last-child{ margin-bottom:0; }
+
+  .field-list{ display:grid; gap:14px; margin:0 0 4px; }
+  .field{
+    background:var(--surface); border:1px solid var(--line); border-radius:10px;
+    padding:14px 18px;
+  }
+  .field .k{ font-weight:600; font-size:15px; margin:0 0 4px; }
+  .field .v{ font-size:14.5px; color:var(--ink-dim); margin:0; }
+
+  .role-list{ display:grid; gap:10px; margin:0 0 14px; }
+  .role{ display:grid; grid-template-columns:150px 1fr; gap:14px; padding:11px 0; border-bottom:1px solid var(--line); }
+  .role:last-child{ border-bottom:none; }
+  .role .who{ font-weight:600; font-size:14.5px; }
+  .role .what{ font-size:14px; color:var(--ink-dim); }
+
+  ul.plain{ margin:0 0 14px; padding-left:22px; }
+  ul.plain li{ margin-bottom:8px; color:var(--ink); }
+
+  .note{
+    background:var(--surface-2); border-left:3px solid var(--accent); border-radius:0 8px 8px 0;
+    padding:12px 16px; font-size:14px; color:var(--ink-dim); margin:14px 0;
+  }
+
+  footer{
+    margin-top:60px; padding-top:26px; border-top:1px solid var(--line);
+    display:flex; flex-wrap:wrap; justify-content:space-between; gap:16px; align-items:center;
+  }
+  footer .org{ font-family:'Fraunces',serif; font-weight:600; font-size:15px; color:var(--ink-dim); }
+  footer .contact{ font-size:14px; }
+  footer .contact a{ font-weight:600; }
+</style>
+</head>
+<body>
+<div class="shell">
+
+  <header>
+    <div class="wordmark"><div class="mark">♥</div><span>SAHULAT</span></div>
+    <h1>Privacy Policy</h1>
+    <p class="tagline">Applies to the Sahulat mobile app and web app — a voluntary community welfare tool built to support the operations of FFL Medical Centre, Rahim Yar Khan.</p>
+    <span class="updated">● Last updated: September 12, 2026</span>
+  </header>
+
+  <p style="margin-bottom:36px; color:var(--ink-dim);">
+    Sahulat ("the app") is an independent project, maintained by Homi Labs in coordination with the medical centre, and is not a formal IT-department product of Fatima Fertilizer Company. Installing and using this app is entirely optional, and no one is required to use an official company email address to sign up. This policy explains what information Sahulat collects, why, and how it's protected. If anything here is unclear, contact details are at the bottom of this page.
+  </p>
+
+  <nav class="toc">
+    <h2>On this page</h2>
+    <ol>
+      <li><a href="#s1">1. Who can use this app</a></li>
+      <li><a href="#s2">2. What information we collect</a></li>
+      <li><a href="#s3">3. How we use this information</a></li>
+      <li><a href="#s4">4. Who can see your information</a></li>
+      <li><a href="#s5">5. Where your data is stored</a></li>
+      <li><a href="#s6">6. How long we keep your data</a></li>
+      <li><a href="#s7">7. Information about children</a></li>
+      <li><a href="#s8">8. Your choices</a></li>
+      <li><a href="#s9">9. Not your official medical record</a></li>
+      <li><a href="#s10">10. Changes to this policy</a></li>
+    </ol>
+  </nav>
+
+  <section id="s1">
+    <h2><span class="num">01</span> Who can use this app</h2>
+    <p>Anyone may install the app, but creating an active account requires admin approval. Approval is reviewed manually by Medical Centre staff before an account can be used.</p>
+  </section>
+
+  <section id="s2">
+    <h2><span class="num">02</span> What information we collect</h2>
+
+    <div class="field-list">
+      <div class="field">
+        <p class="k">Account information</p>
+        <p class="v">Email address and password used for signing in. Your password is never visible to us — it's handled securely by our authentication provider, Firebase Authentication.</p>
+      </div>
+      <div class="field">
+        <p class="k">Identity information (collected at signup)</p>
+        <p class="v">Full name, employee number, phone number, date of birth, gender, CNIC, marital status, smoking status.</p>
+      </div>
+      <div class="field">
+        <p class="k">Residence information</p>
+        <p class="v">Housing type and house/room number, or city of residence for non-residents.</p>
+      </div>
+      <div class="field">
+        <p class="k">Family member information</p>
+        <p class="v">Basic details of entitled dependents (spouse, children) that you choose to add to your profile, used to coordinate medical facilitation for your family.</p>
+      </div>
+      <div class="field">
+        <p class="k">Health-related information you choose to submit</p>
+        <p class="v">Feedback about visits to the Medical Centre, including the purpose of your visit and any comments · a description of the patient's condition when you request an ambulance · annual fitness activity records, if you participate in that program · blood group and donor availability status, if you opt in to the Blood Donor Directory · chronic or long-term health conditions, if you choose to disclose them for a dependent — visible only to the Chief Medical Officer and Admin In-Charge, never to reception or general staff.</p>
+      </div>
+      <div class="field">
+        <p class="k">Children's vaccination records</p>
+        <p class="v">If a child you've added as a dependent is vaccinated through the Medical Centre's nursing staff using the app, we keep a record of the vaccine given, the date, and any adverse reaction noted.</p>
+      </div>
+      <div class="field">
+        <p class="k">Trip and ambulance requests</p>
+        <p class="v">The pickup and drop-off details you type in, the requested time, and a short description of the reason for the trip or the patient's condition.</p>
+      </div>
+      <div class="field">
+        <p class="k">Notification delivery token</p>
+        <p class="v">A technical identifier your device generates so we can deliver in-app notifications to you. It is not linked to any advertising system.</p>
+      </div>
+    </div>
+
+    <div class="note">
+      <b>On location:</b> the app does not access or collect your device's GPS location, at any time, for any feature. Pickup and drop-off details are a short description you type yourself, not a location captured automatically from your device.
+    </div>
+  </section>
+
+  <section id="s3">
+    <h2><span class="num">03</span> How we use this information</h2>
+    <ul class="plain">
+      <li>To coordinate ambulance dispatch, medical trips, and doctor appointments, using the pickup and visit details you provide</li>
+      <li>To route your feedback to the right department</li>
+      <li>To maintain the Blood Donor Directory for voluntary donor matching</li>
+      <li>To send you in-app notifications about approvals, appointments, and Medical Centre circulars</li>
+      <li>To generate internal reports for Medical Centre planning (e.g. fitness participation, population statistics) — these reports use aggregated data and are for internal administrative use only</li>
+    </ul>
+    <p>We do not use your data for advertising, and we do not sell or rent your data to anyone.</p>
+  </section>
+
+  <section id="s4">
+    <h2><span class="num">04</span> Who can see your information</h2>
+    <p>Access is role-based — each role sees only what it needs to do its job:</p>
+    <div class="role-list">
+      <div class="role"><div class="who">You</div><div class="what">Always able to view and edit your own profile and family information.</div></div>
+      <div class="role"><div class="who">Reception staff</div><div class="what">For scheduling trips and ambulance requests.</div></div>
+      <div class="role"><div class="who">Nurses</div><div class="what">For coordinating vaccination records and family/dependent information.</div></div>
+      <div class="role"><div class="who">Doctors, CMO &amp; Admin In-Charge</div><div class="what">For care coordination and account approval. Chronic/long-term health conditions are visible only to the CMO and Admin In-Charge.</div></div>
+      <div class="role"><div class="who">Drivers</div><div class="what">Only the pickup/drop details and patient information needed to complete a trip they've been assigned to.</div></div>
+      <div class="role"><div class="who">Lab &amp; Pharmacy staff</div><div class="what">Only notifications relevant to their own department.</div></div>
+    </div>
+    <p>Your information is never shared outside the Medical Centre's operational staff, and never shared with any external company or third party.</p>
+  </section>
+
+  <section id="s5">
+    <h2><span class="num">05</span> Where your data is stored</h2>
+    <p>All data is stored on Google Firebase (Firestore database and Firebase Authentication), hosted in Google's Asia South (Mumbai) region. Access to the underlying systems is restricted to authorized administrators.</p>
+  </section>
+
+  <section id="s6">
+    <h2><span class="num">06</span> How long we keep your data</h2>
+    <p>Your data is retained for as long as your account remains active. If you'd like your account or data removed, contact us using the details below and we will action the request.</p>
+  </section>
+
+  <section id="s7">
+    <h2><span class="num">07</span> Information about children</h2>
+    <p>If you add a child as a family member/dependent, that information — including any vaccination record kept once they're seen by the Medical Centre — is provided and managed by you (the account holder) on their behalf. Children do not create their own accounts or provide information directly.</p>
+  </section>
+
+  <section id="s8">
+    <h2><span class="num">08</span> Your choices</h2>
+    <ul class="plain">
+      <li>You can view and update most of your own profile and family information at any time within the app</li>
+      <li>Some fields (like CNIC) are locked after signup for record accuracy, and can only be corrected by contacting an admin</li>
+      <li>You can opt out of the Blood Donor Directory at any time</li>
+    </ul>
+  </section>
+
+  <section id="s9">
+    <h2><span class="num">09</span> This app is not your official medical record</h2>
+    <p>Sahulat is a facilitation and coordination tool. Your official clinical records are maintained separately through the Medical Centre's dedicated clinical records system, not through this app.</p>
+  </section>
+
+  <section id="s10">
+    <h2><span class="num">10</span> Changes to this policy</h2>
+    <p>If this policy changes, the updated version will be posted here with a new "last updated" date.</p>
+  </section>
+
+  <footer>
+    <div class="org">Sahulat — Community Wellbeing<br><span style="font-family:'IBM Plex Sans',sans-serif; font-weight:400; font-size:13px; color:var(--ink-faint);">Built by Homi Labs</span></div>
+    <div class="contact">Questions? <a href="mailto:homilabs.smc@gmail.com">homilabs.smc@gmail.com</a></div>
+  </footer>
+
+</div>
+</body>
+</html>

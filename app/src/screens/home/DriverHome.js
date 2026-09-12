@@ -242,7 +242,7 @@ export default function DriverHome({ navigation }) {
         <View style={styles.headerContent}>
           <View>
             <Text style={styles.headerTitle}>🚐 Driver Dashboard</Text>
-            <Text style={styles.headerSub}>FFL Medical Centre</Text>
+            <Text style={styles.headerSub}>Sahulat</Text>
           </View>
           {/* Bell + logout grouped on the right */}
           <View style={styles.headerRight}>

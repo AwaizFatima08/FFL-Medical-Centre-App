@@ -48,7 +48,7 @@ export default function AdminHome({ navigation }) {
     <ScrollView contentContainerStyle={styles.container}>
       <View style={styles.headerRow}>
         <View style={styles.headerLeft}>
-          <Text style={styles.heading}>FFL Medical Centre</Text>
+          <Text style={styles.heading}>Sahulat</Text>
           <Text style={styles.subheading}>Admin Dashboard</Text>
         </View>
         <View style={styles.headerRight}>

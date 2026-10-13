@@ -3,7 +3,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, ScrollView,
-  Animated, Modal, Pressable, Image, Dimensions, Platform,
+  Animated, Modal, Pressable, Image, Dimensions, Platform, useWindowDimensions,
 } from 'react-native';
 import { collection, query, where, getDocs } from 'firebase/firestore';
 import LogoutButton     from '../../components/LogoutButton';
@@ -64,6 +64,10 @@ function pickTipOfDay(pool) {
 }
 
 export default function EmployeeHome({ navigation }) {
+  // Permanent side panel only where there's room for it; phone browsers get
+  // the same slide-out menu as the native app.
+  const { width: windowWidth } = useWindowDimensions();
+  const isWide = IS_WEB && windowWidth >= 760;
   const [panelVisible, setPanelVisible] = useState(false);
   const [firstName, setFirstName] = useState('there');
   const slideAnim = useRef(new Animated.Value(-PANEL_WIDTH)).current;
@@ -150,7 +154,7 @@ export default function EmployeeHome({ navigation }) {
     // above), everything else stays static as before.
     const effectiveActive = tile.id === 'family' ? familyTileActive : tile.active;
     if (!effectiveActive) return;
-    if (!IS_WEB) closePanel();
+    if (!isWide) closePanel();
     navigation.navigate(tile.screen, { userRole: 'employee' });
   };
 
@@ -200,7 +204,7 @@ export default function EmployeeHome({ navigation }) {
 
   return (
     <View style={styles.root}>
-      {IS_WEB && (
+      {isWide && (
         <View style={[styles.webPanel, { width: PANEL_WIDTH }]}>
           {panelBody}
         </View>
@@ -209,7 +213,7 @@ export default function EmployeeHome({ navigation }) {
       <View style={styles.mainArea}>
         <ScrollView contentContainerStyle={styles.container}>
 
-          {IS_WEB ? (
+          {isWide ? (
             <View style={styles.headerRowWeb}>
               <Image
                 source={require('../../../assets/FFCL_Logo.png')}
@@ -265,7 +269,7 @@ export default function EmployeeHome({ navigation }) {
         </ScrollView>
       </View>
 
-      {!IS_WEB && (
+      {!isWide && (
         <Modal visible={panelVisible} transparent animationType="none" onRequestClose={closePanel}>
           <Pressable style={styles.backdrop} onPress={closePanel} />
           <Animated.View style={[styles.panel, { width: PANEL_WIDTH, transform: [{ translateX: slideAnim }] }]}>

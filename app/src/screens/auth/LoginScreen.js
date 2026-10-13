@@ -7,7 +7,7 @@ import React, { useState, useEffect } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, StyleSheet,
   StatusBar, KeyboardAvoidingView, Platform, ActivityIndicator,
-  ScrollView, Image,
+  ScrollView, Image, useWindowDimensions,
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { signInWithEmailAndPassword } from 'firebase/auth';
@@ -20,6 +20,10 @@ const REMEMBERED_EMAIL_KEY = 'ffl_remembered_email';
 const IS_WEB = Platform.OS === 'web';
 
 export default function LoginScreen({ navigation }) {
+  // The two-column web layout needs room for its 320px side panel; phone
+  // browsers get the same single-column layout as the native app.
+  const { width } = useWindowDimensions();
+  const useWideWebLayout = IS_WEB && width >= 760;
   const [email,      setEmail]      = useState('');
   const [password,   setPassword]   = useState('');
   const [loading,    setLoading]    = useState(false);
@@ -182,7 +186,7 @@ export default function LoginScreen({ navigation }) {
     </View>
   );
 
-  if (IS_WEB) {
+  if (useWideWebLayout) {
     return (
       <View style={styles.webRoot}>
         {/* Left credentials panel */}

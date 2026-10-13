@@ -17,13 +17,13 @@ export default function NotificationBell({ navigation }) {
       const auth = getAuth();
       if (!auth.currentUser) return;
       const token = await auth.currentUser.getIdToken();
-      const response = await fetch(`${API.notifications}/my`, {
+      // Count-only endpoint: one read, instead of downloading 50 notifications.
+      const response = await fetch(`${API.notifications}/unread-count`, {
         headers: { 'Authorization': `Bearer ${token}` },
       });
       const data = await response.json();
       if (response.ok) {
-        const unread = (data.data || []).filter(n => !n.isRead).length;
-        setUnreadCount(unread);
+        setUnreadCount(data.data?.count || 0);
       }
     } catch (error) {
       // Silently fail — bell is non-critical UI

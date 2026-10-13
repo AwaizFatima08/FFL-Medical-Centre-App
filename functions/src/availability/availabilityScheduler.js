@@ -7,7 +7,10 @@ const { isWithinWorkingHours } = require('../utils');
 const autoUpdateAvailability = async (event) => {
   try {
     const db = admin.firestore();
-    const snapshot = await db.collection('doctorAvailability').get();
+    // Runs 96×/day — only the docs that could need changing are read.
+    const snapshot = await db.collection('doctorAvailability')
+      .where('currentStatus', '==', AVAILABILITY_STATUS.AVAILABLE)
+      .get();
 
     for (const doc of snapshot.docs) {
       const data = doc.data();

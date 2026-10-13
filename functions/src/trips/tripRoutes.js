@@ -9,6 +9,7 @@ const express = require('express');
 const { getFirestore, Timestamp } = require('firebase-admin/firestore');
 const { createNotification } = require('../notifications/notificationRoutes');
 
+const { getUserRecord } = require('../auth/authRoutes');
 const router = express.Router();
 const db = getFirestore();
 
@@ -51,10 +52,10 @@ const STATUS = {
 // getUserRole(uid) as the first thing after extracting uid, so this one
 // change protects the whole file — no route bodies needed touching.
 async function getUserRole(uid) {
-  const doc = await db.collection('users').doc(uid).get();
-  if (!doc.exists) throw new Error('User not found');
-  if (doc.data().isActive !== true) throw new Error('Account is disabled or not yet active');
-  return doc.data().role;
+  const user = await getUserRecord(uid);   // cached briefly — see authRoutes.js
+  if (!user) throw new Error('User not found');
+  if (user.isActive !== true) throw new Error('Account is disabled or not yet active');
+  return user.role;
 }
 
 async function getEmployeeData(uid) {

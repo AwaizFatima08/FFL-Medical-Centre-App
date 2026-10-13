@@ -20,6 +20,7 @@ import {
 import * as Print   from 'expo-print';
 import * as Sharing from 'expo-sharing';
 import { VACCINATION_NURSE, CMO_CREDENTIALS, VACCINATION_REPORT_DISCLAIMER } from '../../constants';
+import { getEmployeeByUid } from '../../utils/employeeLookup';
 
 // ─── FFL Logo — base64 encoded inline ────────────────────────────────────────
 // Replace the placeholder below with the actual base64 string of FFCL_NEW_Logo.jpg
@@ -359,9 +360,7 @@ export default function VaccinationReportScreen({ route, navigation }) {
 
       // Employee
       if (childData.employeeId) {
-        const eQ    = query(collection(db, 'users'), where('uid', '==', childData.employeeId));
-        const eSnap = await getDocs(eQ);
-        if (!eSnap.empty) setEmployee(eSnap.docs[0].data());
+        setEmployee(await getEmployeeByUid(childData.employeeId));
       }
 
       // Vaccination records

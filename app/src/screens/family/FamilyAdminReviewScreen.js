@@ -1,7 +1,8 @@
 // app/src/screens/family/FamilyAdminReviewScreen.js
 import { webAlert, webConfirm } from '../../utils/webAlert';
 
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useState, useCallback } from 'react';
+import { useFocusEffect } from '@react-navigation/native';
 import {
   View, Text, StyleSheet, TouchableOpacity, ScrollView,
   ActivityIndicator, RefreshControl, TextInput, Modal,
@@ -12,6 +13,7 @@ import {
   getDocs, doc, updateDoc, Timestamp, orderBy,
 } from 'firebase/firestore';
 import NotificationBell from '../../components/NotificationBell';
+import { getEmployeeByUid } from '../../utils/employeeLookup';
 
 // ─── Tab options ──────────────────────────────────────────────────────────────
 // Day 14, Step F — added 'status' tab: admin's family-data-completeness
@@ -118,15 +120,12 @@ export default function FamilyAdminReviewScreen({ navigation }) {
   // ─── Fetch employee name ──────────────────────────────────────────────────
   const getEmployeeName = async (uid) => {
     if (employeeNames[uid]) return employeeNames[uid];
-    try {
-      const q    = query(collection(db, 'users'), where('uid', '==', uid));
-      const snap = await getDocs(q);
-      if (!snap.empty) {
-        const name = snap.docs[0].data().fullName || 'Unknown';
-        setEmployeeNames(prev => ({ ...prev, [uid]: name }));
-        return name;
-      }
-    } catch (err) { console.error('getEmployeeName error:', err); }
+    const emp = await getEmployeeByUid(uid);
+    if (emp) {
+      const name = emp.fullName || 'Unknown';
+      setEmployeeNames(prev => ({ ...prev, [uid]: name }));
+      return name;
+    }
     return 'Unknown';
   };
 
@@ -187,11 +186,8 @@ export default function FamilyAdminReviewScreen({ navigation }) {
     }
   }, [db]);
 
-  useEffect(() => {
-    fetchPending();
-    const unsubscribe = navigation.addListener('focus', fetchPending);
-    return unsubscribe;
-  }, [fetchPending, navigation]);
+  // Runs on first focus and every return (e.g. from Add/Edit) — once each.
+  useFocusEffect(useCallback(() => { fetchPending(); }, [fetchPending]));
 
   const onRefresh = () => { setRefreshing(true); fetchPending(); };
 

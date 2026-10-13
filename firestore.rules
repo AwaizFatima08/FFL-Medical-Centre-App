@@ -103,12 +103,22 @@ service cloud.firestore {
     }
 
     // ─── FAMILY MEMBERS (top-level collection) ───────────
+    // Employees may only add their own dependents as pending, and may only
+    // touch the fields their screens actually write (edit request, donor
+    // consent). Previously an owner could set status:'validated' on create
+    // or update, skipping admin review entirely.
     match /familyMembers/{memberId} {
       allow read: if isAuthenticated();
-      allow create: if isAuthenticated();
-      allow update: if isAuthenticated() &&
-                    (isAdminIncharge() ||
-                     resource.data.employeeId == request.auth.uid);
+      allow create: if isAdminIncharge() ||
+                    (isAuthenticated() &&
+                     request.resource.data.employeeId == request.auth.uid &&
+                     request.resource.data.status == 'pending' &&
+                     request.resource.data.isActive == true);
+      allow update: if isAdminIncharge() ||
+                    (isAuthenticated() &&
+                     resource.data.employeeId == request.auth.uid &&
+                     request.resource.data.diff(resource.data).affectedKeys()
+                       .hasOnly(['pendingRevision', 'bloodDonorConsent', 'updatedAt']));
       allow delete: if isAdminIncharge();
     }
 
@@ -181,8 +191,11 @@ service cloud.firestore {
     }
 
     // ─── NOTIFICATIONS ───────────────────────────────────
+    // The app reads notifications only through the API; direct reads are
+    // limited to the recipient (previously any user could read everyone's).
     match /notifications/{notificationId} {
-      allow read: if isAuthenticated();
+      allow read: if isAuthenticated() &&
+                  (resource.data.recipientUid == request.auth.uid || isAdminOrCMO());
       allow create: if isAnyRole(['doctor', 'cmo', 'nurse', 'reception',
                                    'lab_technologist', 'pharmacy_incharge',
                                    'admin_incharge']);
@@ -260,6 +273,13 @@ service cloud.firestore {
     match /workingHours/{roleId} {
       allow read: if isAuthenticated();
       allow write: if isCMO();
+    }
+
+    // ─── APP CONFIG (org structure etc.) ─────────────────
+    // Read by every signed-in client; written only by the backend.
+    match /config/{docId} {
+      allow read: if isAuthenticated();
+      allow write: if false;
     }
 
     // ─── HEALTH TIPS ─────────────────────────────────────

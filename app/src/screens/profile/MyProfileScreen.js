@@ -32,7 +32,8 @@
 // post-signup.
 
 import { webAlert } from '../../utils/webAlert';
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useState, useCallback } from 'react';
+import { useFocusEffect } from '@react-navigation/native';
 import {
   View, Text, StyleSheet, TouchableOpacity, ScrollView,
   ActivityIndicator, Switch, TextInput, Linking,
@@ -42,27 +43,19 @@ import { getFirestore, collection, query, where, getDocs } from 'firebase/firest
 import { API } from '../../config/api';
 import NotificationBell from '../../components/NotificationBell';
 import {
-  MARITAL_STATUSES, GENDERS, DEPARTMENT_GROUPS,
-  MANAGEMENT_DESIGNATIONS, NON_MANAGEMENT_DESIGNATIONS, ESB_DESIGNATIONS,
-  EMPLOYEE_TYPES,
+  MARITAL_STATUSES, GENDERS, EMPLOYEE_TYPES,
 } from '../../constants';
+import {
+  useOrgStructure, departmentLabel as deptLabelOf, unitLabel as unitLabelOf,
+  designationLabel as designationLabelOf,
+} from '../../utils/orgStructure';
 
-// ─── Label lookups — stored values are codes, these map back to display text
-const ALL_DEPARTMENTS = [
-  ...DEPARTMENT_GROUPS.PLANT.departments,
-  ...DEPARTMENT_GROUPS.HO.departments,
-  ...DEPARTMENT_GROUPS.ESB.departments,
-];
-const ALL_DESIGNATIONS = [
-  ...MANAGEMENT_DESIGNATIONS, ...NON_MANAGEMENT_DESIGNATIONS, ...ESB_DESIGNATIONS,
-];
+// Stored values are codes; labels come from the admin-editable org structure.
 const EMPLOYEE_TYPE_LABELS = {
   [EMPLOYEE_TYPES.MANAGEMENT]:     'Management',
   [EMPLOYEE_TYPES.NON_MANAGEMENT]: 'Non-Management',
   [EMPLOYEE_TYPES.ESB]:            'ESB',
 };
-
-const labelFor = (list, value) => list.find(o => o.value === value)?.label || value || '—';
 
 const PRIVACY_POLICY_URL = 'https://sahulat.homilabs.org/privacypolicy.html';
 
@@ -119,6 +112,7 @@ function GenderPicker({ value, onSelect, disabled }) {
 }
 
 export default function MyProfileScreen({ navigation }) {
+  const org = useOrgStructure();
   const [loading,      setLoading]      = useState(true);
   const [employeeId,   setEmployeeId]   = useState(null);
   const [employee,     setEmployee]     = useState(null);
@@ -189,11 +183,8 @@ export default function MyProfileScreen({ navigation }) {
     }
   }, [db]);
 
-  useEffect(() => {
-    fetchProfile();
-    const unsubscribe = navigation.addListener('focus', fetchProfile);
-    return unsubscribe;
-  }, [fetchProfile, navigation]);
+  // Runs on first focus and every return (e.g. from Add/Edit) — once each.
+  useFocusEffect(useCallback(() => { fetchProfile(); }, [fetchProfile]));
 
   // ─── Submit initial confirmation ───────────────────────────────────────
   const handleConfirm = async () => {
@@ -384,8 +375,9 @@ export default function MyProfileScreen({ navigation }) {
   }
 
   const isConfirmed = !!employee.dataConfirmedByEmployee;
-  const departmentLabel   = labelFor(ALL_DEPARTMENTS, employee.department);
-  const designationLabel  = labelFor(ALL_DESIGNATIONS, employee.designation);
+  const departmentLabel   = deptLabelOf(org, employee.department);
+  const unitLabel         = employee.unit ? unitLabelOf(org, employee.department, employee.unit) : null;
+  const designationLabel  = designationLabelOf(org, employee.designation);
   const employeeTypeLabel = EMPLOYEE_TYPE_LABELS[employee.employeeType] || '—';
 
   return (
@@ -415,7 +407,7 @@ export default function MyProfileScreen({ navigation }) {
             <View style={styles.card}>
               <FieldRow label="Employee Type" value={employeeTypeLabel} />
               <FieldRow label="Department"    value={departmentLabel} />
-              <FieldRow label="Unit"          value={employee.unit} />
+              <FieldRow label="Unit"          value={unitLabel} />
               <FieldRow label="Designation"   value={designationLabel} />
               <FieldRow label="Blood Group"   value={employee.bloodGroup} />
             </View>
@@ -499,7 +491,7 @@ export default function MyProfileScreen({ navigation }) {
             <View style={styles.card}>
               <FieldRow label="Employee Type" value={employeeTypeLabel} />
               <FieldRow label="Department"    value={departmentLabel} />
-              <FieldRow label="Unit"          value={employee.unit} />
+              <FieldRow label="Unit"          value={unitLabel} />
               <FieldRow label="Designation"   value={designationLabel} />
               <FieldRow label="Blood Group"   value={employee.bloodGroup} />
             </View>

@@ -5,6 +5,7 @@ const { getFirestore, Timestamp, FieldValue } = require('firebase-admin/firestor
 const { ROLES, AMBULANCE_STATUS } = require('../constants');
 const { createNotification } = require('../notifications/notificationRoutes');
 
+const { getUserRecord } = require('../auth/authRoutes');
 const router = express.Router();
 const db = getFirestore();
 
@@ -17,10 +18,10 @@ const db = getFirestore();
 // uid, so this one change protects the whole file — no route bodies
 // needed touching.
 async function getUserRole(uid) {
-  const userDoc = await db.collection('users').doc(uid).get();
-  if (!userDoc.exists) throw new Error('User not found');
-  if (userDoc.data().isActive !== true) throw new Error('Account is disabled or not yet active');
-  return userDoc.data().role;
+  const user = await getUserRecord(uid);   // cached briefly — see authRoutes.js
+  if (!user) throw new Error('User not found');
+  if (user.isActive !== true) throw new Error('Account is disabled or not yet active');
+  return user.role;
 }
 
 // Helper: get employee data

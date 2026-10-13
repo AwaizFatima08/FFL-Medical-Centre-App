@@ -4,13 +4,12 @@ const admin   = require('firebase-admin');
 const PDFDocument = require('pdfkit');
 const { Parser }  = require('json2csv');
 const { verifyToken, verifyRole } = require('../auth/authRoutes');
-const { successResponse, errorResponse, sanitizeCsvRow } = require('../utils');
+const { successResponse, errorResponse, sanitizeCsvRow, chunkArray } = require('../utils');
 const {
   ROLES,
   AMBULANCE_STATUS,
   BOOKING_STATUS,
   APPOINTMENT_STATUS,
-  VACCINE_STATUS,
   MEDICAL_TRIP_TOTAL_SEATS,   // ← Day 13 (Phase 2): real configured capacity, replaces the old tripData.totalSeats fallback
 } = require('../constants');
 
@@ -119,11 +118,42 @@ const tsToDateStr = (ts) => {
 // Fitness, Feedback) — those record things that already happened, and
 // filtering by an employee's *current* status would hide real past
 // events and skew trend data.
+// Census reports all read the same three collections. A CMO typically opens
+// several reports in a row, so the snapshots are shared for a few minutes
+// per function instance instead of being re-read for every report.
+const CENSUS_TTL_MS = 3 * 60 * 1000;
+const censusCache = new Map();
+const cachedRead = (key, loader) => {
+  const hit = censusCache.get(key);
+  if (hit && hit.expires > Date.now()) return hit.promise;
+  const promise = loader().catch((err) => { censusCache.delete(key); throw err; });
+  censusCache.set(key, { promise, expires: Date.now() + CENSUS_TTL_MS });
+  return promise;
+};
+const getValidatedEmployees = (db) =>
+  cachedRead('employees:validated', () => db.collection('employees').where('isValidated', '==', true).get());
+const getAllEmployees = (db) =>
+  cachedRead('employees:all', () => db.collection('employees').get());
+const getAllFamilyMembers = (db) =>
+  cachedRead('familyMembers:all', () => db.collection('familyMembers').get());
+const getAllUsers = (db) =>
+  cachedRead('users:all', () => db.collection('users').get());
+
 const getActiveUserMap = async (db) => {
-  const usersSnap = await db.collection('users').get();
+  const usersSnap = await getAllUsers(db);
   const map = {};
   usersSnap.docs.forEach(doc => { map[doc.id] = doc.data().isActive === true; });
   return map;
+};
+
+// ambulanceRequests.createdAt is an ISO string, so a date range can be
+// applied in the query itself (same field as the orderBy — no extra index)
+// instead of reading every request ever made and filtering in memory.
+const ambulanceRequestsBetween = (db, fromDate, toDate) => {
+  let q = db.collection('ambulanceRequests').orderBy('createdAt', 'desc');
+  if (fromDate) q = q.where('createdAt', '>=', fromDate);
+  if (toDate)   q = q.where('createdAt', '<', `${toDate}\uffff`);
+  return q.get();
 };
 
 // ─────────────────────────────────────────────────────────
@@ -148,8 +178,7 @@ router.get('/ambulance', verifyToken, verifyRole([
   try {
     const db = admin.firestore();
     const { fromDate, toDate, priorityFlag, vehicleType, status, employeeSearch, falseEmergencyOnly } = req.query;
-    const snapshot = await db.collection('ambulanceRequests')
-      .orderBy('createdAt', 'desc').get();
+    const snapshot = await ambulanceRequestsBetween(db, fromDate, toDate);
     let requests = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
     requests = requests.filter(r => inDateRange(r.createdAt, fromDate, toDate));
     if (priorityFlag) requests = requests.filter(r => r.priorityFlag === priorityFlag);
@@ -200,42 +229,6 @@ router.get('/ambulance', verifyToken, verifyRole([
   }
 });
 
-// ─── GET /vaccination ─────────────────────────────────────
-router.get('/vaccination', verifyToken, verifyRole([
-  ROLES.CMO, ROLES.DOCTOR, ROLES.NURSE, ROLES.RECEPTION,
-]), async (req, res) => {
-  try {
-    const db = admin.firestore();
-    const profilesSnapshot = await db.collection('vaccinationProfiles').get();
-    const profilesWithSchedule = await Promise.all(profilesSnapshot.docs.map(async (profileDoc) => {
-      const profile = { id: profileDoc.id, ...profileDoc.data() };
-      const scheduleSnapshot = await db.collection('vaccinationProfiles').doc(profileDoc.id).collection('scheduleItems').get();
-      const schedule = scheduleSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-      const administered = schedule.filter(s => s.status === VACCINE_STATUS.ADMINISTERED).length;
-      const pending      = schedule.filter(s => s.status === VACCINE_STATUS.PENDING).length;
-      const missed       = schedule.filter(s => s.status === VACCINE_STATUS.MISSED).length;
-      const rescheduled  = schedule.filter(s => s.status === VACCINE_STATUS.RESCHEDULED).length;
-      const overdue      = schedule.filter(s => {
-        const effectiveDate = s.rescheduledDate || s.dueDate;
-        return s.status === VACCINE_STATUS.PENDING && effectiveDate < new Date().toISOString().split('T')[0];
-      }).length;
-      return { ...profile, stats: { total: schedule.length, administered, pending, missed, rescheduled, overdue,
-        complianceRate: schedule.length > 0 ? Math.round((administered / schedule.length) * 100) : 0 } };
-    }));
-    const summary = {
-      totalChildren:     profilesWithSchedule.length,
-      fullyCompliant:    profilesWithSchedule.filter(p => p.stats.pending === 0 && p.stats.missed === 0).length,
-      withOverdue:       profilesWithSchedule.filter(p => p.stats.overdue > 0).length,
-      averageCompliance: profilesWithSchedule.length > 0
-        ? Math.round(profilesWithSchedule.reduce((sum, p) => sum + p.stats.complianceRate, 0) / profilesWithSchedule.length)
-        : 0,
-    };
-    return successResponse(res, { summary, profiles: profilesWithSchedule });
-  } catch (error) {
-    return errorResponse(res, 'Failed to generate vaccination report', 500);
-  }
-});
-
 // ─── GET /fitness ─────────────────────────────────────────
 // Phase 10 — Annual Fitness Report. Access narrowed to CMO only (was
 // CMO/Doctor/Admin Incharge) — safe, since no frontend tile called this
@@ -263,8 +256,8 @@ router.get('/fitness', verifyToken, verifyRole([
     let appointments = allAppointments;
     if (cycleYear) appointments = appointments.filter(a => a.cycleYear === parseInt(cycleYear));
 
-    const empSnapshot = await db.collection('employees').where('isValidated', '==', true).get();
-    const totalEmployees = empSnapshot.size;
+    const countSnap = await db.collection('employees').where('isValidated', '==', true).count().get();
+    const totalEmployees = countSnap.data().count;
     const summary = {
       totalEmployees,
       scheduled:    appointments.filter(a => a.status === APPOINTMENT_STATUS.SCHEDULED).length,
@@ -415,8 +408,8 @@ router.get('/employees/report', verifyToken, verifyRole([
     const { format } = req.query;
 
     const [empSnapshot, familySnapshot, activeUserMap] = await Promise.all([
-      db.collection('employees').where('isValidated', '==', true).get(),
-      db.collection('familyMembers').get(),
+      getValidatedEmployees(db),
+      getAllFamilyMembers(db),
       getActiveUserMap(db),
     ]);
 
@@ -547,7 +540,7 @@ router.get('/employees', verifyToken, verifyRole([
     // returned 0. Fixed to the same top-level `familyMembers` collection,
     // fetched once and grouped by employeeId (== employees.userId), that
     // /employees/report already uses correctly.
-    const familySnapshot = await db.collection('familyMembers').get();
+    const familySnapshot = await getAllFamilyMembers(db);
     const familyRelations = ['spouse', 'son', 'daughter'];
     const familyCountByEmployee = {};
     familySnapshot.docs.forEach(doc => {
@@ -591,7 +584,7 @@ router.get('/chronic-disease', verifyToken, verifyRole([
     const { format } = req.query;
 
     const [empSnapshot, activeUserMap] = await Promise.all([
-      db.collection('employees').where('isValidated', '==', true).get(),
+      getValidatedEmployees(db),
       getActiveUserMap(db),
     ]);
     // Phase 10 — census report: exclude employees whose linked users
@@ -1122,9 +1115,9 @@ router.get('/ambulance/kpis', verifyToken, verifyRole([
     if (fromDate && fromDate > todayStr) fromDate = todayStr;
     if (toDate && toDate > todayStr) toDate = todayStr;
 
-    const snapshot = await db.collection('ambulanceRequests')
-      .orderBy('createdAt', 'desc')
-      .get();
+    const queryFrom = date || fromDate || null;
+    const queryTo   = [date || toDate, todayStr].filter(Boolean).sort()[0];
+    const snapshot  = await ambulanceRequestsBetween(db, queryFrom, queryTo);
 
     let requests = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
 
@@ -1138,12 +1131,15 @@ router.get('/ambulance/kpis', verifyToken, verifyRole([
     // employeeName join, via employeeNumber (officialEmployeeNumber) —
     // ambulanceRequests.employeeNumber stores the official number, not a
     // uid, so the lookup map is keyed the same way.
-    const empSnapshot = await db.collection('employees').get();
+    // Only the employees that appear in these rows are read (was: all).
     const empByNumber = {};
-    empSnapshot.docs.forEach(doc => {
+    const numbers = [...new Set(requests.map(r => r.employeeNumber).filter(Boolean))];
+    const empSnaps = await Promise.all(chunkArray(numbers, 30).map(chunk =>
+      db.collection('employees').where('officialEmployeeNumber', 'in', chunk).get()));
+    empSnaps.forEach(snap => snap.docs.forEach(doc => {
       const e = doc.data();
       if (e.officialEmployeeNumber) empByNumber[e.officialEmployeeNumber] = e;
-    });
+    }));
 
     const NATURE_LABEL = {
       emergency: 'Emergency',
@@ -1266,145 +1262,6 @@ router.get('/ambulance/kpis', verifyToken, verifyRole([
   }
 });
 
-// ─── GET /population/township ─────────────────────────────
-// Township population report with family details — CMO only — PDF
-router.get('/population/township', verifyToken, verifyRole([
-  ROLES.CMO,
-]), async (req, res) => {
-  try {
-    const db = admin.firestore();
-    const { format } = req.query;
-
-    const empSnap = await db.collection('employees')
-      .where('isValidated', '==', true)
-      .get();
-
-    let employees = empSnap.docs
-      .map(doc => ({ id: doc.id, ...doc.data() }))
-      .filter(e => e.townshipResidentWithFamily === true || e.townshipResidentBachelor === true);
-
-    const enriched = await Promise.all(employees.map(async (emp) => {
-      const famSnap = await db.collection('employees')
-        .doc(emp.id).collection('familyMembers').get();
-      const family = famSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-      return { ...emp, familyMembers: family };
-    }));
-
-    if (format === 'pdf') {
-      return sendPDF(res, 'township-population.pdf', (doc) => {
-        doc.fontSize(16).font('Helvetica-Bold')
-           .text('FFL Medical Centre', { align: 'center' });
-        doc.fontSize(12).font('Helvetica')
-           .text('Township Population Report', { align: 'center' });
-        doc.fontSize(9).font('Helvetica')
-           .text(`Total Employees: ${enriched.length}  |  Generated: ${new Date().toLocaleDateString('en-PK')}`, { align: 'center' });
-        doc.moveDown();
-        doc.moveTo(40, doc.y).lineTo(555, doc.y).stroke();
-        doc.moveDown(0.5);
-
-        enriched.forEach((emp, i) => {
-          if (doc.y > 700) doc.addPage();
-
-          doc.fontSize(10).font('Helvetica-Bold')
-             .text(`${i + 1}. ${emp.fullName}  [${emp.officialEmployeeNumber || '—'}]`);
-          doc.fontSize(9).font('Helvetica')
-             .text(`Dept: ${emp.department || '—'}  |  Unit: ${emp.unit || '—'}  |  Designation: ${emp.designation || '—'}  |  Residence: ${emp.residenceType || '—'}  |  ${emp.houseNumber ? 'House: ' + emp.houseNumber : emp.roomNumber ? 'Room: ' + emp.roomNumber : ''}  |  Age: ${calcAge(emp.dateOfBirth) ?? '—'}`);
-
-          if (emp.familyMembers.length > 0) {
-            doc.fontSize(8).font('Helvetica-Oblique').text('  Family Members:');
-            emp.familyMembers.forEach(fm => {
-              doc.fontSize(8).font('Helvetica')
-                 .text(`    • ${fm.fullName}  |  ${fm.relation || '—'}  |  ${fm.gender || '—'}  |  Age: ${calcAge(fm.dateOfBirth) ?? '—'}  |  Differently Abled: ${fm.differentlyAbled ? 'Yes' : 'No'}`);
-            });
-          } else {
-            doc.fontSize(8).font('Helvetica-Oblique').text('  No family members registered.');
-          }
-          doc.moveDown(0.5);
-          doc.moveTo(40, doc.y).lineTo(555, doc.y).stroke('#eeeeee');
-          doc.moveDown(0.3);
-        });
-      });
-    }
-
-    return successResponse(res, {
-      total: enriched.length,
-      employees: enriched,
-    });
-
-  } catch (error) {
-    console.error('Township population report error:', error);
-    return errorResponse(res, 'Failed to generate township population report', 500);
-  }
-});
-
-// ─── GET /population/non-township ────────────────────────
-// Non-township employee + family report — CMO only — PDF
-router.get('/population/non-township', verifyToken, verifyRole([
-  ROLES.CMO,
-]), async (req, res) => {
-  try {
-    const db = admin.firestore();
-    const { format } = req.query;
-
-    const empSnap = await db.collection('employees')
-      .where('isValidated', '==', true)
-      .get();
-
-    let employees = empSnap.docs
-      .map(doc => ({ id: doc.id, ...doc.data() }))
-      .filter(e => e.townshipResidentWithFamily === false && e.townshipResidentBachelor === false);
-
-    const enriched = await Promise.all(employees.map(async (emp) => {
-      const famSnap = await db.collection('employees')
-        .doc(emp.id).collection('familyMembers').get();
-      const family = famSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-      return { ...emp, familyMembers: family };
-    }));
-
-    if (format === 'pdf') {
-      return sendPDF(res, 'non-township-population.pdf', (doc) => {
-        doc.fontSize(16).font('Helvetica-Bold')
-           .text('FFL Medical Centre', { align: 'center' });
-        doc.fontSize(12).font('Helvetica')
-           .text('Non-Township Employee Report', { align: 'center' });
-        doc.fontSize(9).font('Helvetica')
-           .text(`Total Employees: ${enriched.length}  |  Generated: ${new Date().toLocaleDateString('en-PK')}`, { align: 'center' });
-        doc.moveDown();
-        doc.moveTo(40, doc.y).lineTo(555, doc.y).stroke();
-        doc.moveDown(0.5);
-
-        enriched.forEach((emp, i) => {
-          if (doc.y > 700) doc.addPage();
-
-          doc.fontSize(10).font('Helvetica-Bold')
-             .text(`${i + 1}. ${emp.fullName}  [${emp.officialEmployeeNumber || '—'}]`);
-          doc.fontSize(9).font('Helvetica')
-             .text(`Dept: ${emp.department || '—'}  |  Unit: ${emp.unit || '—'}  |  Designation: ${emp.designation || '—'}  |  City: ${emp.cityOfResidence || '—'}  |  Age: ${calcAge(emp.dateOfBirth) ?? '—'}`);
-
-          if (emp.familyMembers.length > 0) {
-            doc.fontSize(8).font('Helvetica-Oblique').text('  Family Members:');
-            emp.familyMembers.forEach(fm => {
-              doc.fontSize(8).font('Helvetica')
-                 .text(`    • ${fm.fullName}  |  ${fm.relation || '—'}  |  ${fm.gender || '—'}  |  Age: ${calcAge(fm.dateOfBirth) ?? '—'}  |  Differently Abled: ${fm.differentlyAbled ? 'Yes' : 'No'}`);
-            });
-          } else {
-            doc.fontSize(8).font('Helvetica-Oblique').text('  No family members registered.');
-          }
-          doc.moveDown(0.5);
-          doc.moveTo(40, doc.y).lineTo(555, doc.y).stroke('#eeeeee');
-          doc.moveDown(0.3);
-        });
-      });
-    }
-
-    return successResponse(res, { total: enriched.length, employees: enriched });
-
-  } catch (error) {
-    console.error('Non-township report error:', error);
-    return errorResponse(res, 'Failed to generate non-township report', 500);
-  }
-});
-
 // ─── GET /population/report ───────────────────────────────
 // Phase 10 — Population Report (new). Grouped summary tiles, not a row
 // table — a statistics dashboard, genuinely different shape from every
@@ -1439,8 +1296,8 @@ router.get('/population/report', verifyToken, verifyRole([
     const { format } = req.query;
 
     const [empSnapshot, familySnapshot, activeUserMap] = await Promise.all([
-      db.collection('employees').where('isValidated', '==', true).get(),
-      db.collection('familyMembers').get(),
+      getValidatedEmployees(db),
+      getAllFamilyMembers(db),
       getActiveUserMap(db),
     ]);
 
@@ -1675,8 +1532,8 @@ router.get('/family-report', verifyToken, verifyRole([
     const { format } = req.query;
 
     const [empSnapshot, familySnapshot, activeUserMap] = await Promise.all([
-      db.collection('employees').where('isValidated', '==', true).get(),
-      db.collection('familyMembers').get(),
+      getValidatedEmployees(db),
+      getAllFamilyMembers(db),
       getActiveUserMap(db),
     ]);
 
@@ -1782,95 +1639,6 @@ router.get('/family-report', verifyToken, verifyRole([
   }
 });
 
-// ─── GET /population/employees-only ──────────────────────
-// Employee only report — no family details — CMO only
-router.get('/population/employees-only', verifyToken, verifyRole([
-  ROLES.CMO,
-]), async (req, res) => {
-  try {
-    const db = admin.firestore();
-    const { format } = req.query;
-
-    const empSnap = await db.collection('employees')
-      .where('isValidated', '==', true)
-      .get();
-
-    const employees = await Promise.all(empSnap.docs.map(async (doc) => {
-      const emp = { id: doc.id, ...doc.data() };
-      const famSnap = await db.collection('employees')
-        .doc(emp.id).collection('familyMembers').get();
-      return {
-        id:                     emp.id,
-        fullName:               emp.fullName               || '—',
-        officialEmployeeNumber: emp.officialEmployeeNumber || '—',
-        department:             emp.department             || '—',
-        unit:                   emp.unit                   || '—',
-        designation:            emp.designation            || '—',
-        houseNumber:            emp.houseNumber            || emp.roomNumber || '—',
-        age:                    calcAge(emp.dateOfBirth)   ?? '—',
-        familyMemberCount:      famSnap.size,
-        residenceType:          emp.residenceType          || '—',
-        cityOfResidence:        emp.cityOfResidence        || '—',
-      };
-    }));
-
-    if (format === 'pdf') {
-      return sendPDF(res, 'employee-report.pdf', (doc) => {
-        doc.fontSize(16).font('Helvetica-Bold')
-           .text('FFL Medical Centre', { align: 'center' });
-        doc.fontSize(12).font('Helvetica')
-           .text('Employee Report', { align: 'center' });
-        doc.fontSize(9).font('Helvetica')
-           .text(`Total: ${employees.length}  |  Generated: ${new Date().toLocaleDateString('en-PK')}`, { align: 'center' });
-        doc.moveDown();
-        doc.moveTo(40, doc.y).lineTo(555, doc.y).stroke();
-        doc.moveDown(0.5);
-
-        const c = { no: 40, name: 65, empNo: 190, dept: 270, desig: 360, house: 445, age: 495, fam: 520 };
-        doc.fontSize(8).font('Helvetica-Bold');
-        doc.text('#',           c.no,    doc.y, { width: 22 });
-        doc.moveUp(); doc.text('Name',   c.name,  doc.y, { width: 122 });
-        doc.moveUp(); doc.text('Emp No', c.empNo, doc.y, { width: 77 });
-        doc.moveUp(); doc.text('Dept',   c.dept,  doc.y, { width: 87 });
-        doc.moveUp(); doc.text('Desig',  c.desig, doc.y, { width: 82 });
-        doc.moveUp(); doc.text('House',  c.house, doc.y, { width: 47 });
-        doc.moveUp(); doc.text('Age',    c.age,   doc.y, { width: 22 });
-        doc.moveUp(); doc.text('Fam',    c.fam,   doc.y, { width: 22 });
-        doc.moveDown(0.3);
-        doc.moveTo(40, doc.y).lineTo(555, doc.y).stroke();
-        doc.moveDown(0.3);
-
-        doc.fontSize(8).font('Helvetica');
-        employees.forEach((e, i) => {
-          if (doc.y > 760) doc.addPage();
-          const y = doc.y;
-          doc.text(String(i + 1),       c.no,    y, { width: 22 });
-          doc.moveUp(); doc.text(e.fullName,               c.name,  y, { width: 122 });
-          doc.moveUp(); doc.text(e.officialEmployeeNumber, c.empNo, y, { width: 77 });
-          doc.moveUp(); doc.text(e.department,             c.dept,  y, { width: 87 });
-          doc.moveUp(); doc.text(e.designation,            c.desig, y, { width: 82 });
-          doc.moveUp(); doc.text(e.houseNumber,            c.house, y, { width: 47 });
-          doc.moveUp(); doc.text(String(e.age),            c.age,   y, { width: 22 });
-          doc.moveUp(); doc.text(String(e.familyMemberCount), c.fam, y, { width: 22 });
-          doc.moveDown(0.2);
-          doc.moveTo(40, doc.y).lineTo(555, doc.y).stroke('#eeeeee');
-          doc.moveDown(0.2);
-        });
-
-        doc.moveDown();
-        doc.fontSize(8).font('Helvetica-Oblique')
-           .text(`Generated: ${new Date().toLocaleString('en-PK')}`, { align: 'right' });
-      });
-    }
-
-    return successResponse(res, { total: employees.length, employees });
-
-  } catch (error) {
-    console.error('Employee only report error:', error);
-    return errorResponse(res, 'Failed to generate employee report', 500);
-  }
-});
-
 // ─── GET /blood-donors/report ─────────────────────────────
 // Phase 10 — Blood Donor Report (redesign). Reads bloodDonorRegistry —
 // a genuinely different dataset from the Blood Group Distribution grid
@@ -1909,9 +1677,9 @@ router.get('/blood-donors/report', verifyToken, verifyRole([
 
     const [registrySnap, empSnap, usersSnap, familySnap] = await Promise.all([
       db.collection('bloodDonorRegistry').get(),
-      db.collection('employees').get(),
-      db.collection('users').get(),
-      db.collection('familyMembers').get(),
+      getAllEmployees(db),
+      getAllUsers(db),
+      getAllFamilyMembers(db),
     ]);
 
     const employeeByUserId = {};
@@ -2054,51 +1822,6 @@ router.get('/blood-donors/report', verifyToken, verifyRole([
   } catch (error) {
     console.error('Blood donor report error:', error);
     return errorResponse(res, 'Failed to generate blood donor report', 500);
-  }
-});
-
-// ─── GET /blood-groups/csv ────────────────────────────────
-// Blood group repository — CSV download — admin only
-router.get('/blood-groups/csv', verifyToken, verifyRole([
-  ROLES.ADMIN_INCHARGE, ROLES.CMO,
-]), async (req, res) => {
-  try {
-    const db = admin.firestore();
-
-    const empSnap = await db.collection('employees')
-      .where('isValidated', '==', true)
-      .get();
-
-    const rows = empSnap.docs
-      .map(doc => doc.data())
-      .filter(e => e.bloodGroup)
-      .map(e => ({
-        'Employee Number': e.officialEmployeeNumber || '—',
-        'Full Name':       e.fullName               || '—',
-        'Blood Group':     e.bloodGroup             || '—',
-        'Phone Number':    e.phoneNumber            || '—',
-        'Department':      e.department             || '—',
-        'Designation':     e.designation            || '—',
-        'Donor Consent':   e.bloodDonorConsent ? 'Yes' : 'No',
-      }))
-      .sort((a, b) => a['Blood Group'].localeCompare(b['Blood Group']));
-
-    if (!rows.length) {
-      return errorResponse(res, 'No employees with blood group data found', 404);
-    }
-
-    const parser = new Parser({
-      fields: ['Employee Number', 'Full Name', 'Blood Group', 'Phone Number', 'Department', 'Designation', 'Donor Consent'],
-    });
-    const csv = parser.parse(rows.map(sanitizeCsvRow));
-
-    res.setHeader('Content-Type', 'text/csv');
-    res.setHeader('Content-Disposition', 'attachment; filename="blood-group-repository.csv"');
-    return res.send(csv);
-
-  } catch (error) {
-    console.error('Blood group CSV error:', error);
-    return errorResponse(res, 'Failed to generate blood group CSV', 500);
   }
 });
 

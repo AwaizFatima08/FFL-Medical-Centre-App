@@ -14,20 +14,21 @@
 // a success alert names the family-member count, but only when it's
 // actually greater than 0 — most accounts (drivers, reception, etc.) have
 // no family members, so this stays quiet for the common case.
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity,
   ScrollView, ActivityIndicator, Alert,
   RefreshControl, Platform, TextInput,
 } from 'react-native';
 import { getAuth } from 'firebase/auth';
-import { useFocusEffect } from '@react-navigation/native';
 import { API } from '../../config/api';
 import NotificationBell from '../../components/NotificationBell';
 import {
-  EMPLOYEE_TYPES, DEPARTMENT_GROUPS, UNITS,
-  getDesignationsByType, BLOOD_GROUPS, CHRONIC_DISEASE_OPTIONS, CNIC_PATTERN,
+  EMPLOYEE_TYPES, BLOOD_GROUPS, CHRONIC_DISEASE_OPTIONS, CNIC_PATTERN,
 } from '../../constants';
+import {
+  useOrgStructure, departmentOptions, unitOptions, designationOptions, ESB_DEPARTMENT,
+} from '../../utils/orgStructure';
 
 const ROLE_OPTIONS = [
   { label: 'Employee',          value: 'employee' },
@@ -46,13 +47,6 @@ const EMPLOYEE_TYPE_OPTIONS = [
   { label: 'Non-Management', value: EMPLOYEE_TYPES.NON_MANAGEMENT },
   { label: 'ESB',            value: EMPLOYEE_TYPES.ESB },
 ];
-
-const DEPARTMENT_OPTIONS = [
-  ...DEPARTMENT_GROUPS.PLANT.departments,
-  ...DEPARTMENT_GROUPS.HO.departments,
-];
-
-const ESB_DEPARTMENT_VALUE = DEPARTMENT_GROUPS.ESB.departments[0].value; // 'ESB'
 
 const webAlert = (title, message) => {
   if (Platform.OS === 'web') {
@@ -80,6 +74,7 @@ const webConfirm = (title, message, onConfirm, destructive = false) => {
 };
 
 export default function UserManagementScreen({ navigation }) {
+  const org = useOrgStructure();
   const [users,      setUsers]      = useState([]);
   const [loading,    setLoading]    = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -121,10 +116,9 @@ export default function UserManagementScreen({ navigation }) {
     }
   }, []);
 
-  useFocusEffect(useCallback(() => {
-    setLoading(true);
-    fetchUsers();
-  }, [fetchUsers]));
+  // Mount + pull-to-refresh only: every action below updates local state, so
+  // re-reading every user on each return to this screen was pure cost.
+  useEffect(() => { fetchUsers(); }, [fetchUsers]);
 
   const onRefresh = () => { setRefreshing(true); fetchUsers(); };
 
@@ -307,12 +301,12 @@ export default function UserManagementScreen({ navigation }) {
 
   const handleEmployeeTypeChange = (employeeId, employeeType) => {
     if (employeeType === EMPLOYEE_TYPES.ESB) {
-      const esbUnit = UNITS[ESB_DEPARTMENT_VALUE]?.[0] || '';
+      const esbUnit = unitOptions(org, ESB_DEPARTMENT)[0]?.value || '';
       setProfileData(prev => ({
         ...prev,
         [employeeId]: {
           ...getProfile(employeeId),
-          employeeType, department: ESB_DEPARTMENT_VALUE, unit: esbUnit, designation: '',
+          employeeType, department: ESB_DEPARTMENT, unit: esbUnit, designation: '',
         },
       }));
     } else {
@@ -327,8 +321,8 @@ export default function UserManagementScreen({ navigation }) {
   };
 
   const handleDepartmentChange = (employeeId, department) => {
-    const options = UNITS[department] || [];
-    const autoUnit = options.length === 1 ? options[0] : '';
+    const options = unitOptions(org, department);
+    const autoUnit = options.length === 1 ? options[0].value : '';
     setProfileData(prev => ({
       ...prev,
       [employeeId]: { ...getProfile(employeeId), department, unit: autoUnit },
@@ -460,10 +454,9 @@ export default function UserManagementScreen({ navigation }) {
           const isActioning = actioning === user.uid;
           const isEditingProfile = editingProfile === user.employeeId;
           const profile = getProfile(user.employeeId);
-          const unitOptions = UNITS[profile.department] || [];
-          const designationOptions = profile.employeeType
-            ? getDesignationsByType(profile.employeeType)
-            : [];
+          const deptChoices = departmentOptions(org, { current: profile.department });
+          const unitChoices = unitOptions(org, profile.department, { current: profile.unit });
+          const designationChoices = designationOptions(org, profile.employeeType, { current: profile.designation });
           const isESB = profile.employeeType === EMPLOYEE_TYPES.ESB;
           const isResolvingThis = resolvingCorrection === user.uid;
 
@@ -576,7 +569,7 @@ export default function UserManagementScreen({ navigation }) {
                               <>
                                 <Text style={styles.roleLabel}>Department</Text>
                                 <View style={styles.roleGrid}>
-                                  {DEPARTMENT_OPTIONS.map(opt => (
+                                  {deptChoices.map(opt => (
                                     <TouchableOpacity
                                       key={opt.value}
                                       style={[styles.roleChip, profile.department === opt.value && styles.roleChipSelected]}
@@ -596,18 +589,18 @@ export default function UserManagementScreen({ navigation }) {
                               </View>
                             )}
 
-                            {profile.department && unitOptions.length > 0 && (
+                            {profile.department && unitChoices.length > 0 && (
                               <>
                                 <Text style={styles.roleLabel}>Unit</Text>
                                 <View style={styles.roleGrid}>
-                                  {unitOptions.map(opt => (
+                                  {unitChoices.map(opt => (
                                     <TouchableOpacity
-                                      key={opt}
-                                      style={[styles.roleChip, profile.unit === opt && styles.roleChipSelected]}
-                                      onPress={() => setProfileField(user.employeeId, 'unit', opt)}
+                                      key={opt.value}
+                                      style={[styles.roleChip, profile.unit === opt.value && styles.roleChipSelected]}
+                                      onPress={() => setProfileField(user.employeeId, 'unit', opt.value)}
                                     >
-                                      <Text style={[styles.roleChipText, profile.unit === opt && styles.roleChipTextSelected]}>
-                                        {opt}
+                                      <Text style={[styles.roleChipText, profile.unit === opt.value && styles.roleChipTextSelected]}>
+                                        {opt.label}
                                       </Text>
                                     </TouchableOpacity>
                                   ))}
@@ -615,11 +608,11 @@ export default function UserManagementScreen({ navigation }) {
                               </>
                             )}
 
-                            {profile.employeeType && designationOptions.length > 0 && (
+                            {profile.employeeType && designationChoices.length > 0 && (
                               <>
                                 <Text style={styles.roleLabel}>Designation</Text>
                                 <View style={styles.roleGrid}>
-                                  {designationOptions.map(opt => (
+                                  {designationChoices.map(opt => (
                                     <TouchableOpacity
                                       key={opt.value}
                                       style={[styles.roleChip, profile.designation === opt.value && styles.roleChipSelected]}

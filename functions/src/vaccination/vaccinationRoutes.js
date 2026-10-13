@@ -5,6 +5,7 @@
 const { onDocumentUpdated } = require('firebase-functions/v2/firestore');
 const { onSchedule }        = require('firebase-functions/v2/scheduler');
 const admin                 = require('firebase-admin');
+const { Timestamp, FieldValue } = require('firebase-admin/firestore');
 
 // ─── Inline constants ─────────────────────────────────────────────────────────
 const VACCINATION_NURSE = {
@@ -49,16 +50,57 @@ async function sendMulticast(tokens, title, body, data = {}) {
   }
 }
 
-async function saveNotification(uid, title, body, category) {
+// Same shape as notificationRoutes.createNotification — GET /my filters on
+// recipientUid and orders by an ISO-string createdAt. These previously wrote
+// `userId` + a server Timestamp, so nobody ever saw them in the app.
+async function saveNotification(uid, title, body, type, referenceId = null) {
   const db = admin.firestore();
   await db.collection('notifications').add({
-    userId:    uid,
+    recipientUid:  uid,
+    recipientRole: null,
     title,
     body,
-    category,
+    type,
+    referenceId,
     isRead:    false,
-    createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    createdAt: new Date().toISOString(),
   });
+}
+
+// users docs carry no name — it lives on the linked employees record.
+async function employeeNameByUid(uid, fallback) {
+  if (!uid) return fallback;
+  const snap = await admin.firestore().collection('employees')
+    .where('userId', '==', uid).limit(1).get();
+  return snap.empty ? fallback : (snap.docs[0].data().fullName || fallback);
+}
+
+const tsToISO = (ts) => (ts && ts.toDate ? ts.toDate().toISOString() : null);
+
+// Per-child counts stored on the familyMembers doc so the nurse's child list
+// needs one read per child instead of reading every vaccination record.
+// Overdue / due-soon depend on "today", so the client derives them from
+// scheduledDates.
+function buildVaxSummary(records) {
+  const live = records.filter(r => r.status !== 'na');
+  return {
+    total:          live.length,
+    administered:   live.filter(r => r.status === 'administered').length,
+    missed:         live.filter(r => r.status === 'missed').length,
+    scheduledDates: live.filter(r => r.status === 'scheduled')
+      .map(r => tsToISO(r.plannedDate)).filter(Boolean).sort(),
+    updatedAt:      new Date().toISOString(),
+  };
+}
+
+async function refreshVaxSummary(memberId) {
+  const db   = admin.firestore();
+  const snap = await db.collection('vaccinationRecords')
+    .where('familyMemberId', '==', memberId).get();
+  await db.collection('familyMembers').doc(memberId).set(
+    { vaxSummary: buildVaxSummary(snap.docs.map(d => d.data())) },
+    { merge: true },
+  );
 }
 
 function formatDate(timestamp) {
@@ -67,18 +109,6 @@ function formatDate(timestamp) {
   return d.toLocaleDateString('en-GB', {
     day: '2-digit', month: 'short', year: 'numeric',
   });
-}
-
-function ageInYears(dobTimestamp) {
-  if (!dobTimestamp) return 0;
-  const dob   = dobTimestamp.toDate ? dobTimestamp.toDate() : new Date(dobTimestamp);
-  const today = new Date();
-  let age     = today.getFullYear() - dob.getFullYear();
-  if (
-    today.getMonth() < dob.getMonth() ||
-    (today.getMonth() === dob.getMonth() && today.getDate() < dob.getDate())
-  ) age--;
-  return age;
 }
 
 function addDays(date, days) {
@@ -92,6 +122,88 @@ function addDays(date, days) {
 // Fires when admin sets status to 'validated' on a son/daughter record
 // Creates all vaccinationRecords for that child
 // ─────────────────────────────────────────────────────────────────────────────
+// Creates every vaccinationRecord for a child from the active schedule.
+// Returns how many were created (0 if the child already has records or the
+// schedule is empty). Shared by the trigger below and the backfill script.
+async function createVaccinationSchedule(memberId, member) {
+  const db  = admin.firestore();
+  const now = Timestamp.now();
+
+  const existingQ = await db.collection('vaccinationRecords')
+    .where('familyMemberId', '==', memberId)
+    .limit(1)
+    .get();
+  if (!existingQ.empty) return 0;
+
+  const scheduleSnap = await db.collection('vaccineSchedule')
+    .where('isActive', '==', true)
+    .get();
+  const schedule = scheduleSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+  if (schedule.length === 0) return 0;
+
+  const dob   = member.dateOfBirth.toDate();
+  const today = new Date();
+  const batch = db.batch();
+  const created = [];
+
+  for (const vaccine of schedule) {
+    let plannedDate = new Date(dob);
+    if (vaccine.ageUnit === 'weeks') {
+      plannedDate = addDays(dob, vaccine.ageValue * 7);
+    } else if (vaccine.ageUnit === 'months') {
+      plannedDate = new Date(dob);
+      plannedDate.setMonth(plannedDate.getMonth() + vaccine.ageValue);
+    }
+
+    let status        = 'scheduled';
+    let naReason      = null;
+    let nurseOverride = false;
+
+    // Check maximum age cutoff
+    if (vaccine.maximumAgeDays) {
+      const maxDate = addDays(dob, vaccine.maximumAgeDays);
+      if (today > maxDate) {
+        status   = 'na';
+        naReason = `Maximum age limit exceeded (${vaccine.maximumAgeDays} days)`;
+      }
+    }
+
+    // Flag backlog entries for nurse review
+    if (status === 'scheduled' && plannedDate < today) {
+      nurseOverride = true;
+    }
+
+    const recRef = db.collection('vaccinationRecords').doc();
+    created.push({ status, plannedDate: Timestamp.fromDate(plannedDate) });
+    batch.set(recRef, {
+      familyMemberId:    memberId,
+      employeeId:        member.employeeId,
+      vaccineScheduleId: vaccine.id,
+      vaccineName:       vaccine.vaccineName,
+      doseNumber:        vaccine.doseNumber,
+      status,
+      plannedDate:       Timestamp.fromDate(plannedDate),
+      actualDate:        null,
+      nurseOverride,
+      overrideReason:    nurseOverride
+        ? 'Backlog — child registered after due date'
+        : null,
+      naReason,
+      administeredBy:    VACCINATION_NURSE.name,
+      adverseReaction:   null,
+      createdAt:         now,
+      updatedAt:         now,
+    });
+  }
+
+  batch.set(db.collection('familyMembers').doc(memberId), {
+    vaxSummary:  buildVaxSummary(created),
+    sponsorName: await employeeNameByUid(member.employeeId, null),
+  }, { merge: true });
+  await batch.commit();
+  return created.length;
+}
+
 exports.onFamilyMemberValidated = onDocumentUpdated(
   { document: 'familyMembers/{memberId}', region: REGION },
   async (event) => {
@@ -103,79 +215,10 @@ exports.onFamilyMemberValidated = onDocumentUpdated(
     if (after.status  !== 'validated')  return null;
     if (after.relation !== 'son' && after.relation !== 'daughter') return null;
 
-    const db  = admin.firestore();
-    const now = admin.firestore.Timestamp.now();
-
     try {
-      // Skip if records already exist
-      const existingQ = await db.collection('vaccinationRecords')
-        .where('familyMemberId', '==', memberId)
-        .limit(1)
-        .get();
-      if (!existingQ.empty) return null;
-
-      // Load active vaccine schedule
-      const scheduleSnap = await db.collection('vaccineSchedule')
-        .where('isActive', '==', true)
-        .get();
-      const schedule = scheduleSnap.docs.map(d => ({ id: d.id, ...d.data() }));
-      if (schedule.length === 0) return null;
-
-      const dob   = after.dateOfBirth.toDate();
-      const today = new Date();
-      const batch = db.batch();
-
-      for (const vaccine of schedule) {
-        let plannedDate = new Date(dob);
-        if (vaccine.ageUnit === 'weeks') {
-          plannedDate = addDays(dob, vaccine.ageValue * 7);
-        } else if (vaccine.ageUnit === 'months') {
-          plannedDate = new Date(dob);
-          plannedDate.setMonth(plannedDate.getMonth() + vaccine.ageValue);
-        }
-
-        let status        = 'scheduled';
-        let naReason      = null;
-        let nurseOverride = false;
-
-        // Check maximum age cutoff
-        if (vaccine.maximumAgeDays) {
-          const maxDate = addDays(dob, vaccine.maximumAgeDays);
-          if (today > maxDate) {
-            status   = 'na';
-            naReason = `Maximum age limit exceeded (${vaccine.maximumAgeDays} days)`;
-          }
-        }
-
-        // Flag backlog entries for nurse review
-        if (status === 'scheduled' && plannedDate < today) {
-          nurseOverride = true;
-        }
-
-        const recRef = db.collection('vaccinationRecords').doc();
-        batch.set(recRef, {
-          familyMemberId:    memberId,
-          employeeId:        after.employeeId,
-          vaccineScheduleId: vaccine.id,
-          vaccineName:       vaccine.vaccineName,
-          doseNumber:        vaccine.doseNumber,
-          status,
-          plannedDate:       admin.firestore.Timestamp.fromDate(plannedDate),
-          actualDate:        null,
-          nurseOverride,
-          overrideReason:    nurseOverride
-            ? 'Backlog — child registered after due date'
-            : null,
-          naReason,
-          administeredBy:    VACCINATION_NURSE.name,
-          adverseReaction:   null,
-          createdAt:         now,
-          updatedAt:         now,
-        });
-      }
-
-      await batch.commit();
-      console.log(`Created ${schedule.length} vaccination records for ${memberId}`);
+      const createdCount = await createVaccinationSchedule(memberId, after);
+      if (createdCount === 0) return null;
+      console.log(`Created ${createdCount} vaccination records for ${memberId}`);
 
       // Notify nurse
       const nurseTokens = await getFCMTokensByRole('nurse');
@@ -212,11 +255,7 @@ exports.onFamilyMemberEdited = onDocumentUpdated(
     const db = admin.firestore();
 
     try {
-      const empQ = await db.collection('users')
-        .where('uid', '==', after.employeeId)
-        .limit(1)
-        .get();
-      const empName = empQ.empty ? 'An employee' : empQ.docs[0].data().fullName;
+      const empName = await employeeNameByUid(after.employeeId, 'An employee');
 
       const title = 'Family Record Edit Pending';
       const body  = `${empName} submitted an edit for ${after.name}. Please review.`;
@@ -232,7 +271,7 @@ exports.onFamilyMemberEdited = onDocumentUpdated(
         .where('isActive', '==', true)
         .get();
       await Promise.all(adminSnap.docs.map(d =>
-        saveNotification(d.id, title, body, 'general'),
+        saveNotification(d.id, title, body, 'family', memberId),
       ));
 
       return null;
@@ -254,6 +293,15 @@ exports.onVaccinationAdministered = onDocumentUpdated(
     const before   = event.data.before.data();
     const after    = event.data.after.data();
     const recordId = event.params.recordId;
+
+    const plannedChanged = String(tsToISO(before.plannedDate)) !== String(tsToISO(after.plannedDate));
+    if ((before.status !== after.status || plannedChanged) && after.familyMemberId) {
+      try {
+        await refreshVaxSummary(after.familyMemberId);
+      } catch (err) {
+        console.error('refreshVaxSummary error:', err);
+      }
+    }
 
     if (before.status === after.status)   return null;
     if (after.status  !== 'administered') return null;
@@ -297,10 +345,10 @@ exports.onVaccinationAdministered = onDocumentUpdated(
 
       const autoNext = addDays(actualDate, schedule.minimumIntervalDays);
       await db.collection('vaccinationRecords').doc(candidates[0].id).update({
-        plannedDate:   admin.firestore.Timestamp.fromDate(autoNext),
+        plannedDate:   Timestamp.fromDate(autoNext),
         nurseOverride: true,
         overrideReason:'Auto-adjusted based on actual administration date',
-        updatedAt:     admin.firestore.FieldValue.serverTimestamp(),
+        updatedAt:     FieldValue.serverTimestamp(),
       });
 
       console.log(`Next ${after.vaccineName} dose shifted to ${autoNext.toISOString()}`);
@@ -332,8 +380,8 @@ exports.dailyVaccinationReminder = onSchedule(
     try {
       const snap = await db.collection('vaccinationRecords')
         .where('status',      '==', 'scheduled')
-        .where('plannedDate', '>=', admin.firestore.Timestamp.fromDate(today))
-        .where('plannedDate', '<',  admin.firestore.Timestamp.fromDate(tomorrow))
+        .where('plannedDate', '>=', Timestamp.fromDate(today))
+        .where('plannedDate', '<',  Timestamp.fromDate(tomorrow))
         .get();
 
       if (snap.empty) {
@@ -386,7 +434,7 @@ exports.missedAppointmentDetector = onSchedule(
     try {
       const snap = await db.collection('vaccinationRecords')
         .where('status',      '==', 'scheduled')
-        .where('plannedDate', '<',  admin.firestore.Timestamp.fromDate(today))
+        .where('plannedDate', '<',  Timestamp.fromDate(today))
         .get();
 
       if (snap.empty) return null;
@@ -395,7 +443,7 @@ exports.missedAppointmentDetector = onSchedule(
       snap.docs.forEach(d => {
         batch.update(d.ref, {
           status:    'missed',
-          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          updatedAt: FieldValue.serverTimestamp(),
         });
       });
       await batch.commit();
@@ -439,14 +487,14 @@ exports.fridayWeeklyReport = onSchedule(
     try {
       const upcomingSnap = await db.collection('vaccinationRecords')
         .where('status',      '==', 'scheduled')
-        .where('plannedDate', '>=', admin.firestore.Timestamp.fromDate(monday))
-        .where('plannedDate', '<=', admin.firestore.Timestamp.fromDate(sunday))
+        .where('plannedDate', '>=', Timestamp.fromDate(monday))
+        .where('plannedDate', '<=', Timestamp.fromDate(sunday))
         .get();
 
       const missedSnap = await db.collection('vaccinationRecords')
         .where('status',      '==', 'missed')
-        .where('plannedDate', '>=', admin.firestore.Timestamp.fromDate(lastMon))
-        .where('plannedDate', '<',  admin.firestore.Timestamp.fromDate(monday))
+        .where('plannedDate', '>=', Timestamp.fromDate(lastMon))
+        .where('plannedDate', '<',  Timestamp.fromDate(monday))
         .get();
 
       const upcoming = upcomingSnap.docs.map(d => ({ id: d.id, ...d.data() }));
@@ -550,12 +598,12 @@ Generated: ${new Date().toLocaleDateString('en-GB',{day:'2-digit',month:'long',y
       const url = `https://storage.googleapis.com/${bucket.name}/${fileName}`;
 
       await db.collection('vaccinationReports').add({
-        weekStart:   admin.firestore.Timestamp.fromDate(monday),
-        weekEnd:     admin.firestore.Timestamp.fromDate(sunday),
+        weekStart:   Timestamp.fromDate(monday),
+        weekEnd:     Timestamp.fromDate(sunday),
         url,
         upcoming:    upcoming.length,
         missed:      missed.length,
-        generatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        generatedAt: FieldValue.serverTimestamp(),
       });
 
       // Notify nurse in-app
@@ -568,7 +616,7 @@ Generated: ${new Date().toLocaleDateString('en-GB',{day:'2-digit',month:'long',y
           d.id,
           'Weekly Vaccination Report Ready',
           `Report for ${monStr}–${sunStr}: ${upcoming.length} doses scheduled, ${missed.length} no-shows.`,
-          'vaccination_reminder',
+          'vaccination',
         ),
       ));
 
@@ -591,24 +639,33 @@ exports.childTurns25Notifier = onSchedule(
   // the intended 08:05 PKT.
   { schedule: '5 8 * * *', timeZone: 'Asia/Karachi', region: REGION },
   async () => {
-    const db    = admin.firestore();
-    const today = new Date();
+    const db = admin.firestore();
 
     try {
+      // Only children born on this calendar day 25 years ago are read —
+      // previously every validated child was read every day. Dates are
+      // compared in Pakistan time: DOBs are stored as local midnight, which
+      // is the previous day in UTC.
+      const PK_OFFSET_MS = 5 * 60 * 60 * 1000;
+      const DAY_MS       = 24 * 60 * 60 * 1000;
+      const nowPk  = new Date(Date.now() + PK_OFFSET_MS);
+      const target = Date.UTC(nowPk.getUTCFullYear() - 25, nowPk.getUTCMonth(), nowPk.getUTCDate()) - PK_OFFSET_MS;
+
       const snap = await db.collection('familyMembers')
         .where('relation', 'in', ['son', 'daughter'])
         .where('status',   '==', 'validated')
         .where('isActive', '==', true)
+        .where('dateOfBirth', '>=', Timestamp.fromMillis(target - DAY_MS))
+        .where('dateOfBirth', '<',  Timestamp.fromMillis(target + 2 * DAY_MS))
         .get();
 
       const turning25 = snap.docs
         .map(d => ({ id: d.id, ...d.data() }))
         .filter(m => {
-          if (!m.dateOfBirth) return false;
-          const dob = m.dateOfBirth.toDate();
-          return ageInYears(m.dateOfBirth) === 25 &&
-                 dob.getDate()  === today.getDate() &&
-                 dob.getMonth() === today.getMonth();
+          const dobPk = new Date(m.dateOfBirth.toMillis() + PK_OFFSET_MS);
+          return dobPk.getUTCDate()  === nowPk.getUTCDate() &&
+                 dobPk.getUTCMonth() === nowPk.getUTCMonth() &&
+                 dobPk.getUTCFullYear() === nowPk.getUTCFullYear() - 25;
         });
 
       if (turning25.length === 0) return null;
@@ -620,11 +677,7 @@ exports.childTurns25Notifier = onSchedule(
         .get();
 
       for (const member of turning25) {
-        const empQ    = await db.collection('users')
-          .where('uid', '==', member.employeeId)
-          .limit(1)
-          .get();
-        const empName = empQ.empty ? 'Unknown Employee' : empQ.docs[0].data().fullName;
+        const empName = member.sponsorName || await employeeNameByUid(member.employeeId, 'Unknown Employee');
 
         const title = 'Dependent Turned 25';
         const body  = `${member.name}, dependent of ${empName}, has turned 25. Please review marital and employment status.`;
@@ -635,7 +688,7 @@ exports.childTurns25Notifier = onSchedule(
         });
 
         await Promise.all(adminSnap.docs.map(d =>
-          saveNotification(d.id, title, body, 'general'),
+          saveNotification(d.id, title, body, 'family', member.id),
         ));
       }
 
@@ -647,3 +700,8 @@ exports.childTurns25Notifier = onSchedule(
     }
   }
 );
+
+// For scripts/migrateOrgAndVaccination.js
+exports.createVaccinationSchedule = createVaccinationSchedule;
+exports.refreshVaxSummary         = refreshVaxSummary;
+exports.employeeNameByUid         = employeeNameByUid;

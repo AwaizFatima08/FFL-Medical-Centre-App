@@ -12,6 +12,11 @@ const firebaseConfig = {
   appId:             process.env.EXPO_PUBLIC_FIREBASE_APP_ID,
 };
 
+// Local testing against the Firebase emulator suite (never set in builds).
+export const USE_EMULATORS = process.env.EXPO_PUBLIC_USE_EMULATORS === '1';
+export const EMULATOR_HOST = process.env.EXPO_PUBLIC_EMULATOR_HOST || '127.0.0.1';
+if (USE_EMULATORS) firebaseConfig.projectId = 'demo-sahulat';
+
 const app = initializeApp(firebaseConfig);
 
 // Auth persistence: AsyncStorage on native, default (localStorage) on web
@@ -30,3 +35,10 @@ if (Platform.OS === 'web') {
 export { auth };
 export const db      = getFirestore(app);
 export const storage = getStorage(app);
+
+if (USE_EMULATORS) {
+  const { connectAuthEmulator } = require('firebase/auth');
+  const { connectFirestoreEmulator } = require('firebase/firestore');
+  connectAuthEmulator(auth, `http://${EMULATOR_HOST}:9099`, { disableWarnings: true });
+  connectFirestoreEmulator(db, EMULATOR_HOST, 8085);
+}

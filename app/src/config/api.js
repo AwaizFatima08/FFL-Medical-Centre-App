@@ -18,3 +18,11 @@ export const API = {
   reports:       'https://reports-nnigmcbj4a-el.a.run.app',
   circulars:     'https://circulars-nnigmcbj4a-el.a.run.app',
 };
+
+// Local testing: route every API call to the functions emulator.
+if (process.env.EXPO_PUBLIC_USE_EMULATORS === '1') {
+  const host = process.env.EXPO_PUBLIC_EMULATOR_HOST || '127.0.0.1';
+  Object.keys(API).forEach((fn) => {
+    API[fn] = `http://${host}:5001/demo-sahulat/asia-south1/${fn}`;
+  });
+}

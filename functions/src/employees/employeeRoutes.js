@@ -5,6 +5,10 @@ const { verifyToken, verifyRole } = require('../auth/authRoutes');
 const { successResponse, errorResponse, nowISO } = require('../utils');
 const { ROLES, COMMUNITY_GROUPS } = require('../constants');
 
+// Mounted before the /:employeeId routes so "org-structure" is never read
+// as an employee ID.
+router.use('/org-structure', require('../org/orgStructureRoutes'));
+
 // ─── GET /all ─────────────────────────────────────────────
 // Admin, CMO, Reception can view all employees
 router.get('/all', verifyToken, verifyRole([
@@ -253,7 +257,11 @@ router.post('/validate/:employeeId', verifyToken,
 // treatment as maritalStatus/isSmoker below — not gated by isSelfService,
 // since gender isn't admin-owned identity data the way cnic/bloodGroup/
 // department/designation are.
-router.put('/:employeeId', verifyToken, async (req, res) => {
+// verifyRole is required here: without it req.userRole was undefined, so
+// the ownership and admin-field checks below never matched and any signed-in
+// account (even an unapproved signup) could edit any employee record.
+const PROFILE_EDITOR_ROLES = [ROLES.ADMIN_INCHARGE, ROLES.CMO];
+router.put('/:employeeId', verifyToken, verifyRole(Object.values(ROLES)), async (req, res) => {
   try {
     const db = admin.firestore();
     const empRef = db.collection('employees').doc(req.params.employeeId);
@@ -264,15 +272,15 @@ router.put('/:employeeId', verifyToken, async (req, res) => {
     }
 
     const empData = empDoc.data();
+    const isEditor = PROFILE_EDITOR_ROLES.includes(req.userRole);
 
-    // Employee can only update own record
-    if (req.userRole === ROLES.EMPLOYEE && empData.userId !== req.user.uid) {
+    if (!isEditor && empData.userId !== req.user.uid) {
       return errorResponse(res, 'Forbidden', 403);
     }
 
-    // Day 14: is this call self-service (employee editing their own record)?
-    // Used below to gate the admin-owned fields.
-    const isSelfService = req.userRole === ROLES.EMPLOYEE;
+    // Anyone who isn't an admin/CMO is editing their own record and may not
+    // set the admin-owned fields gated below.
+    const isSelfService = !isEditor;
 
     const {
       fullName,
@@ -383,13 +391,17 @@ router.put('/:employeeId', verifyToken, async (req, res) => {
       // Day 13 fix: officialEmployeeNumber now included so the directory can
       // display it — was previously omitted, so the read side had nothing to show.
       const donorRef = db.collection('bloodDonorRegistry').doc(req.params.employeeId);
-      if (bloodDonorConsent && bloodGroup) {
+      // My Profile sends only { bloodDonorConsent } — fall back to the blood
+      // group on file, otherwise opting in from there never reached the
+      // directory.
+      const donorBloodGroup = updates.bloodGroup || empData.bloodGroup;
+      if (bloodDonorConsent && donorBloodGroup) {
         await donorRef.set({
           employeeId:             req.params.employeeId,
           userId:                 empData.userId,
-          fullName:               fullName || empData.fullName,
+          fullName:               updates.fullName || empData.fullName,
           officialEmployeeNumber: empData.officialEmployeeNumber || null,  // ← Day 13 fix
-          bloodGroup:             bloodGroup || empData.bloodGroup,
+          bloodGroup:             donorBloodGroup,
           phoneNumber:            phoneNumber || empData.phoneNumber,
           consentGiven:           true,
           consentUpdatedAt:       nowISO(),
@@ -528,38 +540,6 @@ router.post('/:employeeId/family-members', verifyToken, verifyRole(Object.values
   } catch (error) {
     console.error('Add family member error:', error);
     return errorResponse(res, 'Failed to add family member', 500);
-  }
-});
-
-// ─── GET /:employeeId/family-members ─────────────────────
-router.get('/:employeeId/family-members', verifyToken, async (req, res) => {
-  try {
-    const db = admin.firestore();
-    const empDoc = await db.collection('employees')
-      .doc(req.params.employeeId).get();
-
-    if (!empDoc.exists) {
-      return errorResponse(res, 'Employee not found', 404);
-    }
-
-    if (req.userRole === ROLES.EMPLOYEE &&
-        empDoc.data().userId !== req.user.uid) {
-      return errorResponse(res, 'Forbidden', 403);
-    }
-
-    const snapshot = await db.collection('employees')
-      .doc(req.params.employeeId)
-      .collection('familyMembers')
-      .get();
-
-    const members = snapshot.docs.map(doc => ({
-      id: doc.id,
-      ...doc.data(),
-    }));
-
-    return successResponse(res, members);
-  } catch (error) {
-    return errorResponse(res, 'Failed to fetch family members', 500);
   }
 });
 

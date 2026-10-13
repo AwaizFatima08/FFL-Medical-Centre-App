@@ -19,6 +19,7 @@ const TILES = [
   { id: 'family',       label: 'Family Records',       icon: '👨‍👩‍👧‍👦', screen: 'FamilyAdminReview',       active: true },
   { id: 'donors',       label: 'Blood Donors',         icon: '🩸', screen: 'BloodDonorDirectory',      active: true },
   { id: 'reports',      label: 'Reports',              icon: '📊', screen: 'ReportsHub',               active: true },
+  { id: 'orgStructure', label: 'Departments & Designations', icon: '🏢', screen: 'OrgStructure',      active: true },
 ];
 
 export default function AdminHome({ navigation }) {
@@ -29,11 +30,11 @@ export default function AdminHome({ navigation }) {
       try {
         const auth  = getAuth();
         const token = await auth.currentUser.getIdToken();
-        const res   = await fetch(`${API.auth}/pending-users`, {
+        const res   = await fetch(`${API.auth}/pending-count`, {
           headers: { Authorization: `Bearer ${token}` },
         });
         const data = await res.json();
-        if (res.ok) setPendingCount((data.data || []).length);
+        if (res.ok) setPendingCount(data.data?.count || 0);
       } catch { /* silent fail */ }
     };
     fetchPendingCount();

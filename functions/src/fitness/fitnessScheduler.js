@@ -22,9 +22,14 @@ const sendFitnessReminders = async (event) => {
     // actually booked until admin approves a new date, so an employee
     // waiting on a pending request shouldn't silently miss their reminder
     // for the date currently on record.
-    const snapshot = await db.collection('fitnessAppointments')
-      .where('status', 'in', ['scheduled', 'confirmed', 'rescheduled', 'reschedule_rejected', 'reschedule_requested'])
+    // Filter by date in the query (only today's and tomorrow's appointments
+    // are read) and by status in memory, instead of reading every active
+    // appointment of the year every day.
+    const ACTIVE_STATUSES = ['scheduled', 'confirmed', 'rescheduled', 'reschedule_rejected', 'reschedule_requested'];
+    const dateSnap = await db.collection('fitnessAppointments')
+      .where('scheduledDate', 'in', [todayStr, tomorrowStr])
       .get();
+    const snapshot = { empty: dateSnap.empty, docs: dateSnap.docs.filter(d => ACTIVE_STATUSES.includes(d.data().status)) };
 
     if (snapshot.empty) {
       console.log('Fitness reminders: no upcoming appointments found');

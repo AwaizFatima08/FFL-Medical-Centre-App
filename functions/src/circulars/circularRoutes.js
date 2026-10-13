@@ -5,6 +5,7 @@
 
 const express = require('express');
 const admin   = require('firebase-admin');
+const { getUserRecord } = require('../auth/authRoutes');
 const { createNotification } = require('../notifications/notificationRoutes');
 
 const router = express.Router();
@@ -27,10 +28,10 @@ const db = () => admin.firestore();
 // blocking a disabled user from viewing circulars too, not just from
 // uploading/deleting them.
 async function getUserRole(uid) {
-  const doc = await db().collection('users').doc(uid).get();
-  if (!doc.exists) throw new Error('User not found');
-  if (doc.data().isActive !== true) throw new Error('Account is disabled or not yet active');
-  return doc.data().role;
+  const user = await getUserRecord(uid);   // cached briefly — see authRoutes.js
+  if (!user) throw new Error('User not found');
+  if (user.isActive !== true) throw new Error('Account is disabled or not yet active');
+  return user.role;
 }
 
 // ── GET /list — fetch all circulars, optionally filtered by category ──────────

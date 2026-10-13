@@ -1,6 +1,7 @@
 // app/src/screens/family/FamilyMemberListScreen.js
 
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useState, useCallback } from 'react';
+import { useFocusEffect } from '@react-navigation/native';
 import {
   View, Text, StyleSheet, TouchableOpacity,
   ScrollView, ActivityIndicator, RefreshControl,
@@ -82,12 +83,8 @@ export default function FamilyMemberListScreen({ navigation }) {
     }
   }, [auth, db]);
 
-  useEffect(() => {
-    fetchMembers();
-    // Refresh list when returning from Add/Edit screen
-    const unsubscribe = navigation.addListener('focus', fetchMembers);
-    return unsubscribe;
-  }, [fetchMembers, navigation]);
+  // Runs on first focus and every return (e.g. from Add/Edit) — once each.
+  useFocusEffect(useCallback(() => { fetchMembers(); }, [fetchMembers]));
 
   const onRefresh = () => {
     setRefreshing(true);

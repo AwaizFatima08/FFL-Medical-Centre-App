@@ -4,6 +4,7 @@ const express = require('express');
 const { getFirestore } = require('firebase-admin/firestore');
 const { getAuth } = require('firebase-admin/auth');
 const { ROLES } = require('../constants');
+const { getUserRecord } = require('../auth/authRoutes');
 
 const router = express.Router();
 
@@ -22,10 +23,8 @@ async function authenticate(req, res, next) {
     if (!token) return res.status(401).json({ success: false, message: 'No token provided' });
 
     const decoded = await getAuth().verifyIdToken(token);
-    const userDoc = await db().collection('users').doc(decoded.uid).get();
-    if (!userDoc.exists) return res.status(401).json({ success: false, message: 'User not found' });
-
-    const userData = userDoc.data();
+    const userData = await getUserRecord(decoded.uid);
+    if (!userData) return res.status(401).json({ success: false, message: 'User not found' });
     if (!userData.isActive) return res.status(403).json({ success: false, message: 'Account not active' });
 
     req.user = { uid: decoded.uid, role: userData.role };
@@ -67,6 +66,24 @@ router.get('/my', authenticate, async (req, res) => {
   } catch (error) {
     console.error('Fetch notifications error:', error);
     return res.status(500).json({ success: false, message: 'Failed to fetch notifications' });
+  }
+});
+
+// ─── GET /unread-count ────────────────────────────────────────────────────────
+// Used by the bell on every home screen. A count aggregation is one read per
+// 1,000 matches; the bell previously downloaded up to 50 full notifications
+// on every home-screen focus just to count the unread ones.
+router.get('/unread-count', authenticate, async (req, res) => {
+  try {
+    const snap = await db().collection('notifications')
+      .where('recipientUid', '==', req.user.uid)
+      .where('isRead', '==', false)
+      .count()
+      .get();
+    return res.json({ success: true, data: { count: snap.data().count } });
+  } catch (error) {
+    console.error('Unread count error:', error);
+    return res.status(500).json({ success: false, message: 'Failed to count notifications' });
   }
 });
 

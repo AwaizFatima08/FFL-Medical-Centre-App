@@ -9,8 +9,8 @@
 // Employee Type is picked FIRST (not derivable from department — a person
 // in "Production" could be Management or Non-Management). Department, Unit,
 // and Designation all cascade from it, using the same constants.js lists
-// already locked in Phase 3 (EMPLOYEE_TYPES, DEPARTMENT_GROUPS, UNITS,
-// getDesignationsByType, BLOOD_GROUPS).
+// already locked in Phase 3 (EMPLOYEE_TYPES, BLOOD_GROUPS). Departments,
+// units and designations now come from the admin-editable org structure.
 //
 // Phase 9 update: Dentist and Physiotherapist added as approvable roles.
 // These are third-party providers engaged for in-house paid services —
@@ -38,9 +38,11 @@ import { useFocusEffect } from '@react-navigation/native';
 import { API } from '../../config/api';
 import NotificationBell from '../../components/NotificationBell';
 import {
-  EMPLOYEE_TYPES, DEPARTMENT_GROUPS, UNITS,
-  getDesignationsByType, BLOOD_GROUPS, CHRONIC_DISEASE_OPTIONS,
+  EMPLOYEE_TYPES, BLOOD_GROUPS, CHRONIC_DISEASE_OPTIONS,
 } from '../../constants';
+import {
+  useOrgStructure, departmentOptions, unitOptions, designationOptions, ESB_DEPARTMENT,
+} from '../../utils/orgStructure';
 
 const ROLE_OPTIONS = [
   { label: 'Employee',          value: 'employee' },
@@ -68,15 +70,6 @@ const EMPLOYEE_TYPE_OPTIONS = [
   { label: 'Non-Management', value: EMPLOYEE_TYPES.NON_MANAGEMENT },
   { label: 'ESB',            value: EMPLOYEE_TYPES.ESB },
 ];
-
-// Day 14, Step D — Plant + HO departments only; ESB is auto-handled
-// separately since it's a single fixed value with no real choice to make.
-const DEPARTMENT_OPTIONS = [
-  ...DEPARTMENT_GROUPS.PLANT.departments,
-  ...DEPARTMENT_GROUPS.HO.departments,
-];
-
-const ESB_DEPARTMENT_VALUE = DEPARTMENT_GROUPS.ESB.departments[0].value; // 'ESB'
 
 // This revision — human-readable labels for the status Chip inside each
 // duplicate-address match line.
@@ -115,6 +108,7 @@ const webConfirm = (title, message, onConfirm, destructive = false) => {
 };
 
 export default function UserApprovalScreen({ navigation }) {
+  const org = useOrgStructure();
   const [users,      setUsers]      = useState([]);
   const [loading,    setLoading]    = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -185,13 +179,13 @@ export default function UserApprovalScreen({ navigation }) {
   // designation so admin picks fresh for the new type.
   const handleEmployeeTypeChange = (uid, employeeType) => {
     if (employeeType === EMPLOYEE_TYPES.ESB) {
-      const esbUnit = UNITS[ESB_DEPARTMENT_VALUE]?.[0] || '';
+      const esbUnit = unitOptions(org, ESB_DEPARTMENT)[0]?.value || '';
       setProfileData(prev => ({
         ...prev,
         [uid]: {
           ...getProfile(uid),
           employeeType,
-          department: ESB_DEPARTMENT_VALUE,
+          department: ESB_DEPARTMENT,
           unit: esbUnit,
           designation: '',
         },
@@ -211,8 +205,8 @@ export default function UserApprovalScreen({ navigation }) {
   // only has one possible unit (several do — BD, DBN, AIM, EI's not single
   // but HO_* and BD/DBN are — saves the admin a redundant tap).
   const handleDepartmentChange = (uid, department) => {
-    const options = UNITS[department] || [];
-    const autoUnit = options.length === 1 ? options[0] : '';
+    const options = unitOptions(org, department);
+    const autoUnit = options.length === 1 ? options[0].value : '';
     setProfileData(prev => ({
       ...prev,
       [uid]: { ...getProfile(uid), department, unit: autoUnit },
@@ -230,11 +224,11 @@ export default function UserApprovalScreen({ navigation }) {
     // Day 14, Step D — profile data must be complete before approving
     // (skipped for lightweight roles — see above).
     const profile = getProfile(uid);
-    const unitOptions = UNITS[profile.department] || [];
+    const unitChoices = unitOptions(org, profile.department);
     if (!isLightweightRole) {
       if (!profile.employeeType) { webAlert('Required', 'Please select Employee Type.'); return; }
       if (!profile.department)   { webAlert('Required', 'Please select Department.'); return; }
-      if (unitOptions.length > 0 && !profile.unit) { webAlert('Required', 'Please select Unit.'); return; }
+      if (unitChoices.length > 0 && !profile.unit) { webAlert('Required', 'Please select Unit.'); return; }
       if (!profile.designation)  { webAlert('Required', 'Please select Designation.'); return; }
       if (!profile.bloodGroup)   { webAlert('Required', 'Please select Blood Group.'); return; }
     }
@@ -413,10 +407,9 @@ export default function UserApprovalScreen({ navigation }) {
           const isExpanded = expanded === user.uid;
           const isActioning = actioning === user.uid;
           const profile = getProfile(user.uid);
-          const unitOptions = UNITS[profile.department] || [];
-          const designationOptions = profile.employeeType
-            ? getDesignationsByType(profile.employeeType)
-            : [];
+          const deptChoices = departmentOptions(org);
+          const unitChoices = unitOptions(org, profile.department);
+          const designationChoices = designationOptions(org, profile.employeeType);
           const isESB = profile.employeeType === EMPLOYEE_TYPES.ESB;
           const currentRole = roles[user.uid] || 'employee';
           const isLightweightRole = LIGHTWEIGHT_ROLES.includes(currentRole);
@@ -553,7 +546,7 @@ export default function UserApprovalScreen({ navigation }) {
                         <>
                           <Text style={styles.roleLabel}>Department</Text>
                           <View style={styles.roleGrid}>
-                            {DEPARTMENT_OPTIONS.map(opt => (
+                            {deptChoices.map(opt => (
                               <TouchableOpacity
                                 key={opt.value}
                                 style={[styles.roleChip, profile.department === opt.value && styles.roleChipSelected]}
@@ -574,18 +567,18 @@ export default function UserApprovalScreen({ navigation }) {
                       )}
 
                       {/* Unit — cascades from department */}
-                      {profile.department && unitOptions.length > 0 && (
+                      {profile.department && unitChoices.length > 0 && (
                         <>
                           <Text style={styles.roleLabel}>Unit</Text>
                           <View style={styles.roleGrid}>
-                            {unitOptions.map(opt => (
+                            {unitChoices.map(opt => (
                               <TouchableOpacity
-                                key={opt}
-                                style={[styles.roleChip, profile.unit === opt && styles.roleChipSelected]}
-                                onPress={() => setProfileField(user.uid, 'unit', opt)}
+                                key={opt.value}
+                                style={[styles.roleChip, profile.unit === opt.value && styles.roleChipSelected]}
+                                onPress={() => setProfileField(user.uid, 'unit', opt.value)}
                               >
-                                <Text style={[styles.roleChipText, profile.unit === opt && styles.roleChipTextSelected]}>
-                                  {opt}
+                                <Text style={[styles.roleChipText, profile.unit === opt.value && styles.roleChipTextSelected]}>
+                                  {opt.label}
                                 </Text>
                               </TouchableOpacity>
                             ))}
@@ -594,11 +587,11 @@ export default function UserApprovalScreen({ navigation }) {
                       )}
 
                       {/* Designation — cascades from employee type */}
-                      {profile.employeeType && designationOptions.length > 0 && (
+                      {profile.employeeType && designationChoices.length > 0 && (
                         <>
                           <Text style={styles.roleLabel}>Designation</Text>
                           <View style={styles.roleGrid}>
-                            {designationOptions.map(opt => (
+                            {designationChoices.map(opt => (
                               <TouchableOpacity
                                 key={opt.value}
                                 style={[styles.roleChip, profile.designation === opt.value && styles.roleChipSelected]}

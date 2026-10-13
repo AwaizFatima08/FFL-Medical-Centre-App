@@ -23,15 +23,32 @@ const verifyToken = async (req, res, next) => {
   }
 };
 
+// Every role-protected request used to cost one `users` read. Screens fire
+// several API calls at once, so a short per-instance cache removes most of
+// those reads. Role/active changes take effect within USER_CACHE_TTL_MS on
+// other instances and immediately on this one (see forgetUser callers).
+const USER_CACHE_TTL_MS = 60 * 1000;
+const userCache = new Map();
+
+const getUserRecord = async (uid) => {
+  const hit = userCache.get(uid);
+  if (hit && hit.expires > Date.now()) return hit.data;
+  const snap = await admin.firestore().collection('users').doc(uid).get();
+  const data = snap.exists ? snap.data() : null;
+  if (userCache.size > 5000) userCache.clear();
+  userCache.set(uid, { data, expires: Date.now() + USER_CACHE_TTL_MS });
+  return data;
+};
+
+const forgetUser = (uid) => userCache.delete(uid);
+
 const verifyRole = (allowedRoles) => {
   return async (req, res, next) => {
     try {
-      const db = admin.firestore();
-      const userDoc = await db.collection('users').doc(req.user.uid).get();
-      if (!userDoc.exists) {
+      const userData = await getUserRecord(req.user.uid);
+      if (!userData) {
         return errorResponse(res, 'User record not found', 404);
       }
-      const userData = userDoc.data();
       if (userData.isActive !== true) {
         return errorResponse(res, 'Account is disabled or not yet active. Please contact your administrator.', 403);
       }
@@ -406,6 +423,23 @@ router.get('/pending-users', verifyToken, verifyRole([ROLES.ADMIN_INCHARGE, ROLE
   }
 });
 
+// Badge count for the admin dashboard. A count aggregation costs one read
+// per 1,000 matches, versus /pending-users which reads every pending user
+// plus their employee record and duplicate-address matches.
+router.get('/pending-count', verifyToken, verifyRole([ROLES.ADMIN_INCHARGE, ROLES.CMO]), async (req, res) => {
+  try {
+    const snap = await admin.firestore().collection('users')
+      .where('isActive', '==', false)
+      .where('approvedAt', '==', null)
+      .count()
+      .get();
+    return successResponse(res, { count: snap.data().count });
+  } catch (error) {
+    console.error('Pending count error:', error);
+    return errorResponse(res, 'Failed to count pending users', 500);
+  }
+});
+
 router.post('/approve-user', verifyToken, verifyRole([ROLES.ADMIN_INCHARGE]), async (req, res) => {
   try {
     const db = admin.firestore();
@@ -434,6 +468,7 @@ router.post('/approve-user', verifyToken, verifyRole([ROLES.ADMIN_INCHARGE]), as
       approvedBy: req.user.uid,
       approvedAt: nowISO(),
     });
+    forgetUser(uid);
 
     const empSnap = await db.collection('employees')
       .where('userId', '==', uid)
@@ -502,6 +537,7 @@ router.post('/reject-user', verifyToken, verifyRole([ROLES.ADMIN_INCHARGE]), asy
 
     await admin.auth().deleteUser(uid);
     await db.collection('users').doc(uid).delete();
+    forgetUser(uid);
 
     const empSnap = await db.collection('employees')
       .where('userId', '==', uid)
@@ -522,16 +558,21 @@ router.get('/all-users', verifyToken, verifyRole([ROLES.ADMIN_INCHARGE, ROLES.CM
   try {
     const db = admin.firestore();
 
-    const usersSnap = await db.collection('users').get();
-    const approvedDocs = usersSnap.docs.filter(doc => !!doc.data().approvedAt);
+    // One employees query joined in memory, instead of one query per user.
+    const [usersSnap, employeesSnap] = await Promise.all([
+      db.collection('users').where('approvedAt', '!=', null).get(),
+      db.collection('employees').get(),
+    ]);
+    const empByUid = new Map();
+    employeesSnap.docs.forEach(d => {
+      const uid = d.data().userId;
+      if (uid && !empByUid.has(uid)) empByUid.set(uid, d);
+    });
 
-    const allUsers = await Promise.all(approvedDocs.map(async (userDoc) => {
+    const allUsers = usersSnap.docs.map((userDoc) => {
       const userData = userDoc.data();
-      const empSnap = await db.collection('employees')
-        .where('userId', '==', userDoc.id)
-        .limit(1)
-        .get();
-      const empData = empSnap.empty ? {} : empSnap.docs[0].data();
+      const empDoc = empByUid.get(userDoc.id);
+      const empData = empDoc ? empDoc.data() : {};
 
       return {
         uid:                    userDoc.id,
@@ -544,11 +585,11 @@ router.get('/all-users', verifyToken, verifyRole([ROLES.ADMIN_INCHARGE, ROLES.CM
         fullName:               empData.fullName               || '—',
         officialEmployeeNumber: empData.officialEmployeeNumber || '—',
         phoneNumber:            empData.phoneNumber || userData.phone || '—',
-        employeeId:             empSnap.empty ? null : empSnap.docs[0].id,
+        employeeId:             empDoc ? empDoc.id : null,
         correctionRequested:    empData.correctionRequested || false,
         correctionRequestNote:  empData.correctionRequestNote || null,
       };
-    }));
+    });
 
     allUsers.sort((a, b) => a.fullName.localeCompare(b.fullName));
 
@@ -604,6 +645,7 @@ router.post('/disable-user', verifyToken, verifyRole([ROLES.ADMIN_INCHARGE]), as
     });
 
     await batch.commit();
+    forgetUser(uid);
 
     return successResponse(res,
       { uid, familyMembersDisabled: familySnap.size },
@@ -663,6 +705,7 @@ router.post('/enable-user', verifyToken, verifyRole([ROLES.ADMIN_INCHARGE]), asy
     });
 
     await batch.commit();
+    forgetUser(uid);
 
     return successResponse(res,
       { uid, familyMembersReEnabled: familySnap.size },
@@ -701,6 +744,7 @@ router.post('/change-role', verifyToken, verifyRole([ROLES.ADMIN_INCHARGE]), asy
       roleChangedBy: req.user.uid,
       roleChangedAt: nowISO(),
     });
+    forgetUser(uid);
 
     return successResponse(res, { uid, role }, 'Role updated successfully');
   } catch (error) {
@@ -712,3 +756,4 @@ router.post('/change-role', verifyToken, verifyRole([ROLES.ADMIN_INCHARGE]), asy
 module.exports = router;
 module.exports.verifyToken = verifyToken;
 module.exports.verifyRole  = verifyRole;
+module.exports.getUserRecord = getUserRecord;

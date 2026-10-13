@@ -290,6 +290,11 @@ const vaccines = [
 // ── Import function ───────────────────────────────────────────────────────────
 async function importSchedule() {
   const collection = db.collection('vaccineSchedule');
+  const existing = (await collection.count().get()).data().count;
+  if (existing > 0) {
+    console.log(`vaccineSchedule already has ${existing} documents — nothing imported (this script would duplicate them).`);
+    process.exit(0);
+  }
   const now = Timestamp.now();
   let count = 0;
 

@@ -12,6 +12,7 @@ import {
 } from 'firebase/firestore';
 import { VACCINATION_NURSE } from '../../constants';
 import { auth } from '../../config/firebase';
+import { getEmployeeByUid } from '../../utils/employeeLookup';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 function formatDate(timestamp) {
@@ -78,13 +79,9 @@ export default function VaccinationAdministerScreen({ route, navigation }) {
   useEffect(() => {
     const uid = auth.currentUser?.uid;
     if (!uid) return;
-    getDoc(doc(db, 'users', uid))
-      .then(snap => {
-        if (snap.exists() && snap.data().fullName) {
-          setAdministeredByName(snap.data().fullName);
-        }
-      })
-      .catch(err => console.error('Failed to load current user name:', err));
+    getEmployeeByUid(uid).then(emp => {
+      if (emp?.fullName) setAdministeredByName(emp.fullName);
+    });
   }, [db]);
 
   // ─── Load record and schedule entry ───────────────────────────────────────

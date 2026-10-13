@@ -6,6 +6,7 @@
 const express = require('express');
 const { getFirestore, Timestamp } = require('firebase-admin/firestore');
 
+const { getUserRecord } = require('../auth/authRoutes');
 const router = express.Router();
 const db = getFirestore();
 
@@ -21,11 +22,17 @@ const WRITE_ROLES = ['admin_incharge'];
 // file calls getUserRole(uid) as the first thing, so this one change
 // protects the whole file — no route bodies needed touching.
 async function getUserRole(uid) {
-  const doc = await db.collection('users').doc(uid).get();
-  if (!doc.exists) throw new Error('User not found');
-  if (doc.data().isActive !== true) throw new Error('Account is disabled or not yet active');
-  return doc.data().role;
+  const user = await getUserRecord(uid);   // cached briefly — see authRoutes.js
+  if (!user) throw new Error('User not found');
+  if (user.isActive !== true) throw new Error('Account is disabled or not yet active');
+  return user.role;
 }
+
+// The whole directory is read by every employee who opens it, books a trip
+// or gives feedback, and it changes rarely — so the list is shared per
+// instance for a couple of minutes and dropped on any write here.
+const LIST_TTL_MS = 2 * 60 * 1000;
+let listCache = null;
 
 // ── GET /list — fetch all directory entries ───────────────────────────────────
 router.get('/list', async (req, res) => {
@@ -35,12 +42,16 @@ router.get('/list', async (req, res) => {
       return res.status(403).json({ success: false, message: 'Access denied' });
     }
 
-    const snapshot = await db.collection('doctorDirectory')
-      .orderBy('createdAt', 'desc')
-      .get();
-
-    const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-    res.json({ success: true, data });
+    if (!listCache || listCache.expires < Date.now()) {
+      const snapshot = await db.collection('doctorDirectory')
+        .orderBy('createdAt', 'desc')
+        .get();
+      listCache = {
+        data: snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })),
+        expires: Date.now() + LIST_TTL_MS,
+      };
+    }
+    res.json({ success: true, data: listCache.data });
 
   } catch (error) {
     console.error('Directory list error:', error);
@@ -98,6 +109,7 @@ router.post('/add', async (req, res) => {
     };
 
     const ref = await db.collection('doctorDirectory').add(entry);
+    listCache = null;
     res.json({ success: true, message: 'Doctor added successfully', data: { id: ref.id, ...entry } });
 
   } catch (error) {
@@ -140,6 +152,7 @@ router.put('/:id', async (req, res) => {
     };
 
     await ref.update(updates);
+    listCache = null;
     res.json({ success: true, message: 'Doctor updated successfully', data: { id: req.params.id, ...updates } });
 
   } catch (error) {
@@ -163,6 +176,7 @@ router.delete('/:id', async (req, res) => {
     }
 
     await ref.delete();
+    listCache = null;
     res.json({ success: true, message: 'Doctor removed from directory' });
 
   } catch (error) {

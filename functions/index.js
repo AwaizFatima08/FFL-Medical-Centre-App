@@ -22,7 +22,6 @@ const feedbackRoutes     = require('./src/feedback/feedbackRoutes');
 const reportRoutes       = require('./src/reports/reportRoutes');
 
 // ─── SCHEDULED JOBS ───────────────────────────────────────────────────────────
-const { sendVaccinationReminders } = require('./src/vaccination/vaccinationScheduler');
 const { sendTripReminders }        = require('./src/trips/tripScheduler');
 const { sendFitnessReminders }     = require('./src/fitness/fitnessScheduler');
 const { autoUpdateAvailability }   = require('./src/availability/availabilityScheduler');
@@ -76,10 +75,6 @@ exports.reports       = onRequest(OPTS, makeApp(reportRoutes));
 exports.circulars = onRequest(OPTS, makeApp(circularRoutes));
 
 // ─── SCHEDULED FUNCTIONS ──────────────────────────────────────────────────────
-exports.scheduledVaccinationReminders = onSchedule(
-  { schedule: '0 3 * * *', region: 'asia-south1' },
-  sendVaccinationReminders
-);
 exports.scheduledTripReminders = onSchedule(
   { schedule: '0 7 * * 1,3,6', region: 'asia-south1' },
   sendTripReminders

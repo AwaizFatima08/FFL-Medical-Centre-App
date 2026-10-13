@@ -7,9 +7,27 @@ import {
 } from 'react-native';
 import {
   getFirestore, collection, query, where,
-  getDocs, orderBy,
+  getDocs, orderBy, Timestamp,
 } from 'firebase/firestore';
+import { useFocusEffect } from '@react-navigation/native';
 import NotificationBell from '../../components/NotificationBell';
+import { getEmployeeByUid } from '../../utils/employeeLookup';
+
+// Last scheduled dose is at 54 months; older children only have history.
+const SCHEDULE_AGE_YEARS = 6;
+
+// Same shape as the server-maintained familyMembers.vaxSummary.
+function summarise(records) {
+  const live = records.filter(r => r.status !== 'na');
+  return {
+    total:          live.length,
+    administered:   live.filter(r => r.status === 'administered').length,
+    missed:         live.filter(r => r.status === 'missed').length,
+    scheduledDates: live.filter(r => r.status === 'scheduled')
+      .map(r => (r.plannedDate?.toDate ? r.plannedDate.toDate() : new Date(r.plannedDate)).toISOString())
+      .sort(),
+  };
+}
 
 // ─── Helper — calculate age string ───────────────────────────────────────────
 function calculateAge(dobTimestamp) {
@@ -70,102 +88,73 @@ export default function VaccinationChildListScreen({ navigation }) {
   const [refreshing,  setRefreshing]  = useState(false);
   const [error,       setError]       = useState(null);
 
+  const [showAllAges, setShowAllAges] = useState(false);
+
   const db = getFirestore();
 
-  // ─── Fetch all validated children with their vaccination summaries ─────────
+  // ─── Fetch children with their vaccination summaries ──────────────────────
+  // Each child's counts are maintained server-side on familyMembers.vaxSummary
+  // (see vaccinationRoutes.js), so this costs one read per child. By default
+  // only children inside the schedule window (under 6 — the last dose is at
+  // 54 months) are loaded.
   const fetchChildren = useCallback(async () => {
     try {
       setError(null);
 
-      // Step 1 — fetch all validated son/daughter records
-      const childQ = query(
-        collection(db, 'familyMembers'),
+      const constraints = [
         where('relation', 'in', ['son', 'daughter']),
         where('status',   '==', 'validated'),
         where('isActive', '==', true),
-        orderBy('dateOfBirth', 'asc'),
-      );
-      const childSnap = await getDocs(childQ);
+      ];
+      if (!showAllAges) {
+        const cutoff = new Date();
+        cutoff.setFullYear(cutoff.getFullYear() - SCHEDULE_AGE_YEARS);
+        constraints.push(where('dateOfBirth', '>=', Timestamp.fromDate(cutoff)));
+      }
+      const childSnap = await getDocs(query(
+        collection(db, 'familyMembers'), ...constraints, orderBy('dateOfBirth', 'asc'),
+      ));
       const childList = childSnap.docs.map(d => ({ id: d.id, ...d.data() }));
 
-      if (childList.length === 0) {
-        setChildren([]);
-        setFiltered([]);
-        setLoading(false);
-        setRefreshing(false);
-        return;
-      }
-
-      // Step 2 — fetch vaccination records for all children
-      const childIds = childList.map(c => c.id);
-
-      // Firestore 'in' query supports max 30 items — batch if needed
-      const batchSize = 30;
-      let allRecords  = [];
-      for (let i = 0; i < childIds.length; i += batchSize) {
-        const batch = childIds.slice(i, i + batchSize);
-        const recQ  = query(
+      // Children validated before summaries existed: fall back to reading
+      // their records directly (only these, never the whole list).
+      const legacyIds = childList.filter(c => !c.vaxSummary).map(c => c.id);
+      const legacyRecords = {};
+      for (let i = 0; i < legacyIds.length; i += 30) {
+        const recSnap = await getDocs(query(
           collection(db, 'vaccinationRecords'),
-          where('familyMemberId', 'in', batch),
-        );
-        const recSnap = await getDocs(recQ);
-        allRecords = [...allRecords, ...recSnap.docs.map(d => ({ id: d.id, ...d.data() }))];
+          where('familyMemberId', 'in', legacyIds.slice(i, i + 30)),
+        ));
+        recSnap.docs.forEach(d => {
+          const r = d.data();
+          (legacyRecords[r.familyMemberId] ||= []).push(r);
+        });
       }
 
-      // Step 3 — fetch employee names for display
-      const empIds   = [...new Set(childList.map(c => c.employeeId))];
-      const empNames = {};
-      await Promise.all(empIds.map(async (uid) => {
-        try {
-          const empQ    = query(collection(db, 'users'), where('uid', '==', uid));
-          const empSnap = await getDocs(empQ);
-          if (!empSnap.empty) {
-            empNames[uid] = empSnap.docs[0].data().fullName || 'Unknown';
-          }
-        } catch { empNames[uid] = 'Unknown'; }
-      }));
+      const names = {};
+      await Promise.all([...new Set(childList.filter(c => !c.sponsorName).map(c => c.employeeId))]
+        .map(async (uid) => { names[uid] = (await getEmployeeByUid(uid))?.fullName; }));
 
-      // Step 4 — compute summary per child
       const today = new Date();
       const soon  = new Date();
       soon.setDate(soon.getDate() + 14); // due within 14 days = "due soon"
 
       const enriched = childList.map(child => {
-        const records = allRecords.filter(r => r.familyMemberId === child.id);
-        const scheduled    = records.filter(r => r.status === 'scheduled');
-        const administered = records.filter(r => r.status === 'administered');
-        const missed       = records.filter(r => r.status === 'missed');
-
-        const overdue  = scheduled.filter(r => {
-          const pd = r.plannedDate?.toDate ? r.plannedDate.toDate() : new Date(r.plannedDate);
-          return pd < today;
-        });
-        const dueSoon  = scheduled.filter(r => {
-          const pd = r.plannedDate?.toDate ? r.plannedDate.toDate() : new Date(r.plannedDate);
-          return pd >= today && pd <= soon;
-        });
-
-        // Next due date
-        const upcomingDates = scheduled
-          .map(r => r.plannedDate?.toDate ? r.plannedDate.toDate() : new Date(r.plannedDate))
-          .filter(d => d >= today)
-          .sort((a, b) => a - b);
-        const nextDue = upcomingDates.length > 0 ? upcomingDates[0] : null;
-
-        const completed =
-          scheduled.length === 0 &&
-          missed.length    === 0 &&
-          administered.length > 0;
+        const summary = child.vaxSummary || summarise(legacyRecords[child.id] || []);
+        const scheduled = (summary.scheduledDates || []).map(iso => new Date(iso));
+        const overdueCount = scheduled.filter(d => d < today).length;
+        const dueSoonCount = scheduled.filter(d => d >= today && d <= soon).length;
+        const nextDue = scheduled.find(d => d >= today) || null;
 
         return {
           ...child,
-          employeeName:       empNames[child.employeeId] || 'Unknown',
-          totalDoses:         records.filter(r => r.status !== 'na').length,
-          administeredCount:  administered.length,
-          overdueCount:       overdue.length,
-          dueSoonCount:       dueSoon.length,
-          missedCount:        missed.length,
-          completed,
+          employeeName:      child.sponsorName || names[child.employeeId] || 'Unknown',
+          totalDoses:        summary.total,
+          administeredCount: summary.administered,
+          overdueCount,
+          dueSoonCount,
+          missedCount:       summary.missed,
+          completed:         scheduled.length === 0 && summary.missed === 0 && summary.administered > 0,
           nextDue,
         };
       });
@@ -190,13 +179,10 @@ export default function VaccinationChildListScreen({ navigation }) {
       setLoading(false);
       setRefreshing(false);
     }
-  }, [db]);
+  }, [db, showAllAges]);
 
-  useEffect(() => {
-    fetchChildren();
-    const unsubscribe = navigation.addListener('focus', fetchChildren);
-    return unsubscribe;
-  }, [fetchChildren, navigation]);
+  // Focus fires on first mount too, so this is the only load trigger.
+  useFocusEffect(useCallback(() => { fetchChildren(); }, [fetchChildren]));
 
   // ─── Search filter ────────────────────────────────────────────────────────
   useEffect(() => {
@@ -243,6 +229,14 @@ export default function VaccinationChildListScreen({ navigation }) {
           onChangeText={setSearch}
           clearButtonMode="while-editing"
         />
+        <TouchableOpacity
+          style={[styles.scopeChip, showAllAges && styles.scopeChipActive]}
+          onPress={() => { setLoading(true); setShowAllAges(v => !v); }}
+        >
+          <Text style={[styles.scopeChipText, showAllAges && styles.scopeChipTextActive]}>
+            {showAllAges ? 'Showing all ages' : `Under ${SCHEDULE_AGE_YEARS} only · show all`}
+          </Text>
+        </TouchableOpacity>
       </View>
 
       {/* Summary bar */}
@@ -271,9 +265,13 @@ export default function VaccinationChildListScreen({ navigation }) {
         {children.length === 0 && !error && (
           <View style={styles.emptyBox}>
             <Text style={styles.emptyIcon}>💉</Text>
-            <Text style={styles.emptyTitle}>No children registered yet</Text>
+            <Text style={styles.emptyTitle}>
+              {showAllAges ? 'No children registered yet' : `No children under ${SCHEDULE_AGE_YEARS}`}
+            </Text>
             <Text style={styles.emptySubtitle}>
-              Children are registered through the Family module after an employee adds them.
+              {showAllAges
+                ? 'Children are registered through the Family module after an employee adds them.'
+                : 'Tap "show all" above to include older children.'}
             </Text>
           </View>
         )}
@@ -379,6 +377,14 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14, paddingVertical: 9,
     fontSize: 14, color: '#2d3748',
   },
+  scopeChip: {
+    alignSelf: 'flex-start', marginTop: 8,
+    paddingHorizontal: 12, paddingVertical: 5, borderRadius: 14,
+    borderWidth: 1, borderColor: '#cbd5e0', backgroundColor: '#ffffff',
+  },
+  scopeChipActive:     { borderColor: '#3b82f6', backgroundColor: '#eff6ff' },
+  scopeChipText:       { fontSize: 12, color: '#4a5568' },
+  scopeChipTextActive: { color: '#1d4ed8', fontWeight: '600' },
 
   summaryBar: {
     backgroundColor: '#eff6ff', paddingHorizontal: 20,

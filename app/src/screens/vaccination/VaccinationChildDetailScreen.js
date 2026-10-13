@@ -1,7 +1,8 @@
 // app/src/screens/vaccination/VaccinationChildDetailScreen.js
 import { webAlert, webConfirm } from '../../utils/webAlert';
 
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useState, useCallback } from 'react';
+import { useFocusEffect } from '@react-navigation/native';
 import {
   View, Text, StyleSheet, TouchableOpacity, ScrollView,
   ActivityIndicator, RefreshControl,
@@ -11,6 +12,7 @@ import {
   getDocs, doc, getDoc, orderBy,
 } from 'firebase/firestore';
 import NotificationBell from '../../components/NotificationBell';
+import { getEmployeeByUid } from '../../utils/employeeLookup';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 function formatDate(timestamp) {
@@ -105,9 +107,7 @@ export default function VaccinationChildDetailScreen({ route, navigation }) {
 
       // Employee record
       if (childData.employeeId) {
-        const empQ    = query(collection(db, 'users'), where('uid', '==', childData.employeeId));
-        const empSnap = await getDocs(empQ);
-        if (!empSnap.empty) setEmployee(empSnap.docs[0].data());
+        setEmployee(await getEmployeeByUid(childData.employeeId));
       }
 
       // Vaccination records — ordered by plannedDate
@@ -137,11 +137,8 @@ export default function VaccinationChildDetailScreen({ route, navigation }) {
     }
   }, [childId, db]);
 
-  useEffect(() => {
-    fetchData();
-    const unsubscribe = navigation.addListener('focus', fetchData);
-    return unsubscribe;
-  }, [fetchData, navigation]);
+  // Runs on first focus and every return (e.g. from Add/Edit) — once each.
+  useFocusEffect(useCallback(() => { fetchData(); }, [fetchData]));
 
   const onRefresh = () => { setRefreshing(true); fetchData(); };
 

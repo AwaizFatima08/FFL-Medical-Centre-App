@@ -16,6 +16,7 @@ const TYPE_CONFIG = {
   circular:    { icon: '📢', label: 'Circular',     color: '#6b46c1', bg: '#faf5ff' },
   fitness:     { icon: '🏃', label: 'Fitness',      color: '#276749', bg: '#f0fff4' },
   vaccination: { icon: '💉', label: 'Vaccination',  color: '#c05621', bg: '#fffaf0' },
+  family:      { icon: '👨‍👩‍👧', label: 'Family',      color: '#2c7a7b', bg: '#e6fffa' },
 };
 
 const DEFAULT_TYPE = { icon: '🔔', label: 'Notification', color: '#4a5568', bg: '#edf2f7' };

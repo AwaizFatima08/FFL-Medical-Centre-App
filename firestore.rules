@@ -7,10 +7,22 @@ service cloud.firestore {
       return request.auth != null;
     }
 
+    // Role comes from the sign-in token's custom claims (set by the backend
+    // on every role/active change), so most checks cost no document read.
+    // Accounts whose token has no claims yet fall back to the users doc.
+    // Disabled accounts get no role either way.
     function getRole() {
-      return exists(/databases/$(database)/documents/users/$(request.auth.uid))
-        ? get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role
-        : '';
+      return ('role' in request.auth.token)
+        ? (request.auth.token.get('active', false) == true ? request.auth.token.role : '')
+        : (exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+           get(/databases/$(database)/documents/users/$(request.auth.uid)).data.isActive == true
+             ? get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role
+             : '');
+    }
+
+    // Staff who legitimately look up other people's employee/family records.
+    function isRecordStaff() {
+      return isAnyRole(['admin_incharge', 'cmo', 'reception', 'doctor', 'nurse']);
     }
 
     function isRole(role) {
@@ -55,9 +67,13 @@ service cloud.firestore {
     match /users/{userId} {
       allow read: if isAuthenticated() &&
                     (request.auth.uid == userId || isMedicalStaff() || isAdminIncharge());
-      allow create: if isAuthenticated() && request.auth.uid == userId;
-      allow update: if isAuthenticated() &&
-                    (request.auth.uid == userId || isAdminIncharge());
+      // users docs are created by the backend (POST /auth/register). Users may
+      // only update their own push token — previously they could write any
+      // field, including role and isActive, and promote themselves to admin.
+      allow create: if false;
+      allow update: if isAdminIncharge() ||
+                    (isAuthenticated() && request.auth.uid == userId &&
+                     request.resource.data.diff(resource.data).affectedKeys().hasOnly(['fcmToken']));
       allow delete: if isAdminIncharge();
     }
 
@@ -68,9 +84,12 @@ service cloud.firestore {
     // boundary for direct client SDK access (the Express backend's Step A
     // field-gating only protects requests that go through it, not direct
     // Firestore writes). Admin is unaffected — full write access retained.
+    // Own record, or staff. Previously any signed-in user could read every
+    // employee's CNIC, phone and date of birth.
     match /employees/{employeeId} {
-      allow read: if isAuthenticated();
-      allow create: if isAuthenticated();
+      allow read: if isAuthenticated() &&
+                  (resource.data.userId == request.auth.uid || isRecordStaff());
+      allow create: if false;   // created by the backend at registration
       allow update: if isAuthenticated() &&
                     (isAdminIncharge() ||
                      (get(/databases/$(database)/documents/employees/$(employeeId)).data.userId == request.auth.uid &&
@@ -108,7 +127,8 @@ service cloud.firestore {
     // consent). Previously an owner could set status:'validated' on create
     // or update, skipping admin review entirely.
     match /familyMembers/{memberId} {
-      allow read: if isAuthenticated();
+      allow read: if isAuthenticated() &&
+                  (resource.data.employeeId == request.auth.uid || isRecordStaff());
       allow create: if isAdminIncharge() ||
                     (isAuthenticated() &&
                      request.resource.data.employeeId == request.auth.uid &&

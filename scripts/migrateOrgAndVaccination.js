@@ -9,9 +9,10 @@
 //        - otherwise → recomputes familyMembers.vaxSummary
 //        - fills in sponsorName (parent's name) if missing
 //
-// Dry run by default. Re-run with --confirm to write.
+// Dry run by default. Re-run with --confirm to write. --org-only stops after
+// step 1 (vaccination is still deferred to V2).
 //   node scripts/migrateOrgAndVaccination.js
-//   node scripts/migrateOrgAndVaccination.js --confirm
+//   node scripts/migrateOrgAndVaccination.js --org-only --confirm
 
 const admin = require('../functions/node_modules/firebase-admin');
 
@@ -37,6 +38,8 @@ async function main() {
       await orgRef.set({ ...buildSeed(), updatedAt: new Date().toISOString(), updatedBy: 'migration' });
     }
   }
+
+  if (process.argv.includes('--org-only')) return;
 
   const scheduleCount = (await db.collection('vaccineSchedule')
     .where('isActive', '==', true).count().get()).data().count;

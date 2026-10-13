@@ -42,6 +42,18 @@ const getUserRecord = async (uid) => {
 
 const forgetUser = (uid) => userCache.delete(uid);
 
+// Firestore rules read role/active from the ID token instead of fetching the
+// users doc on every client query (one read each). Kept in sync on every
+// role/active change. Tokens carry the new claims after their next refresh;
+// the app forces one on launch when they disagree (see App.js).
+const syncRoleClaims = async (uid, role, active) => {
+  try {
+    await admin.auth().setCustomUserClaims(uid, { role, active: active === true });
+  } catch (err) {
+    console.warn(`Role claim sync failed for ${uid}:`, err.message);
+  }
+};
+
 const verifyRole = (allowedRoles) => {
   return async (req, res, next) => {
     try {
@@ -151,6 +163,7 @@ router.post('/register', verifyToken, async (req, res) => {
     batch.set(employeeRef, employeeData);
 
     await batch.commit();
+    await syncRoleClaims(req.user.uid, ROLES.EMPLOYEE, false);
 
     try {
       const adminSnap = await db.collection('users')
@@ -469,6 +482,7 @@ router.post('/approve-user', verifyToken, verifyRole([ROLES.ADMIN_INCHARGE]), as
       approvedAt: nowISO(),
     });
     forgetUser(uid);
+    await syncRoleClaims(uid, role, true);
 
     const empSnap = await db.collection('employees')
       .where('userId', '==', uid)
@@ -646,6 +660,9 @@ router.post('/disable-user', verifyToken, verifyRole([ROLES.ADMIN_INCHARGE]), as
 
     await batch.commit();
     forgetUser(uid);
+    await syncRoleClaims(uid, userDoc.data().role, false);
+    // Ends the session at its next refresh instead of letting it live on.
+    await admin.auth().revokeRefreshTokens(uid).catch(() => {});
 
     return successResponse(res,
       { uid, familyMembersDisabled: familySnap.size },
@@ -706,6 +723,7 @@ router.post('/enable-user', verifyToken, verifyRole([ROLES.ADMIN_INCHARGE]), asy
 
     await batch.commit();
     forgetUser(uid);
+    await syncRoleClaims(uid, userDoc.data().role, true);
 
     return successResponse(res,
       { uid, familyMembersReEnabled: familySnap.size },
@@ -745,6 +763,7 @@ router.post('/change-role', verifyToken, verifyRole([ROLES.ADMIN_INCHARGE]), asy
       roleChangedAt: nowISO(),
     });
     forgetUser(uid);
+    await syncRoleClaims(uid, role, userDoc.data().isActive === true);
 
     return successResponse(res, { uid, role }, 'Role updated successfully');
   } catch (error) {
@@ -757,3 +776,4 @@ module.exports = router;
 module.exports.verifyToken = verifyToken;
 module.exports.verifyRole  = verifyRole;
 module.exports.getUserRecord = getUserRecord;
+module.exports.syncRoleClaims = syncRoleClaims;

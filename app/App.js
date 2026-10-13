@@ -53,6 +53,13 @@ export default function App() {
           if (userDoc.exists()) {
             const data = userDoc.data();
             if (data.isActive === true) {
+              // Database rules read the role from the sign-in token. If an
+              // admin changed it since this token was issued, refresh now
+              // rather than waiting up to an hour for the automatic refresh.
+              const { claims } = await firebaseUser.getIdTokenResult();
+              if (claims.role !== data.role || claims.active !== true) {
+                firebaseUser.getIdToken(true).catch(() => {});
+              }
               setUserRole(data.role);
               setUser(firebaseUser);
               saveFcmToken(firebaseUser.uid); // ← save token after confirmed active login

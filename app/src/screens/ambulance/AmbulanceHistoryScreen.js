@@ -73,13 +73,22 @@ function FilterChips({ options, selected, onSelect }) {
   );
 }
 
+const DEFAULT_WINDOW_DAYS = 30;
+const defaultFromDate = () => {
+  const d = new Date();
+  d.setDate(d.getDate() - DEFAULT_WINDOW_DAYS);
+  return d.toISOString().slice(0, 10);
+};
+
 export default function AmbulanceHistoryScreen({ navigation }) {
   const [loading, setLoading]       = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [requests, setRequests]     = useState([]);
 
   const [search, setSearch]     = useState('');
-  const [fromDate, setFromDate] = useState('');
+  // Default to the last 30 days — 'all time' re-reads every request ever
+  // made. Blank the field to see everything.
+  const [fromDate, setFromDate] = useState(defaultFromDate);
   const [toDate, setToDate]     = useState('');
   const [statusFilter, setStatusFilter]     = useState(null); // null = both completed + cancelled
   const [priorityFilter, setPriorityFilter] = useState(null);
@@ -133,7 +142,7 @@ export default function AmbulanceHistoryScreen({ navigation }) {
 
   const handleClearFilters = () => {
     setSearch('');
-    setFromDate('');
+    setFromDate(defaultFromDate());
     setToDate('');
     setStatusFilter(null);
     setPriorityFilter(null);

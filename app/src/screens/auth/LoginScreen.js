@@ -280,6 +280,7 @@ const styles = StyleSheet.create({
     padding: 18,
     width: '100%',
     maxWidth: 380,
+    alignSelf: 'center',   // otherwise hugs the left edge on tablets/landscape
     elevation: 12,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 6 },

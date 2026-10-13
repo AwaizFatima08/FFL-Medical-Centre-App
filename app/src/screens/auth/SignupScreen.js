@@ -705,6 +705,7 @@ const styles = StyleSheet.create({
 
   card: {
     backgroundColor: '#fff', borderRadius: 20, padding: 28,
+    width: '100%', maxWidth: 480, alignSelf: 'center',   // tablets/landscape
     elevation: 12, shadowColor: '#000',
     shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.15, shadowRadius: 12,
   },
